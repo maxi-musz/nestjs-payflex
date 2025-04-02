@@ -26,7 +26,7 @@ export class BankingService {
         // Fetch existing user with accounts
         const existingUser = await this.prisma.user.findUnique({
             where: { email: dto.email },
-            include: { accounts: true },
+            // include: { accounts: true },
         });
     
         if (!existingUser) {
@@ -56,7 +56,7 @@ export class BankingService {
             // 2. Create transaction history record
             const newHistory = await this.prisma.transactionHistory.create({
                 data: {
-                    account_id: existingUser?.accounts[0]?.id,
+                    // account_id: existingUser?.accounts[0]?.id,
                     user_id: existingUser?.id,
                     amount: dto.amount,
                     transaction_type: "deposit",
