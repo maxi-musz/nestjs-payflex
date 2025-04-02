@@ -1,0 +1,183 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Bookmark {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  title       String
+  description String
+  link        String
+}
+
+model User {
+  id String @id @default(uuid())
+
+  first_name        String?
+  last_name         String?
+  email             String        @unique
+  hash              String?
+  phone_number      String?
+  password          String?
+  otp               String?
+  otp_expires_at    DateTime?
+  role              Role?          @default(user)
+  gender            Gender?
+  date_of_birth     DateTime?
+  profile_image     ProfileImage?
+  address           Address?
+  is_email_verified Boolean       @default(false)
+  refreshToken      RefreshToken?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+}
+
+model ProfileImage {
+  id         String @id @default(uuid())
+  userId     String @unique
+  secure_url String
+  public_id  String
+  user       User   @relation(fields: [userId], references: [id])
+
+  
+}
+
+model Address {
+  id           String  @id @default(uuid())
+  userId       String  @unique
+  city         String?
+  state        String?
+  country      String?
+  home_address String?
+  user         User    @relation(fields: [userId], references: [id])
+
+  
+}
+
+enum Role {
+  user
+  admin
+  super_admin
+}
+
+enum Gender {
+  male
+  female
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt], map: "expires_at_idx")
+  
+}
+
+// Transaction Table
+
+model TransactionHistory {
+  id                    String             @id @default(uuid())
+  account_id            String?
+  user_id               String
+  amount                Float?
+  transaction_type      TransactionType?
+  description           String?
+  status                TransactionStatus?
+  sender_details        SenderDetails?
+  recipient_mobile      String?
+  currency_type         CurrencyType?
+  payment_method        PaymentMethod?
+  icon                  TransactionIcon?
+  fee                   Float?             @default(0.0)
+  transaction_number    String?
+  transaction_reference String?            @unique
+  session_id            String?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+}
+
+enum TransactionType {
+  transfer
+  deposit
+  airtime
+  data
+  cable
+  education
+  betting
+}
+
+enum TransactionStatus {
+  pending
+  success
+  failed
+  cancelled
+}
+
+enum CurrencyType {
+  ngn
+  usd
+  gbp
+  eur
+}
+
+enum PaymentMethod {
+  card
+  bank_transfer
+  wallet
+  ussd
+}
+
+model SenderDetails {
+  id                    String             @id @default(uuid())
+  transaction_id        String             @unique
+  sender_name           String
+  sender_bank           String
+  sender_account_number String
+  transaction           TransactionHistory @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+}
+
+model TransactionIcon {
+  id             String             @id @default(uuid())
+  transaction_id String             @unique
+  secure_url     String
+  public_id      String
+  transaction    TransactionHistory @relation(fields: [transaction_id], references: [id])
+}
+
+model Account {
+  id             String      @id @default(uuid())
+  user_id        String
+  account_number String      @unique
+  accountType    AccountType
+  bank_name      String
+  bank_code      String
+  balance        Float       @default(0)
+  isActive       Boolean     @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum AccountType {
+  ngn
+  usd
+  eur
+  gbp
+}
