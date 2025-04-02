@@ -1,8 +1,8 @@
 -- CreateEnum
-CREATE TYPE "Role" AS ENUM ('USER', 'ADMIN', 'SUPER_ADMIN');
+CREATE TYPE "Role" AS ENUM ('user', 'admin', 'super_admin');
 
 -- CreateEnum
-CREATE TYPE "Gender" AS ENUM ('MALE', 'FEMALE');
+CREATE TYPE "Gender" AS ENUM ('male', 'female');
 
 -- CreateEnum
 CREATE TYPE "TransactionType" AS ENUM ('transfer', 'deposit', 'airtime', 'data', 'cable', 'education', 'betting');
@@ -11,13 +11,13 @@ CREATE TYPE "TransactionType" AS ENUM ('transfer', 'deposit', 'airtime', 'data',
 CREATE TYPE "TransactionStatus" AS ENUM ('pending', 'success', 'failed', 'cancelled');
 
 -- CreateEnum
-CREATE TYPE "CurrencyType" AS ENUM ('NGN', 'USD', 'GBP', 'EUR');
+CREATE TYPE "CurrencyType" AS ENUM ('ngn', 'usd', 'gbp', 'eur');
 
 -- CreateEnum
 CREATE TYPE "PaymentMethod" AS ENUM ('card', 'bank_transfer', 'wallet', 'ussd');
 
 -- CreateEnum
-CREATE TYPE "AccountType" AS ENUM ('NGN', 'USD', 'EURGBP');
+CREATE TYPE "AccountType" AS ENUM ('savings', 'current', 'investment');
 
 -- CreateTable
 CREATE TABLE "Bookmark" (
@@ -37,12 +37,12 @@ CREATE TABLE "User" (
     "first_name" TEXT,
     "last_name" TEXT,
     "email" TEXT NOT NULL,
-    "hash" TEXT NOT NULL,
+    "hash" TEXT,
     "phone_number" TEXT,
     "password" TEXT,
     "otp" TEXT,
     "otp_expires_at" TIMESTAMP(3),
-    "role" "Role" NOT NULL DEFAULT 'USER',
+    "role" "Role" DEFAULT 'user',
     "gender" "Gender",
     "date_of_birth" TIMESTAMP(3),
     "is_email_verified" BOOLEAN NOT NULL DEFAULT false,
@@ -134,6 +134,7 @@ CREATE TABLE "Account" (
     "user_id" TEXT NOT NULL,
     "account_number" TEXT NOT NULL,
     "accountType" "AccountType" NOT NULL,
+    "currency" "CurrencyType" NOT NULL,
     "bank_name" TEXT NOT NULL,
     "bank_code" TEXT NOT NULL,
     "balance" DOUBLE PRECISION NOT NULL DEFAULT 0,

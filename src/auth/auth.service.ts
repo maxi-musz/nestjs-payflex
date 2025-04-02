@@ -4,7 +4,7 @@ import { AuthDto, RequestEmailOTPDto, ResetPasswordDto, SignInDto, VerifyEmailOT
 import * as argon from "argon2"
 import { Gender } from "@prisma/client";
 import * as crypto from "crypto"
-import { sendOTPByEmail } from "src/mailer/send-email";
+import { sendOTPByEmail } from "src/common/mailer/send-email";
 import * as colors from "colors"
 import { JwtService } from '@nestjs/jwt';
 import generateTokens from "src/utils/generate.token";
@@ -167,18 +167,18 @@ export class AuthService {
                 }
             });
 
-            const newAccount = await this.prisma.account.create({
-                data: {
-                    user_id: updatedUser.id,
-                    account_number: this.generateAccountNumber(), // Implement this function
-                    accountType: 'ngn', // or whatever your default account type is
-                    bank_name: 'Virtual Bank',
-                    bank_code: '999', // Use appropriate bank code
-                    balance: 0,
-                    currency: 'ngn',
-                    isActive: true
-                }
-            });
+            // const newAccount = await this.prisma.account.create({
+            //     data: {
+            //         user_id: updatedUser.id,
+            //         account_number: this.generateAccountNumber(), // Implement this function
+            //         accountType: 'ngn', // or whatever your default account type is
+            //         bank_name: 'Virtual Bank',
+            //         bank_code: '999', // Use appropriate bank code
+            //         balance: 0,
+            //         currency: 'ngn',
+            //         isActive: true
+            //     }
+            // });
     
             // 5. Remove sensitive data before returning
             const { password, hash: _, ...safeUser } = updatedUser;

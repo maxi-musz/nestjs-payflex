@@ -34,7 +34,7 @@ model User {
   password          String?
   otp               String?
   otp_expires_at    DateTime?
-  role              Role?          @default(user)
+  role              Role?         @default(user)
   gender            Gender?
   date_of_birth     DateTime?
   profile_image     ProfileImage?
@@ -51,8 +51,6 @@ model ProfileImage {
   secure_url String
   public_id  String
   user       User   @relation(fields: [userId], references: [id])
-
-  
 }
 
 model Address {
@@ -63,8 +61,6 @@ model Address {
   country      String?
   home_address String?
   user         User    @relation(fields: [userId], references: [id])
-
-  
 }
 
 enum Role {
@@ -87,7 +83,6 @@ model RefreshToken {
   createdAt DateTime @default(now())
 
   @@index([expiresAt], map: "expires_at_idx")
-  
 }
 
 // Transaction Table
@@ -162,22 +157,22 @@ model TransactionIcon {
 }
 
 model Account {
-  id             String      @id @default(uuid())
+  id             String       @id @default(uuid())
   user_id        String
-  account_number String      @unique
+  account_number String       @unique
   accountType    AccountType
+  currency       CurrencyType
   bank_name      String
   bank_code      String
-  balance        Float       @default(0)
-  isActive       Boolean     @default(true)
+  balance        Float        @default(0)
+  isActive       Boolean      @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 enum AccountType {
-  ngn
-  usd
-  eur
-  gbp
+  savings
+  current
+  investment
 }

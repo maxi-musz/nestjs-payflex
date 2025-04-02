@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "src/prisma/prisma.service";
 import * as colors from "colors";
 import { RequestEmailOTPDto } from "src/auth/dto";
+import { ApiResponseDto } from "src/common/dto/api-response.dto";
 
  @Injectable()
  export class UserService {
@@ -25,7 +26,7 @@ import { RequestEmailOTPDto } from "src/auth/dto";
 
             if(!existingUser) {
                 console.log(colors.red("User not found"))
-                throw new NotFoundException("")
+                throw new NotFoundException("User not found")
             }
 
             // Find all the transaction hisotires pertaining to the user
@@ -50,31 +51,31 @@ import { RequestEmailOTPDto } from "src/auth/dto";
             console.log(colors.magenta("User dashboard successfully retrieved"))
 
             // Format the response
-            return {
+            return new ApiResponseDto(true, "Dashboard successfully retrieved", {
                 user: {
-                id: existingUser.id,
-                name: existingUser.first_name + " " + existingUser.last_name,
-                email: existingUser.email,
-                profileImage: existingUser.profile_image
+                    id: existingUser.id,
+                    name: `${existingUser.first_name} ${existingUser.last_name}`,
+                    email: existingUser.email,
+                    profileImage: existingUser.profile_image
                 },
-                accounts: accounts.map(account =>({
+                accounts: accounts.map(account => ({
                     id: account.id,
                     account_number: account.account_number,
                     account_type: account.accountType,
                     bank_name: account.bank_name,
                     bank_code: account.bank_code
                 })),
-                recentTransactions: recentTransactions.map(tx => ({
-                id: tx.id,
-                amount: tx.amount,
-                type: tx.transaction_type,
-                description: tx.description,
-                status: tx.status,
-                date: tx.createdAt,
-                sender: tx.sender_details?.sender_name,
-                icon: tx.icon?.secure_url
+                transactionHistory: recentTransactions.map(tx => ({
+                    id: tx.id,
+                    amount: tx.amount,
+                    type: tx.transaction_type,
+                    description: tx.description,
+                    status: tx.status,
+                    date: tx.createdAt,
+                    sender: tx.sender_details?.sender_name,
+                    icon: tx.icon?.secure_url
                 }))
-            };
+            });
 
         } catch (error) {
             console.error(colors.red(`Dashboard fetch error: ${error.message}`));
