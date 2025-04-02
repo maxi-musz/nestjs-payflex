@@ -6,6 +6,7 @@ import { AuthController } from './auth/auth.controller';
 import { AuthService } from './auth/auth.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { ConfigModule } from '@nestjs/config';
+import { BankingModule } from './banking/banking.module';
 
 @Module({
   imports: [
@@ -13,7 +14,7 @@ import { ConfigModule } from '@nestjs/config';
     AuthModule, 
     UserModule, 
     BookmarkModule, 
-    PrismaModule],
+    PrismaModule, BankingModule],
   controllers: [AuthController],
   providers: [AuthService],
 })
