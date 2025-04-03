@@ -12,7 +12,7 @@ export class CronService implements OnModuleInit {
             try {
                 console.log("Pinging service to keep alive...");
                 await axios.get('https://nestjs-payflex.onrender.com/api/v1/auth/health'); // Replace with your actual endpoint
-                console.log("Service is up");
+                console.log(colors.america("Service is up"));
             } catch (error) {
                 console.error("Failed to ping service:", error.message);
             }

@@ -7,7 +7,7 @@ export class VtuController {
     constructor(private vtuService: VtuService) {}
 
     @UseGuards(AuthGuard('jwt'))
-    @Get("/")
+    @Get("/gb")
     testEndpoint(@Request() req) {
         return this.vtuService.test(req.user)
     }
