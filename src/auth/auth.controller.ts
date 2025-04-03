@@ -1,10 +1,15 @@
-import { Body, Controller, Post } from "@nestjs/common";
+import { Body, Controller, Get, Post } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import { AuthDto, RequestEmailOTPDto, ResetPasswordDto, SignInDto, VerifyEmailOTPDto } from "./dto";
 
 @Controller('auth')
 export class AuthController{
     constructor(private authService: AuthService) {}
+
+    @Get('health')
+    healthCheck() {
+        return { status: 'OK', message: 'Service is running' };
+    }
 
     @Post('request-email-otp')
     requestEmailOTP(@Body() dto: RequestEmailOTPDto) {

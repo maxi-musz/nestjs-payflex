@@ -9,6 +9,7 @@ import { ConfigModule } from '@nestjs/config';
 import { BankingModule } from './banking/banking.module';
 import { TransactionHistoryModule } from './transaction-history/transaction-history.module';
 import { VtuModule } from './vtu/vtu.module';
+import { CronModule } from './cron/cron.module';
 
 @Module({
   imports: [
@@ -18,7 +19,7 @@ import { VtuModule } from './vtu/vtu.module';
     AuthModule, 
     UserModule, 
     BookmarkModule, 
-    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule],
+    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule],
   controllers: [AuthController],
   providers: [AuthService],
 })
