@@ -13,4 +13,4 @@ export class UserController{
     fetchUserDashboard(@Request() req) {
         return this.userService.fetchUserDashboard(req.user)
     }
-}
+} 

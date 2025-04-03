@@ -21,6 +21,10 @@ export const formatDate = (date: string | number | Date): string => {
     });
 };
 
-export const formatAmount = (amount: number): string => {
-    return amount.toLocaleString('en-US');
-};
+// export const formatAmount = (amount: number): string => {
+//     return amount.toLocaleString('en-US');
+// };
+
+export const formatAmount = (amount: number) => {
+    return amount.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    };
