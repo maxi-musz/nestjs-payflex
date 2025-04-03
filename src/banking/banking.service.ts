@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
-import { PaystackFundingDto } from 'src/common/dto/banking.dto';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { PaystackFundingDto, PaystackFundingVerifyDto } from 'src/common/dto/banking.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import * as colors from "colors"
 
 import axios from "axios";
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
+import { formatAmount, formatDate } from 'src/common/helper_functions/formatter';
 
 @Injectable()
 export class BankingService {
@@ -14,7 +15,7 @@ export class BankingService {
     ) {}
 
     // 
-    async initialisePaystackFunding(dto: PaystackFundingDto) {
+    async initialisePaystackFunding(dto: PaystackFundingDto, userPayload: any) {
         // Determine Paystack environment key
         const paystackKey =
             process.env.NODE_ENV === "development"
@@ -25,7 +26,7 @@ export class BankingService {
     
         // Fetch existing user with accounts
         const existingUser = await this.prisma.user.findUnique({
-            where: { email: dto.email },
+            where: { email: userPayload.email },
             // include: { accounts: true },
         });
     
@@ -39,13 +40,13 @@ export class BankingService {
             const response = await axios.post(
                 'https://api.paystack.co/transaction/initialize',
                 {
-                    email: dto.email,
+                    email: userPayload.email,
                     amount: amountInKobo,
                     callback_url: dto.callback_url,
                 },
                 {
                     headers: {
-                        Authorization: `Bearer ${paystackKey}`,
+                        Authorization: `Bearer ${process.env.PAYSTACK_TEST_SECRET_KEY}`,
                         'Content-Type': 'application/json',
                     },
                 }
@@ -93,7 +94,7 @@ export class BankingService {
                 authorization_url:  authorization_url,
                 reference: reference,
                 amount: dto.amount,
-                email: dto.email
+                email: userPayload.email
             }
 
             console.log(colors.magenta("New paystack wallet funding successfully initiated"))
@@ -103,6 +104,92 @@ export class BankingService {
         } catch (error) {
             console.error(colors.red("Error initializing Paystack funding"), error);
             return new ApiResponseDto(false, "Failed to initialize transaction");
+        }
+    }
+
+    async verifyPaystackFunding(dto: PaystackFundingVerifyDto, userPayload: any) {
+        console.log(colors.cyan("Verifying wallet funding with Paystack"));
+    
+        // Determine Paystack environment key
+        const paystackKey =
+            process.env.NODE_ENV === "development"
+                ? process.env.PAYSTACK_TEST_SECRET_KEY || ''
+                : process.env.PAYSTACK_LIVE_SECRET_KEY || '';
+    
+        try {
+            // Fetch the transaction from the database
+            const existingTransaction = await this.prisma.transactionHistory.findFirst({
+                where: { transaction_reference: dto.reference }
+            });
+    
+            // Validate transaction existence and amount
+            if (!existingTransaction || !existingTransaction.amount) {
+                console.log(colors.red("Transaction not found or amount is missing"));
+                throw new NotFoundException("Transaction not found or amount is missing");
+            }
+    
+            const amountInKobo = existingTransaction.amount * 100;
+
+            if (!dto.reference) {
+                throw new BadRequestException("Transaction reference is missing");
+            }
+    
+            // Verify transaction with Paystack
+            let response: any;
+            try {
+                response = await axios.get(`https://api.paystack.co/transaction/verify/${dto.reference}`, {
+                    headers: {
+                        Authorization: `Bearer ${process.env.PAYSTACK_TEST_SECRET_KEY}`
+                    }
+                });
+            } catch (error) {
+                console.error(colors.red(`Error verifying transaction with Paystack: ${error}`));
+                throw new Error(`Failed to verify transaction with Paystack: ${error.message}`);
+            }
+    
+            // Extract relevant data from Paystack response
+            const { status: paystackStatus, amount: paystackKoboAmount } = response.data?.data;
+    
+            if (paystackStatus !== 'success') {
+                console.log(colors.red("Payment was not completed or successful"));
+                return new ApiResponseDto(false, "Payment was not completed or successful");
+            }
+    
+            // Validate that the amount paid matches the expected amount
+            if (paystackKoboAmount !== amountInKobo) {
+                console.log(colors.red("Amount mismatch detected"));
+                return new ApiResponseDto(false, "Payment amount does not match transaction amount");
+            }
+
+            // update the payment ststaus in db to success
+            const updatedTx = await this.prisma.transactionHistory.update({
+                where: { transaction_reference: dto.reference },
+                data: { 
+                  status: paystackStatus,
+                  updatedAt: new Date() 
+                },
+                include: {
+                  sender_details: true,
+                  icon: true
+                }
+              });
+
+              const formattedResponse = {
+                id: updatedTx.id,
+                amount: formatAmount(updatedTx.amount ?? 0),
+                transaction_type: "deposit",
+                description: "wallet funding with paystack",
+                status: "success",
+                payment_method: "paystack",
+                date: formatDate(updatedTx.updatedAt)
+              }
+    
+            console.log(colors.green("Payment verified successfully"));
+            return new ApiResponseDto(true, "Payment verified successfully", formattedResponse);
+    
+        } catch (error) {
+            console.error(colors.red(`Verification error: ${error.message}`));
+            throw new Error(`Verification error: ${error.message}`);
         }
     }
 }
