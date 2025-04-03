@@ -3,6 +3,7 @@ import { PrismaService } from "src/prisma/prisma.service";
 import * as colors from "colors";
 import { RequestEmailOTPDto } from "src/auth/dto";
 import { ApiResponseDto } from "src/common/dto/api-response.dto";
+import { formatAmount } from "src/common/helper_functions/formatter";
 
  @Injectable()
  export class UserService {
@@ -62,6 +63,7 @@ import { ApiResponseDto } from "src/common/dto/api-response.dto";
                     id: account.id,
                     account_number: account.account_number,
                     account_type: account.accountType,
+                    balance: formatAmount(account.balance),
                     bank_name: account.bank_name,
                     bank_code: account.bank_code
                 })),

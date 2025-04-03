@@ -160,7 +160,7 @@ model TransactionIcon {
   public_id      String
   transaction    TransactionHistory @relation(fields: [transaction_id], references: [id])
 }
-
+ 
 model Account {
   id             String       @id @default(uuid())
   user_id        String
