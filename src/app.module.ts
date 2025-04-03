@@ -10,7 +10,9 @@ import { BankingModule } from './banking/banking.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({}), 
+    ConfigModule.forRoot({
+      isGlobal: true
+    }), 
     AuthModule, 
     UserModule, 
     BookmarkModule, 

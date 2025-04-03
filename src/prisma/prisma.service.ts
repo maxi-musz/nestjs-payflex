@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaClient } from '@prisma/client';
 import * as colors from "colors"
 
@@ -8,18 +9,17 @@ db_url = process.env.NODE_ENV === "production"
     ? process.env.DATABASE_URL_EXTERNAL || process.env.DATABASE_URL || "default_production_url"
     : process.env.DATABASE_URL || "default_development_url";
 
-console.log(colors.yellow(`DB URL: ${db_url}`))
-
 @Injectable()
 export class PrismaService extends PrismaClient {
 
-    constructor() {
+    constructor(config: ConfigService) {
         super({
             datasources: {
                 db: {
-                    url: db_url
+                    url: config.get('DATABASE_URL')
                 }
             }
         })
+        console.log(colors.blue(`prisma.service --- DB_URL: ${config.get('DATABASE_URL')}`))
     }
 }

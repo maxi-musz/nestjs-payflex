@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PaystackFundingDto } from 'src/common/dto/banking.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
-import colors from "colors"
+import * as colors from "colors"
 
 import axios from "axios";
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
@@ -50,13 +50,17 @@ export class BankingService {
                     },
                 }
             );
+
+            const wallet = await this.prisma.account.findFirst({
+                where: { user_id: existingUser.id }
+            })
     
             const { authorization_url, access_code, reference } = response.data.data;
     
             // 2. Create transaction history record
             const newHistory = await this.prisma.transactionHistory.create({
                 data: {
-                    // account_id: existingUser?.accounts[0]?.id,
+                    account_id: wallet?.id,
                     user_id: existingUser?.id,
                     amount: dto.amount,
                     transaction_type: "deposit",
@@ -84,8 +88,18 @@ export class BankingService {
                     icon: true,
                 },
             });
+
+            const clientResponse = {
+                authorization_url:  authorization_url,
+                reference: reference,
+                amount: dto.amount,
+                email: dto.email
+            }
+
+            console.log(colors.magenta("New paystack wallet funding successfully initiated"))
     
-            return new ApiResponseDto(true, "Transaction initialized successfully");
+            return new ApiResponseDto(true, "New paystack wallet funding successfully initiated", clientResponse);
+
         } catch (error) {
             console.error(colors.red("Error initializing Paystack funding"), error);
             return new ApiResponseDto(false, "Failed to initialize transaction");

@@ -10,14 +10,14 @@ import { ApiResponseDto } from "src/common/dto/api-response.dto";
         private prisma: PrismaService,
     ) {}
 
-    async fetchUserDashboard(dto: RequestEmailOTPDto) {
+    async fetchUserDashboard(userPayload: any) {
 
         console.log(colors.cyan("Fetching user dashboard..."))
 
         try {
             // find the user from the db using the supplied user email
             const existingUser = await this.prisma.user.findFirst({
-                where: {email: dto.email},
+                where: {email: userPayload.email},
                 include: {
                     address: true,
                     profile_image: true

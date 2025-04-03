@@ -8,13 +8,16 @@ import { sendOTPByEmail } from "src/common/mailer/send-email";
 import * as colors from "colors"
 import { JwtService } from '@nestjs/jwt';
 import generateTokens from "src/utils/generate.token";
+import { ConfigService } from "@nestjs/config";
+import { ApiResponseDto } from "src/common/dto/api-response.dto";
 
 @Injectable()
 export class AuthService {
  
     constructor(
         private prisma: PrismaService,
-        private jwtService: JwtService, 
+        private jwt: JwtService, 
+        private config: ConfigService
     ) {}
 
     async requestEmailOTP(dto: RequestEmailOTPDto) {
@@ -208,94 +211,53 @@ export class AuthService {
         }
     }
 
-    async signin(
-        dto: SignInDto
-      ): Promise<{
-        success: boolean;
-        message: string;
-        accessToken?: string;
-        data?: any;
-      }> {
-        console.log(colors.cyan("Sign in endpoint hit..."));
-      
-        try {
-          // 1. Find user with address
-          const user = await this.prisma.user.findUnique({
-            where: { email: dto.email },
-            include: { address: true, refreshToken: true },
-          });
-      
-          if (!user) {
-            console.log(colors.red(`⚠️ User not found: ${dto.email}`));
-            throw new UnauthorizedException('Invalid credentials');
-          }
-      
-          // 2. Check email verification
-          if (!user.is_email_verified) {
-            console.log(colors.yellow(`⚠️ Unverified email: ${dto.email}`));
-            throw new ForbiddenException('Please verify your email first');
-          }
-      
-          // 3. Validate password
-          if (!user.password) {
-            console.log(colors.red('⚠️ No password set for user'));
-            throw new UnauthorizedException('Invalid credentials');
-          }
-      
-          const passwordValid = await argon.verify(user.password, dto.password);
-          if (!passwordValid) {
-            console.log(colors.red('⚠️ Invalid password'));
-            throw new UnauthorizedException('Invalid credentials');
-          }
-      
-          // 4. Generate tokens using your custom function
-          const { accessToken, refreshToken: newRefreshToken } = generateTokens(user.id);
-      
-          // 5. Refresh token management
-          await this.prisma.$transaction([
-            // Delete all existing refresh tokens
-            this.prisma.refreshToken.deleteMany({
-              where: { userId: user.id }
-            }),
-            // Create new refresh token
-            this.prisma.refreshToken.create({
-              data: {
-                token: newRefreshToken,
-                userId: user.id,
-                expiresAt: new Date(Date.now() + 
-                  (Number(process.env.USER_REFRESH_TOKEN_EXPIRATION_TIME) || 86400) * 1000)
-              }
-            })
-          ]);
-      
-          console.log(colors.green('✅ Authentication tokens issued'));
-      
-          // 6. Prepare safe user data
-          const { password, hash, refreshToken, ...safeUser } = user;
-      
-          // 7. Return response
-          return {
-            success: true,
-            message: 'Login successful',
-            accessToken, // Only return accessToken in response body
-            data: {
-              id: safeUser.id,
-              email: safeUser.email,
-              name: `${safeUser.first_name} ${safeUser.last_name}`,
-              phone_number: safeUser.phone_number,
-              address: safeUser.address,
-              role: safeUser.role
-            }
-          };
-      
-        } catch (error) {
-          console.error(colors.red('🔴 Signin error:'), error);
-          
-          if (error instanceof HttpException) {
-            throw error;
-          }
-          throw new InternalServerErrorException('Authentication failed');
+    async signToken(
+        userId: string,
+        email: string,
+    ): Promise<string> {
+        const payload = {
+            sub: userId,
+            email
         }
+
+        const secret = this.config.get('JWT_SECRET')
+        const expiration_time = this.config.get('JWT_EXPIRES_IN')
+
+        return this.jwt.signAsync(payload, {
+            expiresIn: '15m',
+            secret: secret
+        })
+    }
+
+    async signin(dto: SignInDto) {
+        // 1. Find user
+        const user = await this.prisma.user.findUnique({
+          where: { email: dto.email },
+          include: { address: true }
+        });
+    
+        if (!user) {
+          throw new UnauthorizedException('Invalid credentials');
+        }
+    
+        // 2. Check email verification
+        if (!user.is_email_verified) {
+          throw new ForbiddenException('Please verify your email first');
+        }
+    
+        // 3. Verify password
+        if (!user.password || !(await argon.verify(user.password, dto.password))) {
+          throw new UnauthorizedException('Invalid credentials');
+        }
+
+        const access_token = await this.signToken(user.id, user.email)
+
+        const responseData = {
+            access_token: access_token,
+            user: user
+        }
+
+        return new ApiResponseDto(true, "Welcome back", responseData)
     }
 
     async resetPassword(dto: ResetPasswordDto): Promise<{ 

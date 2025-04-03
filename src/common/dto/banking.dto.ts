@@ -14,3 +14,12 @@ export class PaystackFundingDto {
     @IsNotEmpty()
     amount: number;
 }
+
+export class InititatePaystackFundingDto {
+    @IsEmail()
+    @IsNotEmpty()
+    @IsString()
+    email: string;
+
+    
+}
