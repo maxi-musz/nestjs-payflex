@@ -10,6 +10,7 @@ import { BankingModule } from './banking/banking.module';
 import { TransactionHistoryModule } from './transaction-history/transaction-history.module';
 import { VtuModule } from './vtu/vtu.module';
 import { CronModule } from './cron/cron.module';
+import { VirtualCardModule } from './virtual-card/virtual-card.module';
 
 @Module({
   imports: [
@@ -19,7 +20,7 @@ import { CronModule } from './cron/cron.module';
     AuthModule, 
     UserModule, 
     BookmarkModule, 
-    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule],
+    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule],
   controllers: [AuthController],
   providers: [AuthService],
 })

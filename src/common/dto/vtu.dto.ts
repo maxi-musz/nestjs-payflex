@@ -7,13 +7,27 @@ export class BuyAirtimeDto {
 
     @IsString()
     @IsNotEmpty()
-    number: string;
+    phoneNumber: string;
 
     @IsNumber()
     @IsNotEmpty()
     amount: number;
+}
+
+export class DataPurchaseDto {
+    @IsString()
+    @IsNotEmpty()
+    provider: string;
 
     @IsString()
     @IsNotEmpty()
-    reference: string;
+    number: string;
+
+    @IsString()
+    @IsNotEmpty()
+    plan_id: string;
+
+    @IsNumber()
+    @IsNotEmpty()
+    amount: number;
 }

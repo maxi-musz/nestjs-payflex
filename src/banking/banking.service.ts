@@ -6,6 +6,7 @@ import * as colors from "colors"
 import axios from "axios";
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import { formatAmount, formatDate } from 'src/common/helper_functions/formatter';
+import { generateSessionId } from 'src/common/helper_functions/generators';
 
 @Injectable()
 export class BankingService {
@@ -69,7 +70,7 @@ export class BankingService {
                     fee: 10,
                     transaction_number: access_code,
                     transaction_reference: reference,
-                    session_id: "sess-28636981",
+                    session_id: generateSessionId(),
                     sender_details: {
                         create: {
                             sender_name: "",
