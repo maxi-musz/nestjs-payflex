@@ -49,6 +49,23 @@ import { formatAmount } from "src/common/helper_functions/formatter";
                  },
             });
 
+            // get user wallet details
+            const walletDetails = await this.prisma.wallet.findFirst({
+                where: { user_id: existingUser.id },
+            });
+
+            if(!walletDetails) {
+                await this.prisma.wallet.create({
+                    data: {
+                        user_id: existingUser.id,
+                        current_balance: 0,
+                        all_time_fuunding: 0,
+                        all_time_withdrawn: 0,
+                        isActive: true,
+                    }
+                });
+            }
+
             console.log(colors.magenta("User dashboard successfully retrieved"))
 
             // Format the response
@@ -59,14 +76,15 @@ import { formatAmount } from "src/common/helper_functions/formatter";
                     email: existingUser.email,
                     profileImage: existingUser.profile_image
                 },
-                accounts: accounts.map(account => ({
-                    id: account.id,
-                    account_number: account.account_number,
-                    account_type: account.accountType,
-                    balance: formatAmount(account.balance),
-                    bank_name: account.bank_name,
-                    bank_code: account.bank_code
-                })),
+                wallet: {
+                    id: walletDetails?.id,
+                    current_balance: walletDetails?.current_balance,
+                    all_time_fuunding: walletDetails?.all_time_fuunding,
+                    all_time_withdrawn: walletDetails?.all_time_withdrawn,
+                    isActive: true,
+                    createdAt: walletDetails?.createdAt,
+                    updatedAt: walletDetails?.updatedAt,
+                },
                 transactionHistory: recentTransactions.map(tx => ({
                     id: tx.id,
                     amount: tx.amount,

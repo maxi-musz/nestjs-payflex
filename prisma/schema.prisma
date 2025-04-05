@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -160,7 +154,7 @@ model TransactionIcon {
   public_id      String
   transaction    TransactionHistory @relation(fields: [transaction_id], references: [id])
 }
- 
+
 model Account {
   id             String       @id @default(uuid())
   user_id        String
@@ -185,11 +179,12 @@ enum AccountType {
 }
 
 model Wallet {
-  id             String       @id @default(uuid())
-  user_id        String
-  currency       CurrencyType
-  balance        Float        @default(0)
-  isActive       Boolean      @default(true)
+  id                 String  @id @default(uuid())
+  user_id            String
+  current_balance    Float   @default(0)
+  all_time_fuunding  Float   @default(0)
+  all_time_withdrawn Float   @default(0)
+  isActive           Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

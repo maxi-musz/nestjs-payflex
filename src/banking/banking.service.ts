@@ -104,7 +104,7 @@ export class BankingService {
 
         } catch (error) {
             console.error(colors.red("Error initializing Paystack funding"), error);
-            return new ApiResponseDto(false, "Failed to initialize transaction");
+            return new ApiResponseDto(false, "Failed to initialize transaction", error);
         }
     }
 
@@ -128,13 +128,27 @@ export class BankingService {
                 console.log(colors.red("Transaction not found or amount is missing"));
                 throw new NotFoundException("Transaction not found or amount is missing");
             }
+
+            if(existingTransaction.status === "success") {
+                console.log(colors.red("Transaction already verified"));
+                return new ApiResponseDto(false, "Transaction already verified");
+            }
     
             const amountInKobo = existingTransaction.amount * 100;
 
             if (!dto.reference) {
                 throw new BadRequestException("Transaction reference is missing");
             }
-    
+
+            const updatedWallet = await this.prisma.wallet.findFirst({
+                where: { user_id: userPayload._id }
+              })
+
+            if (!updatedWallet) {
+                console.log(colors.red("Wallet not found"));
+                throw new NotFoundException("Wallet not found");
+            }
+
             // Verify transaction with Paystack
             let response: any;
             try {
@@ -174,6 +188,24 @@ export class BankingService {
                   icon: true
                 }
               });
+
+
+
+                console.log(colors.cyan(`Transaction amount: , ${existingTransaction.amount}`)); // Log the transaction amount
+                console.log(colors.cyan(`Current wallet balance: ", ${updatedWallet.current_balance}`)); // Log the current balance
+
+                // Update wallet
+                const updatedWalletResult = await this.prisma.wallet.update({
+                where: { id: updatedWallet?.id },
+                data: {
+                    current_balance: updatedWallet.current_balance + existingTransaction.amount,
+                    all_time_fuunding: updatedWallet.all_time_fuunding + existingTransaction.amount,
+                    all_time_withdrawn: updatedWallet.all_time_withdrawn,
+                    updatedAt: new Date()
+                }
+                });
+
+                console.log(colors.cyan(`wallet amount: , ${updatedWalletResult.current_balance}`));
 
               const formattedResponse = {
                 id: updatedTx.id,

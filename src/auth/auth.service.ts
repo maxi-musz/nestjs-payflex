@@ -140,7 +140,28 @@ export class AuthService {
                 };
             }
     
-            console.log(colors.blue("✅ Email verified. Proceeding with registration."));
+            console.log(colors.blue("✅ Email verified. creating wallet..."));
+
+            try {
+
+                await this.prisma.wallet.create({
+                data: {
+                    user_id: existingUser.id,
+                    current_balance: 0,
+                    all_time_fuunding: 0,
+                    all_time_withdrawn: 0,
+                    isActive: true,
+                }
+            });
+                
+            } catch (error) {
+                console.error(colors.red("Error creating wallet"), error);
+                return { 
+                    success: false, 
+                    message: ("Failed to create wallet" + error)
+                };
+                
+            }
     
             // 3. Generate password hash
             const hash = await argon.hash(dto.password);
@@ -169,19 +190,6 @@ export class AuthService {
                     address: true
                 }
             });
-
-            // const newAccount = await this.prisma.account.create({
-            //     data: {
-            //         user_id: updatedUser.id,
-            //         account_number: this.generateAccountNumber(), // Implement this function
-            //         accountType: 'ngn', // or whatever your default account type is
-            //         bank_name: 'Virtual Bank',
-            //         bank_code: '999', // Use appropriate bank code
-            //         balance: 0,
-            //         currency: 'ngn',
-            //         isActive: true
-            //     }
-            // });
     
             // 5. Remove sensitive data before returning
             const { password, hash: _, ...safeUser } = updatedUser;
