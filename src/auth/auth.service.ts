@@ -260,9 +260,16 @@ export class AuthService {
 
         const access_token = await this.signToken(user.id, user.email)
 
+        const formattedUser = {
+            id: user.id,
+            email: user.email,
+            name: `${user.first_name} ${user.last_name}`,
+            phone_number: user.phone_number,
+        }
+
         const responseData = {
             access_token: access_token,
-            user: user
+            user: formattedUser,
         }
 
         return new ApiResponseDto(true, "Welcome back", responseData)

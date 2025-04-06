@@ -225,4 +225,6 @@ export class BankingService {
             throw new Error(`Verification error: ${error.message}`);
         }
     }
+
+    
 }
