@@ -63,6 +63,19 @@ export class VtuService {
             amount: dto.amount,
             reference: generateReference()
         };
+
+        const userWallet = await this.prisma.wallet.findFirst({
+            where: { user_id: userPayload.sub }
+        })
+
+        if (!userWallet) {
+            console.log(colors.red("User wallet not found"));
+            return new ApiResponseDto(false, "User wallet not found");
+        }
+        if (userWallet.current_balance < dto.amount) {
+            console.log(colors.red("Insufficient wallet balance"));
+            return new ApiResponseDto(false, "Insufficient wallet balance");
+        }
     
         try {
             const apiUrl = `${GIFTBILL_CONFIG.BASE_URL}/airtime/topup`;
@@ -81,6 +94,18 @@ export class VtuService {
             //     console.log(colors.red(`Error purchasing airtime top up: ${response.data}`))
             //     return new ApiResponseDto(false, `Error purchasing airtime top up: ${response.data.message}`)
             // }
+
+            await this.prisma.wallet.update({
+                where: { id: userWallet.id },
+                data: {
+                    current_balance: {
+                        decrement: dto.amount
+                    },
+                    all_time_withdrawn: {
+                        increment: dto.amount  
+                    }
+                }
+            })
 
             const transaction = await this.prisma.transactionHistory.create({
                 data: {
