@@ -345,7 +345,7 @@ export class VtuService {
                 }
             );
         }).catch((error) => {
-            console.log(colors.red(`Transaction failed: ${error.message}`));
+            console.log(colors.red(`Transaction failed: ${error}`));
             return new ApiResponseDto(false, `Transaction failed: ${error.message}`);
         });
     }

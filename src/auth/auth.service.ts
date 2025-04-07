@@ -229,15 +229,16 @@ export class AuthService {
         }
 
         const secret = this.config.get('JWT_SECRET')
-        const expiration_time = this.config.get('JWT_EXPIRES_IN')
+        const expiration_time = this.config.get('JWT_EXPIRES_IN') || '7d'
 
         return this.jwt.signAsync(payload, {
-            expiresIn: '15m',
+            expiresIn: expiration_time,
             secret: secret
         })
     }
 
     async signin(dto: SignInDto) {
+        console.log(colors.cyan("Signing in user..."));
         // 1. Find user
         const user = await this.prisma.user.findUnique({
           where: { email: dto.email },
@@ -269,9 +270,11 @@ export class AuthService {
 
         const responseData = {
             access_token: access_token,
+            refresh_token: null,
             user: formattedUser,
         }
 
+        console.log(colors.magenta("User signed in successfully"));
         return new ApiResponseDto(true, "Welcome back", responseData)
     }
 

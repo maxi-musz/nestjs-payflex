@@ -6,6 +6,7 @@ import { ApiResponseDto } from "src/common/dto/api-response.dto";
 import { formatAmount } from "src/common/helper_functions/formatter";
 import { FlutterTransferResponse } from "src/common/interfaces/banking.interface";
 import { CreateVirtualAccountDto } from "src/common/dto/banking.dto";
+import { KycVerificationDto } from "./dto/user.dto";
 
  @Injectable()
  export class UserService {
@@ -206,12 +207,44 @@ import { CreateVirtualAccountDto } from "src/common/dto/banking.dto";
     //     }
     // }
 
-    async updateUserKYC(userPayload: any, dto: RequestEmailOTPDto) {
+    async updateUser(userPayload: any, dto: KycVerificationDto) {
         console.log(colors.cyan("Updating user KYC..."))
 
         try {
 
             // get user from db
+            const existingUser = await this.prisma.user.findUnique({
+                where: { id: userPayload.id },
+                include: {
+                    address: true,
+                    profile_image: true
+                }
+            })
+
+            if(!existingUser) {
+                console.log(colors.red("User not found"))
+                throw new NotFoundException("User not found")
+            }
+
+            // update the user 
+            // const updatedUser = await this.prisma.user.update({
+            //     where: { id: existingUser.id },
+            //     data: {
+            //         phone_number: dto.phone_number,
+            //         address: {
+            //             update: {
+            //                 home_address: dto.home_address,
+            //                 city: dto.city,
+            //                 state: dto.state,
+            //                 country: dto.country,
+            //             }
+            //         }
+            //     },
+            //     include: {
+            //         address: true,
+            //         profile_image: true
+            //     }
+            // });
             
         } catch (error) {
             console.error(colors.red(`KYC update error: ${error.message}`));
