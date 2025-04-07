@@ -1,4 +1,4 @@
-import { Body, Controller, Get, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, UseGuards } from "@nestjs/common";
 import { Request } from '@nestjs/common'
 import { UserService } from "./user.service";
 import { RequestEmailOTPDto } from "src/auth/dto";
@@ -13,4 +13,16 @@ export class UserController{
     fetchUserDashboard(@Request() req) {
         return this.userService.fetchUserDashboard(req.user)
     }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Get('fetch-user-kyc')
+    fetchUserKYC(@Request() req) {
+        return this.userService.fetchUserKYC(req.user)
+    }
+
+    // @UseGuards(AuthGuard('jwt'))
+    // @Post('new-ngn-account')
+    // createNgnAccount(@Request() req) {
+    //     return this.userService.createNgnAccount(req.user)
+    // }
 } 

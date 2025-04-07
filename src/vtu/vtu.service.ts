@@ -266,14 +266,18 @@ export class VtuService {
     
         // Start Prisma transaction
         return await this.prisma.$transaction(async (prisma) => {
-            const wallet = await prisma.account.findFirst({
-                where: { user_id: existingUser.id, currency: "ngn" }
+            const wallet = await prisma.wallet.findFirst({
+                where: { user_id: existingUser.id }
             });
+
+            // console.log(colors.blue(`Wallet: #${wallet}`));
     
-            if ((!wallet || (wallet?.balance ?? 0) < dto.amount)) {
+            if ((!wallet || (wallet?.current_balance ?? 0) < dto.amount)) {
                 console.log(colors.red("Not enough balance to complete transaction"));
                 throw new Error("Insufficient wallet balance");
             }
+
+            console.log(colors.blue(`Available wallet balance: #${formatAmount(wallet?.current_balance ?? 0)}`));
     
             let apiResponse: any;
             const apiUrl = `${GIFTBILL_CONFIG.BASE_URL}/internet/data`;
@@ -298,12 +302,12 @@ export class VtuService {
             }
     
             // Deduct balance
-            const updatedWallet = await prisma.account.update({
+            const updatedWallet = await prisma.wallet.update({
                 where: { id: wallet?.id },
-                data: { balance: { decrement: dto.amount } }
+                data: { current_balance: { decrement: dto.amount } }
             });
     
-            console.log(colors.yellow(`New Wallet Balance: ${updatedWallet.balance}`));
+            console.log(colors.yellow(`New Wallet Balance: ${updatedWallet.current_balance}`));
     
             // Record transaction
             const newHistory = await prisma.transactionHistory.create({
@@ -335,9 +339,9 @@ export class VtuService {
                 true,
                 `You have successfully purchased #${formatAmount(dto.amount)} worth of data for ${dto.number}`,
                 {
-                    amount: dto.amount,
+                    amount: formatAmount(dto.amount),
                     number: dto.number,
-                    icon: newHistory.icon
+                    icon: newHistory.icon?.secure_url
                 }
             );
         }).catch((error) => {

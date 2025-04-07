@@ -11,6 +11,8 @@ import { TransactionHistoryModule } from './transaction-history/transaction-hist
 import { VtuModule } from './vtu/vtu.module';
 import { CronModule } from './cron/cron.module';
 import { VirtualCardModule } from './virtual-card/virtual-card.module';
+import { BridgeCardModule } from './bridge-card/bridge-card.module';
+import { FlutterwaveModule } from './flutterwave/flutterwave.module';
 
 @Module({
   imports: [
@@ -20,7 +22,7 @@ import { VirtualCardModule } from './virtual-card/virtual-card.module';
     AuthModule, 
     UserModule, 
     BookmarkModule, 
-    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule],
+    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule],
   controllers: [AuthController],
   providers: [AuthService],
 })

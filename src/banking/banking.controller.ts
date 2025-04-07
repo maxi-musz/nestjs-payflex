@@ -12,7 +12,7 @@ export class BankingController {
     initiatePaystackFunding(@Body() dto: PaystackFundingDto, @Request() req){
         return this.bankingService.initialisePaystackFunding(dto, req.user)
     }
-
+ 
     @UseGuards(AuthGuard('jwt'))
     @Post('verify-paystack-funding')
     verifyPaystackFunding(@Body() dto: PaystackFundingVerifyDto, @Request() req) {

@@ -41,6 +41,7 @@ model User {
   updatedAt         DateTime      @updatedAt
 
   accounts Account[] @relation("UserAccounts")
+  cards    Card[]
 }
 
 model ProfileImage {
@@ -188,4 +189,29 @@ model Wallet {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Card {
+  id              String   @id @default(uuid())
+  user_id         String
+  bridge_card_id  String
+  currency        String
+  masked_pan      String
+  expiry_month    String
+  expiry_year     String
+  card_type       BridgeCurrencyType
+  balance         Float
+  status          String
+  is_active       Boolean
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now())
+
+  user            User     @relation(fields: [user_id], references: [id])
+}
+
+enum BridgeCurrencyType {
+  NGN
+  USD
+  GBP
+  EUR
 }

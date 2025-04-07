@@ -1,9 +1,15 @@
 import { Module } from '@nestjs/common';
-import { VirtualCardService } from './virtual-card.service';
-import { VirtualCardController } from './virtual-card.controller';
+import { BridgeCardService } from './virtual-card.service';
+import { BridgeCardController } from './virtual-card.controller';
+import { HttpModule } from '@nestjs/axios';
+import { ConfigModule } from '@nestjs/config';
 
 @Module({
-  providers: [VirtualCardService],
-  controllers: [VirtualCardController]
+  imports: [
+    HttpModule, // ✅ Include HttpModule here
+    ConfigModule,
+  ],
+  providers: [BridgeCardService],
+  controllers: [BridgeCardController]
 })
 export class VirtualCardModule {}

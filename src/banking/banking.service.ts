@@ -14,7 +14,7 @@ export class BankingService {
         private prisma: PrismaService,
 
     ) {}
-
+ 
     // 
     async initialisePaystackFunding(dto: PaystackFundingDto, userPayload: any) {
         // Determine Paystack environment key
@@ -140,11 +140,11 @@ export class BankingService {
                 throw new BadRequestException("Transaction reference is missing");
             }
 
-            const updatedWallet = await this.prisma.wallet.findFirst({
+            const userWallet = await this.prisma.wallet.findFirst({
                 where: { user_id: userPayload._id }
               })
 
-            if (!updatedWallet) {
+            if (!userWallet) {
                 console.log(colors.red("Wallet not found"));
                 throw new NotFoundException("Wallet not found");
             }
@@ -189,18 +189,16 @@ export class BankingService {
                 }
               });
 
-
-
-                console.log(colors.cyan(`Transaction amount: , ${existingTransaction.amount}`)); // Log the transaction amount
-                console.log(colors.cyan(`Current wallet balance: ", ${updatedWallet.current_balance}`)); // Log the current balance
+                console.log(colors.cyan(`Transaction amount: , ${existingTransaction.amount}`)); 
+                console.log(colors.cyan(`Current wallet balance: ", ${userWallet.current_balance}`)); 
 
                 // Update wallet
                 const updatedWalletResult = await this.prisma.wallet.update({
-                where: { id: updatedWallet?.id },
+                where: { id: userWallet?.id },
                 data: {
-                    current_balance: updatedWallet.current_balance + existingTransaction.amount,
-                    all_time_fuunding: updatedWallet.all_time_fuunding + existingTransaction.amount,
-                    all_time_withdrawn: updatedWallet.all_time_withdrawn,
+                    current_balance: userWallet.current_balance + existingTransaction.amount,
+                    all_time_fuunding: userWallet.all_time_fuunding + existingTransaction.amount,
+                    all_time_withdrawn: userWallet.all_time_withdrawn,
                     updatedAt: new Date()
                 }
                 });
