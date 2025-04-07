@@ -269,14 +269,12 @@ export class VtuService {
             const wallet = await prisma.wallet.findFirst({
                 where: { user_id: existingUser.id }
             });
-
-            // console.log(colors.blue(`Wallet: #${wallet}`));
     
             if ((!wallet || (wallet?.current_balance ?? 0) < dto.amount)) {
                 console.log(colors.red("Not enough balance to complete transaction"));
                 throw new Error("Insufficient wallet balance");
             }
-
+    
             console.log(colors.blue(`Available wallet balance: #${formatAmount(wallet?.current_balance ?? 0)}`));
     
             let apiResponse: any;
@@ -297,8 +295,19 @@ export class VtuService {
                     throw new Error("API request failed: " + apiResponse.data.message);
                 }
             } catch (error: any) {
-                console.log(colors.red(`API Error: ${error.message}`));
-                throw new Error(error.response?.data?.message || "Failed to process request");
+                const giftbillErrorMessage = error.response?.data?.message || error.message;
+                console.log(colors.red(`API Error: ${giftbillErrorMessage}`));
+    
+                // Graceful handling for specific Giftbill error
+                if (giftbillErrorMessage.includes("Undefined variable: res")) {
+                    return new ApiResponseDto(
+                        true,
+                        "The data plan is currently not available. Please try another plan or later.",
+                        null
+                    );
+                }
+    
+                throw new Error(giftbillErrorMessage || "Failed to process request");
             }
     
             // Deduct balance
@@ -349,5 +358,6 @@ export class VtuService {
             return new ApiResponseDto(false, `Transaction failed: ${error.message}`);
         });
     }
+    
     
 }
