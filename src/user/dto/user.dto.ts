@@ -1,23 +1,66 @@
-import { IsEnum, IsNotEmpty, IsString } from "class-validator";
+import { IsEnum, IsNotEmpty, IsOptional, IsString } from "class-validator";
 
-enum IdTypeEnum {
-    NIGERIAN_BVN_VERIFICATION,
-    NIGERIAN_INTERNATIONAL_PASSPORT,
-    NIGERIAN_PVC,
-    NIGERIAN_DRIVERS_LICENSE
+export enum KycIdType {
+    NIGERIAN_BVN_VERIFICATION = "NIGERIAN_BVN_VERIFICATION",
+    NIGERIAN_NIN = "NIGERIAN_NIN",
+    NIGERIAN_INTERNATIONAL_PASSPORT = "NIGERIAN_INTERNATIONAL_PASSPORT",
+    NIGERIAN_PVC = "NIGERIAN_PVC",
+    NIGERIAN_DRIVERS_LICENSE = "NIGERIAN_DRIVERS_LICENSE"
 }
+  
 export class KycVerificationDto {
-    @IsString()
     @IsNotEmpty()
-    @IsEnum(IdTypeEnum)
-    id_type: string;
+    @IsEnum(KycIdType)
+    id_type: KycIdType;
 
     @IsString()
     @IsNotEmpty()
-    bvn: string;
+    id_no: string;
 }
 
 export class UpdateUserDto {
+    @IsString()
+    @IsOptional()
+    first_name?: string;
+
+    @IsString()
+    @IsOptional()
+    last_name?: string;
+
+    @IsString()
+    @IsOptional()
+    email?: string;
+
+    @IsString()
+    @IsOptional()
+    home_address?: string;
+
+    @IsString()
+    @IsOptional()
+    city?: string;
+
+    @IsString()
+    @IsOptional()
+    state?: string;
+
+    @IsString()
+    @IsOptional()
+    country?: string;
+
+    @IsString()
+    @IsOptional()
+    postal_code?: string;
+
+    @IsString()
+    @IsOptional()
+    house_number?: string;
+}
+
+export class VerifyBvnDto {
+    @IsString()
+    @IsNotEmpty()
+    bvn: string;
+
     @IsString()
     @IsNotEmpty()
     first_name: string;
@@ -28,21 +71,5 @@ export class UpdateUserDto {
 
     @IsString()
     @IsNotEmpty()
-    email: string;
-
-    @IsString()
-    @IsNotEmpty()
-    phone_number: string;
-
-    @IsString()
-    address: string;
-
-    @IsString()
-    city: string;
-
-    @IsString()
-    state: string;
-
-    @IsString()
-    country: string;
+    redirect_url: string;
 }

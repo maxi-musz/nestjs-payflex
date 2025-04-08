@@ -17,6 +17,10 @@ export class CreateCardDto {
   @IsNumber()
   funding_amount: number;
 
+  @IsNotEmpty()
+  @IsString()
+  pin: string;
+
 }
 
 export class FundCardDto {
@@ -41,4 +45,8 @@ export class WithdrawCardDto {
 
 export class CardHolderDto {
   
+}
+
+export class CreateBridgeCardDto {
+
 }

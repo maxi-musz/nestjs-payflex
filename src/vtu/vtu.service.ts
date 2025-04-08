@@ -253,8 +253,7 @@ export class VtuService {
             console.log(colors.red('User not found'));
             return new ApiResponseDto(false, "User not found");
         }
-    
-        console.log("Body: ", dto);
+
         const reference = generateReference();
     
         const requestBody = {
@@ -275,7 +274,7 @@ export class VtuService {
                 throw new Error("Insufficient wallet balance");
             }
     
-            console.log(colors.blue(`Available wallet balance: #${formatAmount(wallet?.current_balance ?? 0)}`));
+            // console.log(colors.blue(`Available wallet balance: #${formatAmount(wallet?.current_balance ?? 0)}`));
     
             let apiResponse: any;
             const apiUrl = `${GIFTBILL_CONFIG.BASE_URL}/internet/data`;
@@ -301,7 +300,7 @@ export class VtuService {
                 // Graceful handling for specific Giftbill error
                 if (giftbillErrorMessage.includes("Undefined variable: res")) {
                     return new ApiResponseDto(
-                        true,
+                        false,
                         "The data plan is currently not available. Please try another plan or later.",
                         null
                     );

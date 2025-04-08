@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, Put, UseGuards } from "@nestjs/common";
 import { Request } from '@nestjs/common'
 import { UserService } from "./user.service";
 import { RequestEmailOTPDto } from "src/auth/dto";
 import { AuthGuard } from "@nestjs/passport";
+import { KycVerificationDto, UpdateUserDto } from "./dto/user.dto";
 
 @Controller('user')
 export class UserController{
@@ -20,9 +21,15 @@ export class UserController{
         return this.userService.fetchUserKYC(req.user)
     }
 
-    // @UseGuards(AuthGuard('jwt'))
-    // @Post('new-ngn-account')
-    // createNgnAccount(@Request() req) {
-    //     return this.userService.createNgnAccount(req.user)
-    // }
+    @UseGuards(AuthGuard('jwt'))
+    @Put('update-profile')
+    updateUserProfile(@Body() dto: UpdateUserDto, @Request() req) {
+        return this.userService.updateUserProfile(dto, req.user)
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Put('update-kyc')
+    UpdateKyc(@Body() dto: KycVerificationDto, @Request() req) {
+        return this.userService.UpdateKyc(dto, req.user)
+    }
 } 

@@ -17,6 +17,14 @@ export class BridgeCardController {
     const userId = req.user.sub;
     return await this.bridgeCardService.createCard(userId, dto);
     }
+
+    @Post('fund-sandbox-issuing-wallet')
+  @HttpCode(HttpStatus.CREATED)
+  async fundIssuingWallet() {
+    return await this.bridgeCardService.fundIssuingWallet();
+  }
   
   }
+
+  
 

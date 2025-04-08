@@ -24,21 +24,23 @@ model User {
 
   first_name        String?
   last_name         String?
-  email             String        @unique
+  cardholder_id     String?
+  email             String           @unique
   hash              String?
   phone_number      String?
   password          String?
   otp               String?
   otp_expires_at    DateTime?
-  role              Role?         @default(user)
+  role              Role?            @default(user)
   gender            Gender?
   date_of_birth     DateTime?
   profile_image     ProfileImage?
   address           Address?
-  is_email_verified Boolean       @default(false)
+  is_email_verified Boolean          @default(false)
+  kyc_verification  KycVerification?
   refreshToken      RefreshToken?
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
   accounts Account[] @relation("UserAccounts")
   cards    Card[]
@@ -59,7 +61,19 @@ model Address {
   state        String?
   country      String?
   home_address String?
+  house_number String?
+  postal_code  String?
   user         User    @relation(fields: [userId], references: [id])
+}
+
+model KycVerification {
+  id          String       @id @default(uuid())
+  userId      String       @unique
+  is_verified Boolean      @default(false)
+  id_type     KycIdType?
+  id_no       String
+  status      KycIdStatus?
+  user        User         @relation(fields: [userId], references: [id])
 }
 
 enum Role {
@@ -71,6 +85,20 @@ enum Role {
 enum Gender {
   male
   female
+}
+
+enum KycIdStatus {
+  pending
+  approved
+  rejected
+}
+
+enum KycIdType {
+  NIGERIAN_BVN_VERIFICATION
+  NIGERIAN_NIN
+  NIGERIAN_INTERNATIONAL_PASSPORT
+  NIGERIAN_PVC
+  NIGERIAN_DRIVERS_LICENSE
 }
 
 model RefreshToken {
@@ -100,6 +128,8 @@ model TransactionHistory {
   payment_method        PaymentMethod?     @default(paystack)
   icon                  TransactionIcon?
   fee                   Float?             @default(0.0)
+  balance_before        Float              @default(0)
+  balance_after         Float              @default(0)
   transaction_number    String?
   transaction_reference String?            @unique
   session_id            String?
@@ -192,21 +222,31 @@ model Wallet {
 }
 
 model Card {
-  id              String   @id @default(uuid())
-  user_id         String
-  bridge_card_id  String
-  currency        String
-  masked_pan      String
-  expiry_month    String
-  expiry_year     String
-  card_type       BridgeCurrencyType
-  balance         Float
-  status          String
-  is_active       Boolean
-  metadata        Json     @default("{}")
-  createdAt       DateTime @default(now())
+  id                    String              @id @default(uuid())
+  user_id               String
+  bridge_card_id        String?
+  bridge_cardholder_id  String?             @default("null")
+  card_currency         BridgeCurrencyType?
+  masked_pan            String?
+  expiry_month          String?
+  expiry_year           String?
+  card_type             String?
+  first_funding_amount  Float?
+  card_limit            Float?
+  current_balance       Float?
+  balance_before        Float?
+  transaction_reference String?
+  balance_after         Float?
+  card_name             String?
+  card_brand            String?
+  card_last4            String?
+  status                String?
+  is_active             Boolean             @default(true)
+  metadata              Json?               @default("{}")
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
 
-  user            User     @relation(fields: [user_id], references: [id])
+  user User @relation(fields: [user_id], references: [id])
 }
 
 enum BridgeCurrencyType {

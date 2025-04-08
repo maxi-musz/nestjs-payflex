@@ -1,12 +1,9 @@
 import { HttpException, HttpStatus, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "src/prisma/prisma.service";
 import * as colors from "colors";
-import { RequestEmailOTPDto } from "src/auth/dto";
 import { ApiResponseDto } from "src/common/dto/api-response.dto";
-import { formatAmount } from "src/common/helper_functions/formatter";
-import { FlutterTransferResponse } from "src/common/interfaces/banking.interface";
-import { CreateVirtualAccountDto } from "src/common/dto/banking.dto";
-import { KycVerificationDto } from "./dto/user.dto";
+import { KycVerificationDto, UpdateUserDto, VerifyBvnDto } from "./dto/user.dto";
+import { KycIdType as PrismaKycIdType } from '@prisma/client';
 
  @Injectable()
  export class UserService {
@@ -106,6 +103,30 @@ import { KycVerificationDto } from "./dto/user.dto";
         }
     }
 
+    async verifyBvn(dto: VerifyBvnDto) {
+        console.log(colors.cyan("Verifying BVN..."))
+
+        try {
+
+            const verifyEndpoint = "https://api.flutterwave.com/v3/bvn/verifications";
+            const verifyBvnReqBody = {
+                bvn: dto.bvn,
+                first_name: dto.first_name,
+                last_name: dto.last_name,
+                redirect_url: "http://localhost:3000/profile",
+            };
+    
+            // Add logic to send the request to the verifyEndpoint here
+    
+        } catch (error) {
+            console.error(colors.red(`BVN verification error: ${error.message}`));
+            throw new HttpException(
+                error.response?.data?.message || 'BVN verification failed',
+                error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+            );
+        }
+    }
+
     async fetchUserKYC(userPayload: any) {
         console.log(colors.cyan("Fetching user KYC..."))
 
@@ -146,196 +167,170 @@ import { KycVerificationDto } from "./dto/user.dto";
         }
     }
 
-    // async updateUserProfile(userPayload: any, dto: RequestEmailOTPDto) {
-    //     console.log(colors.cyan("Updating user profile..."))
-
-    //     try {
-    //         // find the user from the db using the supplied user email
-    //         const existingUser = await this.prisma.user.findFirst({
-    //             where: {email: userPayload.email},
-    //             include: {
-    //                 address: true,
-    //                 profile_image: true
-    //             }
-    //         })
-
-    //         if(!existingUser) {
-    //             console.log(colors.red("User not found"))
-    //             throw new NotFoundException("User not found")
-    //         }
-
-    //         // Update user profile
-    //         const updatedUser = await this.prisma.user.update({
-    //             where: { id: existingUser.id },
-    //             data: {
-    //                 first_name: dto.first_name,
-    //                 last_name: dto.last_name,
-    //                 phone_number: dto.phone_number,
-    //                 address: {
-    //                     update: {
-    //                         home_address: dto.home_address,
-    //                         city: dto.city,
-    //                         state: dto.state,
-    //                         country: dto.country,
-    //                     }
-    //                 }
-    //             },
-    //             include: {
-    //                 address: true,
-    //                 profile_image: true
-    //             }
-    //         });
-
-    //         console.log(colors.magenta("User profile successfully updated"))
-
-    //         return new ApiResponseDto(true, "Profile successfully updated", {
-    //             id: updatedUser.id,
-    //             first_name: updatedUser.first_name,
-    //             last_name: updatedUser.last_name,
-    //             email: updatedUser.email,
-    //             phone_number: updatedUser.phone_number,
-    //             address: updatedUser.address?.home_address,
-    //             city: updatedUser.address?.city,
-    //             state: updatedUser.address?.state,
-    //             country: updatedUser.address?.country,
-    //             profile_image: updatedUser.profile_image
-    //         });
-
-    //     } catch (error) {
-    //         console.error(colors.red(`Profile update error: ${error.message}`));
-    //         throw error; 
-    //     }
-    // }
-
-    async updateUser(userPayload: any, dto: KycVerificationDto) {
+    async updateUserProfile(dto: UpdateUserDto, userPayload: any) {
         console.log(colors.cyan("Updating user KYC..."))
-
+    
         try {
-
             // get user from db
             const existingUser = await this.prisma.user.findUnique({
-                where: { id: userPayload.id },
+                where: { id: userPayload.sub },
                 include: {
                     address: true,
                     profile_image: true
                 }
             })
-
+    
             if(!existingUser) {
                 console.log(colors.red("User not found"))
                 throw new NotFoundException("User not found")
             }
-
+    
+            // Create an object with only the provided fields
+            const userUpdateData: any = {};
+            
+            // Handle user fields
+            if(dto.first_name) userUpdateData.first_name = dto.first_name;
+            if(dto.last_name) userUpdateData.last_name = dto.last_name;
+            if(dto.email) userUpdateData.email = dto.email;
+            
+            // Handle address fields if any were provided
+            const addressFields = ['home_address', 'city', 'state', 'country', 'postal_code', 'house_number'];
+            const hasAddressUpdates = addressFields.some(field => dto[field] !== undefined);
+            
+            if (hasAddressUpdates) {
+                userUpdateData.address = {
+                    update: {}
+                };
+                
+                addressFields.forEach(field => {
+                    if (dto[field] !== undefined) {
+                        userUpdateData.address.update[field] = dto[field];
+                    }
+                });
+            }
+    
+            // Only update if there's something to update
+            if (Object.keys(userUpdateData).length === 0) {
+                console.log(colors.yellow("No fields to update"));
+                return new ApiResponseDto(
+                    true, "No fields to update", 
+                    { user: existingUser }
+                );
+            }
+    
             // update the user 
-            // const updatedUser = await this.prisma.user.update({
-            //     where: { id: existingUser.id },
-            //     data: {
-            //         phone_number: dto.phone_number,
-            //         address: {
-            //             update: {
-            //                 home_address: dto.home_address,
-            //                 city: dto.city,
-            //                 state: dto.state,
-            //                 country: dto.country,
-            //             }
-            //         }
-            //     },
-            //     include: {
-            //         address: true,
-            //         profile_image: true
-            //     }
-            // });
-            
+            const updatedUser = await this.prisma.user.update({
+                where: { id: existingUser.id },
+                data: userUpdateData,
+                include: {
+                    address: true,
+                    profile_image: true
+                }
+            });
+    
+            console.log(colors.magenta("User information successfully updated"))
+            return new ApiResponseDto(
+                true, "User information successfully updated", 
+                {
+                    id: updatedUser.id,
+                    first_name: updatedUser.first_name,
+                    last_name: updatedUser.last_name,
+                    email: updatedUser.email,
+                    phone_number: updatedUser.phone_number,
+                    gender: updatedUser.gender,
+                    date_of_birth: updatedUser.date_of_birth,
+                    is_email_verified: updatedUser.is_email_verified,
+                    createdAt: updatedUser.createdAt,
+                    address: {
+                         id: updatedUser.address?.id,
+                         city: updatedUser.address?.city,
+                         state: updatedUser.address?.state,
+                         country: updatedUser.address?.country,
+                         home_address: updatedUser.address?.home_address,
+                         postal_code: updatedUser.address?.postal_code,
+                         house_number: updatedUser.address?.house_number,
+                    },
+                    profile_image: {
+                        secure_url: updatedUser.profile_image?.secure_url,
+                        public_id: updatedUser.profile_image?.public_id,
+                        }
+                }
+            );
         } catch (error) {
-            console.error(colors.red(`KYC update error: ${error.message}`));
-            throw error; 
-            
+            console.error(colors.red(`User information update error: ${error.message}`));
+            throw new HttpException(
+                error.response?.data?.message || 'User information update failed',
+                error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+            ); 
         }
     }
 
-    // async createVirtualAccountNumber(userPayload: any, dto: CreateVirtualAccountDto): Promise<FlutterTransferResponse> {
-    //     try {
-    //       const user = await this.prisma.user.findUnique({
-    //         where: { id: userPayload.id },
-    //       });
-      
-    //       if (!user) {
-    //         throw new HttpException('User profile not found', HttpStatus.NOT_FOUND);
-    //       }
-      
-    //       // Enforce one account per currency
-    //       const existingAccount = await this.prisma.account.findFirst({
-    //         where: { 
-    //             user_id: user.id,
-    //             currency: dto.currency
-    //         },
-    //       });
-      
-    //       if (existingAccount) {
-    //         throw new HttpException(`Account for ${dto.currency} already exists`, HttpStatus.BAD_REQUEST);
-    //       }
-      
-    //       const tx_ref = `VA-${dto.currency}-${user.id}-${Date.now()}`;
-      
-    //       const payload: any = {
-    //         email: user.email,
-    //         is_permanent: true,
-    //         tx_ref,
-    //         // bvn: user.profile.bvn,
-    //         currency: dto.currency,
-    //         bvn: dto.bvn,
-    //         phonenumber: user.profile.phoneNumber,
-    //         firstname: user.profile.firstName,
-    //         lastname: user.profile.lastName,
-    //         narration: `${user.profile.firstName} ${user.profile.lastName}`,
-    //       };
-      
-    //       // Optional: use different APIs or parameters per currency
-    //       const url = `${this.flutterwaveBaseUrl}/virtual-account-numbers`;
-      
-    //       const response = await firstValueFrom(
-    //         this.httpService.post(url, payload, {
-    //           headers: {
-    //             Authorization: `Bearer ${this.secretKey}`,
-    //             'Content-Type': 'application/json',
-    //           },
-    //         }),
-    //       );
-      
-    //       const result = response.data;
-      
-    //       if (result.status === 'success') {
-    //         await this.prisma.virtualAccount.create({
-    //           data: {
-    //             userId,
-    //             accountNumber: result.data.account_number,
-    //             accountName: result.data.account_name,
-    //             bankName: result.data.bank_name,
-    //             currency,
-    //             reference: tx_ref,
-    //             metadata: result.data,
-    //           },
-    //         });
-    //       } else {
-    //         throw new HttpException(result.message || 'Failed to create virtual account', HttpStatus.BAD_REQUEST);
-    //       }
-      
-    //       return result;
-    //     } catch (error) {
-    //       this.logger.error(`Virtual account creation failed: ${error.message}`, error.stack);
-      
-    //       if (error instanceof HttpException) throw error;
-      
-    //       if (error.response) {
-    //         throw new HttpException(
-    //           error.response.data?.message || 'Flutterwave API error',
-    //           error.response.status || HttpStatus.INTERNAL_SERVER_ERROR,
-    //         );
-    //       }
-      
-    //       throw new HttpException('Virtual account service unavailable', HttpStatus.SERVICE_UNAVAILABLE);
-    //     }
-    // }      
-
-
+    async UpdateKyc(dto: KycVerificationDto, userPayload: any) {
+        console.log(colors.cyan("Updating user KYC..."))
+        try {
+            // find the user from the db using the supplied user email
+            const existingUser = await this.prisma.user.findFirst({
+                where: {email: userPayload.email},
+                include: {
+                    address: true,
+                    profile_image: true,
+                    kyc_verification: true
+                }
+            })
+            if(!existingUser) {
+                console.log(colors.red("User not found"))
+                throw new NotFoundException("User not found")
+            }
+            // Check if the user has already been verified
+            if(existingUser.kyc_verification?.is_verified) {
+                console.log(colors.red("User already verified"))
+                throw new HttpException("User already verified", HttpStatus.BAD_REQUEST);
+            }
+    
+            // Create or update KYC verification record
+            const updatedUser = await this.prisma.user.update({
+                where: { id: existingUser.id },
+                data: {
+                    kyc_verification: {
+                        upsert: {
+                            create: {
+                                id_type: dto.id_type,
+                                id_no: dto.id_no,
+                                status: "approved",
+                                is_verified: false
+                            },
+                            update: {
+                                id_type: dto.id_type ,
+                                id_no: dto.id_no,
+                                status: "approved"
+                            }
+                        }
+                    }
+                },
+                include: {
+                    kyc_verification: true
+                }
+            });
+    
+            console.log(colors.magenta("User KYC verification submitted successfully"))
+            return new ApiResponseDto(
+                true, 
+                "KYC verification submitted successfully", 
+                {
+                    id: updatedUser.kyc_verification?.id,
+                    user_id: updatedUser.id,
+                    id_type: updatedUser.kyc_verification?.id_type,
+                    id_no: updatedUser.kyc_verification?.id_no,
+                    status: updatedUser.kyc_verification?.status,
+                    is_verified: updatedUser.kyc_verification?.is_verified
+                }
+            );
+        } catch (error) {
+            console.error(colors.red(`KYC verification error: ${error.message}`));
+            throw new HttpException(
+                error.response?.data?.message || 'KYC verification failed',
+                error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+            );
+        }
+    }
  }
