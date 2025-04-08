@@ -113,12 +113,13 @@ import { formatDate } from "src/common/helper_functions/formatter";
                 where: {id: userPayload.sub},
                 include: {
                     profile_image: true,
-                    address: true
+                    address: true,
+                    kyc_verification: true
                 }
             })
 
             console.log(colors.magenta(`User profile data retrieved successfully for: ${fullUserDetails}`))
-            const formattedResponse = {
+            const formattedUserProfile = {
                 id: fullUserDetails?.id || "",
                 first_name: fullUserDetails?.first_name || "",
                 last_name: fullUserDetails?.last_name || "",
@@ -131,10 +132,22 @@ import { formatDate } from "src/common/helper_functions/formatter";
                 joined: fullUserDetails?.createdAt ? formatDate(fullUserDetails.createdAt) : "N/A"
             }
 
+            const user_kyc = {
+                id: fullUserDetails?.kyc_verification?.id || "",
+                user_id: fullUserDetails?.kyc_verification?.userId || "",
+                is_active: fullUserDetails?.kyc_verification?.is_verified || "",
+                status: fullUserDetails?.kyc_verification?.status || "",
+                id_type: fullUserDetails?.kyc_verification?.id_type || "",
+                id_number: fullUserDetails?.kyc_verification?.id_no || "",
+            }
+
             return new ApiResponseDto(
                 true,
                 "User profile successfully fetched",
-                formattedResponse
+                {
+                    profile_data: formattedUserProfile,
+                    user_kyc_data: user_kyc
+                }
             )
             
         } catch (error) {
