@@ -138,6 +138,7 @@ import { formatDate } from "src/common/helper_functions/formatter";
                 city: fullUserDetails?.address?.city,
                 state: fullUserDetails?.address?.state,
                 country: fullUserDetails?.address?.country,
+                house_address: fullUserDetails?.address?.home_address,
                 postal_code: fullUserDetails?.address?.postal_code
             }
 
