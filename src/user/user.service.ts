@@ -118,7 +118,7 @@ import { formatDate } from "src/common/helper_functions/formatter";
                 }
             })
 
-            console.log(colors.magenta(`User profile data retrieved successfully for: ${fullUserDetails}`))
+            console.log(colors.magenta(`User profile data retrieved successfully for: ${fullUserDetails?.email}`))
             const formattedUserProfile = {
                 id: fullUserDetails?.id || "",
                 first_name: fullUserDetails?.first_name || "",
@@ -129,7 +129,16 @@ import { formatDate } from "src/common/helper_functions/formatter";
                 role: fullUserDetails?.role || "",
                 date_of_birth: fullUserDetails?.date_of_birth || "",
                 email_verification: fullUserDetails?.is_email_verified || false,
-                joined: fullUserDetails?.createdAt ? formatDate(fullUserDetails.createdAt) : "N/A"
+                joined: fullUserDetails?.createdAt ? formatDate(fullUserDetails.createdAt) : "N/A",
+            }
+
+            const address = {
+                id: fullUserDetails?.address?.id,
+                house_no: fullUserDetails?.address?.house_number,
+                city: fullUserDetails?.address?.city,
+                state: fullUserDetails?.address?.state,
+                country: fullUserDetails?.address?.country,
+                postal_code: fullUserDetails?.address?.postal_code
             }
 
             const user_kyc = {
@@ -146,6 +155,7 @@ import { formatDate } from "src/common/helper_functions/formatter";
                 "User profile successfully fetched",
                 {
                     profile_data: formattedUserProfile,
+                    addres: address,
                     user_kyc_data: user_kyc
                 }
             )

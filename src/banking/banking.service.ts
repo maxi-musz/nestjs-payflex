@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { PaystackFundingDto, PaystackFundingVerifyDto } from 'src/common/dto/banking.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import * as colors from "colors"
@@ -7,13 +7,30 @@ import axios from "axios";
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import { formatAmount, formatDate } from 'src/common/helper_functions/formatter';
 import { generateSessionId } from 'src/common/helper_functions/generators';
+import { CreateVirtualAccountDto } from './dto/accountNo-creation.dto';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class BankingService {
-    constructor(
-        private prisma: PrismaService,
 
-    ) {}
+    private readonly apiUrl: string;
+    private readonly secretKey: string;
+
+    constructor(
+        private readonly configService: ConfigService,
+        private readonly prisma: PrismaService,
+    ) {
+        this.apiUrl = 'https://api.flutterwave.com/v3';
+        this.secretKey = this.configService.get<string>('FLW_SECRET_KEY') || '';
+    }
+
+    private getHeaders() {
+        return {
+          'Authorization': `Bearer ${this.secretKey}`,
+          'Content-Type': 'application/json',
+        };
+      }
+    
  
     // 
     async initialisePaystackFunding(dto: PaystackFundingDto, userPayload: any) {
@@ -221,6 +238,116 @@ export class BankingService {
         } catch (error) {
             console.error(colors.red(`Verification error: ${error.message}`));
             throw new Error(`Verification error: ${error.message}`);
+        }
+    }
+
+    async createVirtualIntlBankAccountNumber(dto: CreateVirtualAccountDto, userPayload: any) {
+        console.log(colors.cyan(`Creating a new ${dto.currency} virtual account for user: ${userPayload.email}`));
+    
+        try {
+            // get user details
+            const existingUser = await this.prisma.user.findUnique({
+                where: {id: userPayload.sub},
+                include: {
+                    address: true,
+                    profile_image: true,
+                    kyc_verification: true,
+                }
+            });
+    
+            if (!existingUser) {
+                throw new HttpException('User not found', HttpStatus.NOT_FOUND);
+            }
+    
+            // Step 2: Check if user already has account in this currency
+            const existingAccount = await this.prisma.account.findFirst({
+                where: { 
+                    user_id: userPayload.sub, 
+                    currency: dto.currency 
+                },
+            });
+    
+            if (existingAccount?.account_number) {
+                throw new HttpException(
+                    `You already have a ${dto.currency} virtual account`,
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+    
+            // Step 3: Create virtual account on Flutterwave
+            const endpoint = `${this.apiUrl}/virtual-account-numbers`;
+            
+            console.log("Calling flutterwave endpoint...");
+            const requestBody = {
+                email: existingUser.email,
+                is_permanent: true,
+                bvn: existingUser?.kyc_verification?.id_no || '22222222222',
+                tx_ref: `VA-${Date.now()}-${existingUser.id}`,
+                phonenumber: existingUser.phone_number || '08000000000',
+                firstname: existingUser.first_name || 'Unknown',
+                lastname: existingUser.last_name || 'User',
+                narration: `${existingUser.first_name || 'Unknown'} ${existingUser.last_name || 'User'}`,
+                currency: dto.currency
+            };
+            
+            console.log(colors.yellow('Creating virtual account...'));
+    
+            let response;
+            try {
+                response = await axios.post(endpoint, requestBody, {
+                    headers: this.getHeaders(),
+                });
+                
+                const accountData = response.data.data;
+                console.log(colors.blue(`Newly created virtual account: ${JSON.stringify(accountData)}`));
+                
+                // Step 4: Save virtual account to database
+                const accountToSave = {
+                    user_id: existingUser.id,
+                    currency: dto.currency,
+                    account_number: accountData.account_number,
+                    bank_name: accountData.bank_name,
+                    reference: accountData.reference,
+                    order_ref: accountData.order_ref,
+                    flutterwave_id: accountData.id.toString(),
+                    isActive: true,
+                    meta_data: accountData,
+                };
+                
+                const newAccount = existingAccount
+                    ? await this.prisma.account.update({
+                        where: { id: existingAccount.id },
+                        data: accountToSave,
+                    })
+                    : await this.prisma.account.create({ data: accountToSave });
+                
+                console.log(colors.magenta(`New ${dto.currency} virtual account successfully created`));
+                return new ApiResponseDto(
+                    true,
+                    `New ${dto.currency} virtual account successfully created`,
+                    newAccount
+                );
+                
+            } catch (error) {
+                // Better error handling for axios errors
+                console.error(colors.red('Error response from Flutterwave:'), 
+                    error.response?.data || error.message);
+                    
+                const errorMessage = error.response?.data?.message || 
+                    'Virtual account creation failed';
+                    
+                throw new HttpException(errorMessage, 
+                    error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+        } catch (error) {
+            console.log(colors.red(`Error creating account: ${error.message || error}`));
+            
+            // Return error response instead of undefined
+            return new ApiResponseDto(
+                false,
+                error.message || 'Failed to create virtual account',
+                null
+            );
         }
     }
 

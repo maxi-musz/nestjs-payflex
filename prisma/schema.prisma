@@ -190,12 +190,16 @@ model Account {
   id             String       @id @default(uuid())
   user_id        String
   account_number String       @unique
-  accountType    AccountType
+  accountType    AccountType? @default(savings)
   currency       CurrencyType
   bank_name      String
-  bank_code      String
+  reference      String?
+  order_ref      String?
+  flutterwave_id String?
+  bank_code      String?
   balance        Float        @default(0)
   isActive       Boolean      @default(true)
+  meta_data      Json?        @default("{}")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
