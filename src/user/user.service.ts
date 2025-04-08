@@ -3,7 +3,7 @@ import { PrismaService } from "src/prisma/prisma.service";
 import * as colors from "colors";
 import { ApiResponseDto } from "src/common/dto/api-response.dto";
 import { KycVerificationDto, UpdateUserDto, VerifyBvnDto } from "./dto/user.dto";
-import { KycIdType as PrismaKycIdType } from '@prisma/client';
+import { formatDate } from "src/common/helper_functions/formatter";
 
  @Injectable()
  export class UserService {
@@ -100,6 +100,46 @@ import { KycIdType as PrismaKycIdType } from '@prisma/client';
         } catch (error) {
             console.error(colors.red(`Dashboard fetch error: ${error.message}`));
             throw error; 
+        }
+    }
+
+    async fetchUserProfile(userPayload: any) {
+        console.log(colors.cyan(`Fetching current user profile: ${userPayload.email}`))
+
+        try {
+
+            // fetch user from db
+            const fullUserDetails = await this.prisma.user.findUnique({
+                where: {id: userPayload.sub},
+                include: {
+                    profile_image: true,
+                    address: true
+                }
+            })
+
+            console.log(colors.magenta(`User profile data retrieved successfully for: ${fullUserDetails}`))
+            const formattedResponse = {
+                id: fullUserDetails?.id || "",
+                first_name: fullUserDetails?.first_name || "",
+                last_name: fullUserDetails?.last_name || "",
+                email: fullUserDetails?.email || "",
+                phone_number: fullUserDetails?.phone_number || "",
+                gender: fullUserDetails?.phone_number || "",
+                role: fullUserDetails?.role || "",
+                date_of_birth: fullUserDetails?.date_of_birth || "",
+                email_verification: fullUserDetails?.is_email_verified || false,
+                joined: fullUserDetails?.createdAt ? formatDate(fullUserDetails.createdAt) : "N/A"
+            }
+
+            return new ApiResponseDto(
+                true,
+                "User profile successfully fetched",
+                formattedResponse
+            )
+            
+        } catch (error) {
+            console.log(colors.red(`Error fetching user details: ${error}`))
+            throw new HttpException("Error fetching user details", HttpStatus.SERVICE_UNAVAILABLE, {cause: new Error()})   
         }
     }
 

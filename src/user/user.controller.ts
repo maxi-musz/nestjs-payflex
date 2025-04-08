@@ -16,6 +16,12 @@ export class UserController{
     }
 
     @UseGuards(AuthGuard('jwt'))
+    @Get('fetch-user-profile')
+    fetchUserprofile(@Request() req) {
+        return this.userService.fetchUserProfile(req.user)
+    }
+
+    @UseGuards(AuthGuard('jwt'))
     @Get('fetch-user-kyc')
     fetchUserKYC(@Request() req) {
         return this.userService.fetchUserKYC(req.user)
