@@ -147,10 +147,10 @@ export class BankingService {
                 throw new NotFoundException("Transaction not found or amount is missing");
             }
 
-            // if(existingTransaction.status === "success") {
-            //     console.log(colors.red("Transaction already verified"));
-            //     return new ApiResponseDto(false, "Transaction already verified");
-            // }
+            if(existingTransaction.status === "success") {
+                console.log(colors.red("Transaction already verified"));
+                return new ApiResponseDto(false, "Transaction already verified");
+            }
     
             const amountInKobo = existingTransaction.amount * 100;
 
