@@ -133,6 +133,7 @@ model TransactionHistory {
   balance_after         Float              @default(0)
   transaction_number    String?
   transaction_reference String?            @unique
+  authorization_url    String?
   session_id            String?
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt

@@ -87,6 +87,7 @@ export class BankingService {
                     fee: 10,
                     transaction_number: access_code,
                     transaction_reference: reference,
+                    authorization_url: authorization_url,
                     session_id: generateSessionId(),
                     sender_details: {
                         create: {
