@@ -7,11 +7,6 @@ import {
     IsDateString,
     MinLength,
     MaxLength,
-    Matches,
-    IsNumber,
-    Min,
-    MAX,
-    Max
   } from "class-validator";
   import { Type } from "class-transformer";
   
@@ -40,38 +35,17 @@ import {
   
     @IsString()
     @IsNotEmpty()
-    @MinLength(8)
+    @MinLength(4)
     @MaxLength(32)
     password: string;
   
     @IsString()
     @IsNotEmpty()
-    confirm_password: string;
-  
-    @IsString()
-    @IsNotEmpty()
-    @Matches(/^[A-Za-z]+$/)
     first_name: string;
   
     @IsString()
     @IsNotEmpty()
-    @Matches(/^[A-Za-z]+$/)
     last_name: string;
-  
-    @IsString()
-    @IsNotEmpty()
-    @Matches(/^[0-9]+$/)
-    phone_number: string;
-  
-    @IsEnum(["male", "female", "other"])
-    gender: string;
-  
-    @IsDateString() // Accepts ISO8601 format (YYYY-MM-DD)
-    date_of_birth: string;
-  
-    @ValidateNested()
-    @Type(() => AddressDto)
-    address: AddressDto;
   }
 
 export class RequestEmailOTPDto {
@@ -111,7 +85,13 @@ export class ResetPasswordDto {
 
   @IsString()
   @IsNotEmpty()
-  @MinLength(8)
+  @MinLength(4)
+  @MaxLength(4)
+  otp: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(4)
   @MaxLength(32)
   new_password: string;
 }

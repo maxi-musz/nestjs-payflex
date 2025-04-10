@@ -1,5 +1,5 @@
 import { HttpService } from '@nestjs/axios';
-import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { first, firstValueFrom, lastValueFrom } from 'rxjs';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -73,10 +73,19 @@ export class BridgeCardService {
       // Step 1: Get user from DB
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
-        include: { address: true },
+        include: { 
+          address: true,
+          kyc_verification: true,
+          profile_image: true
+         },
       });
   
       if (!user) throw new HttpException('User not found', HttpStatus.NOT_FOUND);
+
+      if(!user.kyc_verification?.is_verified) {
+        console.log(colors.red(`user ${user.email} needs to cmplete kyc before creating card`))
+        return new BadRequestException(`user ${user.email} needs to cmplete kyc before creating card`)
+      }
   
       // Step 2: Check if user already has card
       const existingCard = await this.prisma.card.findFirst({

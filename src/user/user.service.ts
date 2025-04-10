@@ -21,7 +21,8 @@ import { formatDate } from "src/common/helper_functions/formatter";
                 where: {email: userPayload.email},
                 include: {
                     address: true,
-                    profile_image: true
+                    profile_image: true,
+                    wallet: true
                 }
             })
 
@@ -50,23 +51,23 @@ import { formatDate } from "src/common/helper_functions/formatter";
             });
 
             // get user wallet details
-            const walletDetails = await this.prisma.wallet.findFirst({
-                where: { user_id: existingUser.id },
-            });
+            // const walletDetails = await this.prisma.wallet.findFirst({
+            //     where: { user_id: existingUser.id },
+            // });
 
-            if(!walletDetails) {
-                await this.prisma.wallet.create({
-                    data: {
-                        user_id: existingUser.id,
-                        current_balance: 0,
-                        all_time_fuunding: 0,
-                        all_time_withdrawn: 0,
-                        isActive: true,
-                    }
-                });
-            }
+            // if(!walletDetails) {
+            //     await this.prisma.wallet.create({
+            //         data: {
+            //             user_id: existingUser.id,
+            //             current_balance: 0,
+            //             all_time_fuunding: 0,
+            //             all_time_withdrawn: 0,
+            //             isActive: true,
+            //         }
+            //     });
+            // }
 
-            console.log(colors.magenta("User dashboard successfully retrieved"))
+            console.log(colors.magenta(`User dashboard successfully retrieved, Current balance: ${existingUser?.wallet?.current_balance}`))
 
             // Format the response
             return new ApiResponseDto(true, "Dashboard successfully retrieved", {
@@ -77,13 +78,13 @@ import { formatDate } from "src/common/helper_functions/formatter";
                     profileImage: existingUser.profile_image
                 },
                 wallet: {
-                    id: walletDetails?.id,
-                    current_balance: walletDetails?.current_balance,
-                    all_time_fuunding: walletDetails?.all_time_fuunding,
-                    all_time_withdrawn: walletDetails?.all_time_withdrawn,
+                    id: existingUser.wallet?.id,
+                    current_balance: existingUser?.wallet?.current_balance,
+                    all_time_fuunding: existingUser?.wallet?.all_time_fuunding,
+                    all_time_withdrawn: existingUser?.wallet?.all_time_withdrawn,
                     isActive: true,
-                    createdAt: walletDetails?.createdAt,
-                    updatedAt: walletDetails?.updatedAt,
+                    createdAt: existingUser?.wallet?.createdAt,
+                    updatedAt: existingUser?.wallet?.updatedAt,
                 },
                 transactionHistory: recentTransactions.map(tx => ({
                     id: tx.id,
@@ -200,7 +201,8 @@ import { formatDate } from "src/common/helper_functions/formatter";
                 where: {email: userPayload.email},
                 include: {
                     address: true,
-                    profile_image: true
+                    profile_image: true,
+                    kyc_verification: true
                 }
             })
 
@@ -222,7 +224,8 @@ import { formatDate } from "src/common/helper_functions/formatter";
                 state: existingUser.address?.state,
                 country: existingUser.address?.country,
                 // zip_code: existingUser.address?.zip_code,
-                profile_image: existingUser.profile_image
+                profile_image: existingUser.profile_image,
+                kyc_verification: existingUser.kyc_verification
             });
 
         } catch (error) {
@@ -366,7 +369,8 @@ import { formatDate } from "src/common/helper_functions/formatter";
                             update: {
                                 id_type: dto.id_type ,
                                 id_no: dto.id_no,
-                                status: "approved"
+                                status: "approved",
+                                is_verified: true
                             }
                         }
                     }

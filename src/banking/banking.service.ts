@@ -219,8 +219,7 @@ export class BankingService {
                     updatedAt: new Date()
                 }
                 });
-
-                console.log(colors.cyan(`wallet amount: , ${updatedWalletResult.current_balance}`));
+                console.log(colors.yellow(`Updated wallet new currnt balance: ${updatedWalletResult.current_balance}`))
 
               const formattedResponse = {
                 id: updatedTx.id,
