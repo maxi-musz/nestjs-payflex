@@ -147,10 +147,10 @@ export class BankingService {
                 throw new NotFoundException("Transaction not found or amount is missing");
             }
 
-            if(existingTransaction.status === "success") {
-                console.log(colors.red("Transaction already verified"));
-                return new ApiResponseDto(false, "Transaction already verified");
-            }
+            // if(existingTransaction.status === "success") {
+            //     console.log(colors.red("Transaction already verified"));
+            //     return new ApiResponseDto(false, "Transaction already verified");
+            // }
     
             const amountInKobo = existingTransaction.amount * 100;
 
@@ -158,8 +158,10 @@ export class BankingService {
                 throw new BadRequestException("Transaction reference is missing");
             }
 
+            console.log("user id: ", userPayload.sub)
+
             const userWallet = await this.prisma.wallet.findFirst({
-                where: { user_id: userPayload._id }
+                where: { user_id: userPayload.sub }
               })
 
             if (!userWallet) {
@@ -226,7 +228,7 @@ export class BankingService {
                 id: updatedTx.id,
                 amount: formatAmount(updatedTx.amount ?? 0),
                 transaction_type: "deposit",
-                description: "wallet funding with paystack",
+                description: "wallet funding",
                 status: "success",
                 payment_method: "paystack",
                 date: formatDate(updatedTx.updatedAt)
