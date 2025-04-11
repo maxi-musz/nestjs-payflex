@@ -26,6 +26,7 @@ model User {
   last_name         String?
   cardholder_id     String?
   email             String           @unique
+  fourDigitPin         String?
   hash              String?
   phone_number      String?
   password          String?
@@ -122,6 +123,7 @@ model TransactionHistory {
   amount                Float?
   transaction_type      TransactionType?
   description           String?
+  
   status                TransactionStatus? @default(pending)
   sender_details        SenderDetails?
   recipient_mobile      String?

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, InternalServerErrorException, NotFoundException, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, InternalServerErrorException, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import { PrismaService } from "src/prisma/prisma.service";
 import { AuthDto, RequestEmailOTPDto, ResetPasswordDto, SignInDto, VerifyEmailOTPDto } from "./dto";
 import * as argon from "argon2"
@@ -126,6 +126,7 @@ export class AuthService {
                     email: dto.email,
                     first_name: dto.first_name,
                     last_name: dto.last_name,
+                    fourDigitPin: dto.fourDigitPin,
                 },
             });
     
@@ -165,7 +166,7 @@ export class AuthService {
             });
     
             // Remove sensitive data
-            const { password, hash: _, ...safeUser } = updatedUser;
+            const { password, hash: _, fourDigitPin, ...safeUser } = updatedUser;
     
             return {
                 success: true,
@@ -175,6 +176,8 @@ export class AuthService {
                         id: safeUser.id,
                         email: safeUser.email,
                         name: `${safeUser.first_name} ${safeUser.last_name}`,
+                        first_name: safeUser.first_name,
+                        last_name: safeUser.last_name,
                     },
                 },
             };
@@ -308,6 +311,33 @@ export class AuthService {
             }
     
             throw new InternalServerErrorException("Password reset failed");
+        }
+    }
+
+    async getFourDigitPin(userPayload: any) {
+        console.log(colors.cyan("Retrieving four-digit PIN..."));
+
+        try {
+            // Fetch the user's PIN from the database
+            const user = await this.prisma.user.findUnique({
+                where: { id: userPayload.sub },
+            });
+
+            if (!user || !user.fourDigitPin) {
+                console.log(colors.red("Four-digit PIN not found"));
+                throw new NotFoundException("Four-digit PIN not found for the user.");
+            }
+
+            console.log(colors.magenta("Four-digit PIN retrieved successfully."));
+            return new ApiResponseDto(true, "Four-digit PIN retrieved successfully.", {
+                pin: user.fourDigitPin,
+            });
+        } catch (error) {
+            console.error(colors.red(`Error retrieving four-digit PIN: ${error.message}`));
+            throw new HttpException(
+                error.response?.data?.message || "Error retrieving four-digit PIN.",
+                error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR
+            );
         }
     }
 }

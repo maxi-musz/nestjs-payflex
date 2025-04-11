@@ -50,23 +50,6 @@ import { formatDate } from "src/common/helper_functions/formatter";
                  },
             });
 
-            // get user wallet details
-            // const walletDetails = await this.prisma.wallet.findFirst({
-            //     where: { user_id: existingUser.id },
-            // });
-
-            // if(!walletDetails) {
-            //     await this.prisma.wallet.create({
-            //         data: {
-            //             user_id: existingUser.id,
-            //             current_balance: 0,
-            //             all_time_fuunding: 0,
-            //             all_time_withdrawn: 0,
-            //             isActive: true,
-            //         }
-            //     });
-            // }
-
             console.log(colors.magenta(`User dashboard successfully retrieved, Current balance: ${existingUser?.wallet?.current_balance}`))
 
             // Format the response
@@ -223,7 +206,6 @@ import { formatDate } from "src/common/helper_functions/formatter";
                 city: existingUser.address?.city,
                 state: existingUser.address?.state,
                 country: existingUser.address?.country,
-                // zip_code: existingUser.address?.zip_code,
                 profile_image: existingUser.profile_image,
                 kyc_verification: existingUser.kyc_verification
             });
@@ -401,4 +383,30 @@ import { formatDate } from "src/common/helper_functions/formatter";
             );
         }
     }
+
+    async saveFourDigitPin(userPayload: any, pin: string) {
+        console.log(colors.cyan("Saving four-digit PIN..."));
+
+        try {
+
+            // Update the user's record with the PIN
+            const updatedUser = await this.prisma.user.update({
+                where: { id: userPayload.sub },
+                data: { fourDigitPin: pin },
+            });
+
+            console.log(colors.magenta("Four-digit PIN saved successfully."));
+            return new ApiResponseDto(true, "Four-digit PIN saved successfully.", {
+                userId: updatedUser.id,
+            });
+        } catch (error) {
+            console.error(colors.red(`Error saving four-digit PIN: ${error.message}`));
+            throw new HttpException(
+                error.response?.data?.message || "Error saving four-digit PIN.",
+                error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    
  }
