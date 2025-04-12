@@ -87,6 +87,44 @@ import { formatDate } from "src/common/helper_functions/formatter";
         }
     }
 
+    async fetchUserWallet(userPayload: any) {
+        console.log(colors.cyan("Fetching user wallet..."));
+
+        console.log(colors.red(`User payload: ${userPayload}`));
+    
+        try {
+            // Find the user and their wallet from the database
+            const userWithWallet = await this.prisma.user.findUnique({
+                where: { id: userPayload.sub },
+                include: { wallet: true },
+            });
+    
+            if (!userWithWallet || !userWithWallet.wallet) {
+                console.log(colors.red("Wallet not found for the user."));
+                throw new NotFoundException("Wallet not found for the user.");
+            }
+    
+            console.log(colors.magenta("User wallet successfully retrieved."));
+            return new ApiResponseDto(true, "Wallet successfully retrieved", {
+                wallet: {
+                    id: userWithWallet.wallet.id,
+                    current_balance: userWithWallet.wallet.current_balance,
+                    all_time_fuunding: userWithWallet.wallet.all_time_fuunding,
+                    all_time_withdrawn: userWithWallet.wallet.all_time_withdrawn,
+                    isActive: userWithWallet.wallet.isActive,
+                    createdAt: userWithWallet.wallet.createdAt,
+                    updatedAt: userWithWallet.wallet.updatedAt,
+                },
+            });
+        } catch (error) {
+            console.error(colors.red(`Error fetching user wallet: ${error.message}`));
+            throw new HttpException(
+                error.response?.data?.message || "Error fetching user wallet.",
+                error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
     async fetchUserProfile(userPayload: any) {
         console.log(colors.cyan(`Fetching current user profile: ${userPayload.email}`))
 
