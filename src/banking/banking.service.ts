@@ -34,6 +34,7 @@ export class BankingService {
  
     // 
     async initialisePaystackFunding(dto: PaystackFundingDto, userPayload: any) {
+        console.log("Inititating paystack funding")
         // Determine Paystack environment key
         const paystackKey =
             process.env.NODE_ENV === "development"
@@ -60,7 +61,7 @@ export class BankingService {
                 {
                     email: userPayload.email,
                     amount: amountInKobo,
-                    callback_url: dto.callback_url,
+                    callback_url: "dto.callback_url",
                 },
                 {
                     headers: {

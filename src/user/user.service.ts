@@ -3,7 +3,7 @@ import { PrismaService } from "src/prisma/prisma.service";
 import * as colors from "colors";
 import { ApiResponseDto } from "src/common/dto/api-response.dto";
 import { KycVerificationDto, UpdateUserDto, VerifyBvnDto } from "./dto/user.dto";
-import { formatDate } from "src/common/helper_functions/formatter";
+import { formatAmount, formatDate } from "src/common/helper_functions/formatter";
 
  @Injectable()
  export class UserService {
@@ -90,12 +90,12 @@ import { formatDate } from "src/common/helper_functions/formatter";
     async fetchUserWallet(userPayload: any) {
         console.log(colors.cyan("Fetching user wallet..."));
 
-        console.log(colors.red(`User payload: ${userPayload}`));
+        console.log(colors.red(`User payload: ${userPayload.email}`));
     
         try {
             // Find the user and their wallet from the database
             const userWithWallet = await this.prisma.user.findUnique({
-                where: { id: userPayload.sub },
+                where: { email: userPayload.email },
                 include: { wallet: true },
             });
     
@@ -108,12 +108,12 @@ import { formatDate } from "src/common/helper_functions/formatter";
             return new ApiResponseDto(true, "Wallet successfully retrieved", {
                 wallet: {
                     id: userWithWallet.wallet.id,
-                    current_balance: userWithWallet.wallet.current_balance,
-                    all_time_fuunding: userWithWallet.wallet.all_time_fuunding,
-                    all_time_withdrawn: userWithWallet.wallet.all_time_withdrawn,
+                    current_balance: formatAmount(userWithWallet.wallet.current_balance),
+                    all_time_fuunding: formatAmount(userWithWallet.wallet.all_time_fuunding),
+                    all_time_withdrawn: formatAmount(userWithWallet.wallet.all_time_withdrawn),
                     isActive: userWithWallet.wallet.isActive,
-                    createdAt: userWithWallet.wallet.createdAt,
-                    updatedAt: userWithWallet.wallet.updatedAt,
+                    // createdAt: userWithWallet.wallet.createdAt,
+                    updatedAt: formatDate(userWithWallet.wallet.updatedAt),
                 },
             });
         } catch (error) {
@@ -132,7 +132,7 @@ import { formatDate } from "src/common/helper_functions/formatter";
 
             // fetch user from db
             const fullUserDetails = await this.prisma.user.findUnique({
-                where: {id: userPayload.sub},
+                where: {email: userPayload.email},
                 include: {
                     profile_image: true,
                     address: true,
@@ -153,6 +153,7 @@ import { formatDate } from "src/common/helper_functions/formatter";
                 email_verification: fullUserDetails?.is_email_verified || false,
                 joined: fullUserDetails?.createdAt ? formatDate(fullUserDetails.createdAt) : "N/A",
             }
+            // console.log("Formatted user profile: ", formattedUserProfile)
 
             const address = {
                 id: fullUserDetails?.address?.id,

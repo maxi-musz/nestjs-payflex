@@ -2,7 +2,7 @@ import { IsEmail, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from "cla
 
 export class PaystackFundingDto {
     @IsString()
-    @IsNotEmpty()
+    // @IsNotEmpty()
     callback_url: string;
 
     @IsNumber()
