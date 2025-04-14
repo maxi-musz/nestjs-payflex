@@ -1,12 +1,13 @@
 import { Body, Controller, Get, Param, Post, Request, UseGuards } from '@nestjs/common';
 import { VtuService } from './vtu.service';
 import { AuthGuard } from '@nestjs/passport';
-import { BuyAirtimeDto, DataPurchaseDto } from 'src/common/dto/vtu.dto';
+import { GiftBillsBuyAirtimeDto, DataPurchaseDto, SetsubDataPricesDto, SetsubPurchaseAirtimeDto, SetsubPurchaseDataDto } from 'src/common/dto/vtu.dto';
 
 @Controller('vtu')
 export class VtuController {
     constructor(private vtuService: VtuService) {}
 
+    // //////////////////////////////////////// GIFT BILLS /////////////////////////////////////
     @UseGuards(AuthGuard('jwt'))
     @Get("/gb")
     testEndpoint(@Request() req) {
@@ -21,7 +22,7 @@ export class VtuController {
 
     @UseGuards(AuthGuard('jwt'))
     @Post('/gb/airtime/topup')
-    topupAirtime(@Request() req, @Body() dto: BuyAirtimeDto) {
+    topupAirtime(@Request() req, @Body() dto: GiftBillsBuyAirtimeDto) {
         return this.vtuService.topupAirtime(req.user, dto)
     }
 
@@ -49,10 +50,22 @@ export class VtuController {
         return this.vtuService.initiateDataPurchase(dto, req.user)
     }
 
-    // /////////////////////////////////////////////////////////////////////// SETSUB ///////////////////////////////////////////////////////////////////////
+    // //////////////////////////////////////// SETSUB /////////////////////////////////////
     @UseGuards(AuthGuard('jwt'))
-    @Get('/setsub/data-prices')
-    getSetsubDataPrices() {
-        return this.vtuService.getSetsubDataPrices()
+    @Post('/setsub/data-prices')
+    getSetsubDataPrices(@Body() dto: SetsubDataPricesDto, @Request() req) {
+        return this.vtuService.getSetsubDataPrices(dto, req.user)
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Post('/setsub/purchase-data')
+    purchaseDataOnSetsub(@Body() dto: SetsubPurchaseDataDto, @Request() req) {
+        return this.vtuService.purchaseDataOnSetsub(dto, req.user)
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Post('/setsub/purchase-airtime')
+    purchaseAirtimeOnSetsub(@Body() dto: SetsubPurchaseAirtimeDto, @Request() req) {
+        return this.vtuService.purchaseAirtimeOnSetsub(dto, req.user)
     }
 }

@@ -4,7 +4,7 @@ import * as colors from "colors"
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import axios from 'axios';
 import { response } from 'express';
-import { BuyAirtimeDto, DataPurchaseDto, SetsubDataPricesDto } from 'src/common/dto/vtu.dto';
+import { GiftBillsBuyAirtimeDto, DataPurchaseDto, SetsubDataPricesDto, SetsubPurchaseAirtimeDto, SetsubPurchaseDataDto } from 'src/common/dto/vtu.dto';
 import { GIFTBILL_CONFIG, SETSUB_CONFIG } from 'src/common/config';
 import { formatAmount, formatDate } from 'src/common/helper_functions/formatter';
 import { generateReference, generateSessionId } from 'src/common/helper_functions/generators';
@@ -52,7 +52,7 @@ export class VtuService {
         }
     }
 
-    async topupAirtime(userPayload: any, dto: BuyAirtimeDto) {
+    async topupAirtime(userPayload: any, dto: GiftBillsBuyAirtimeDto) {
         console.log(colors.cyan("Purchasing airtime..."));
     
         let response: any;
@@ -358,13 +358,13 @@ export class VtuService {
         });
     }
 
-    async getSetsubDataPrices() {
-        console.log(colors.cyan("Fetching all setsub data prices for a provider"))
-
+    async getSetsubDataPrices(dto: SetsubDataPricesDto, userPayload: any) {
+        console.log(colors.cyan("Fetching all setsub data prices for a provider"));
+    
         let setsub_sandbox_base_url: any;
         let setsub_scret_key: any;
         let setsub_token: any;
-
+    
         if (process.env.NODE_ENV === "production") {
             setsub_scret_key = SETSUB_CONFIG.SETSUB_CLIENT_SECRET;
             setsub_token = SETSUB_CONFIG.SETSUB_TOKEN;
@@ -374,34 +374,213 @@ export class VtuService {
             setsub_token = SETSUB_CONFIG.SETSUB_TOKEN;
             setsub_sandbox_base_url = SETSUB_CONFIG.SETSUB_SANDBOX_BASE_URL;
         }
-
-        console.log("Base URL: ", setsub_sandbox_base_url);
-        console.log("Token: ", setsub_token);
-        
-
+    
         try {
-
             const response = await axios.get(
-                `${setsub_sandbox_base_url}/services/data` 
-                ? `${setsub_sandbox_base_url}/services/data`
-                : "",
-            {
-            headers: {
-                Authorization: `Bearer ${setsub_token}`,
-                'content-type': 'application/json',
-                'Accept': 'application/json',
+                `${setsub_sandbox_base_url}/services/data`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${setsub_token}`,
+                        'content-type': 'application/json',
+                        Accept: 'application/json',
+                    },
+                }
+            );
+    
+            console.log(colors.magenta("Internet data types from setsub successfully fetched"));
+            // console.log("Response Data:", response.data);
+    
+            // Dynamically access the provider's data
+            const providerKey = dto.provider.toLowerCase(); // Convert provider to lowercase (e.g., "mtn" -> "mtn")
+            const providerData = response.data.data[providerKey]; // Access the provider's data dynamically
+    
+            if (providerData && Array.isArray(providerData)) {
+                const finalResponse = providerData.filter((item: any) => item.provider === "autopilotng");
+                return new ApiResponseDto(true, "Internet data types successfully fetched", finalResponse);
+            } else {
+                // console.log(`No data found for provider: ${dto.provider}`);
+                return new ApiResponseDto(false, `No data found for provider: ${dto.provider}`);
             }
-            })
-
-            console.log(colors.magenta("Internet data types from setsub successfully fetched"))
-
-            return new ApiResponseDto(true, "Internet data types successfully fetched", response.data.data)
-            
         } catch (error) {
-            console.log(colors.red(`Error fetching Internet data types: ${error.message}`))
-            return new ApiResponseDto(true, `Error fetching Internet data types: ${error.message}`)
+            console.log(colors.red(`Error fetching Internet data types: ${error.message}`));
+            return new ApiResponseDto(false, `Error fetching Internet data types: ${error.message}`);
         }
     }
     
+    async purchaseDataOnSetsub(dto: SetsubPurchaseDataDto, userPayload: any) {
     
+        console.log("UserPayload: ", userPayload);
+    
+        console.log("Purchasing data on setsub...", dto);
+        let setsub_sandbox_base_url: any;
+        let setsub_scret_key: any;
+        let setsub_token: any;
+        if (process.env.NODE_ENV === "production") {
+            setsub_scret_key = SETSUB_CONFIG.SETSUB_CLIENT_SECRET;
+            setsub_token = SETSUB_CONFIG.SETSUB_TOKEN;
+            setsub_sandbox_base_url = SETSUB_CONFIG.SETSUB_SANDBOX_BASE_URL;
+        }
+        else {
+            setsub_scret_key = SETSUB_CONFIG.SETSUB_CLIENT_SECRET;
+            setsub_token = SETSUB_CONFIG.SETSUB_TOKEN;
+            setsub_sandbox_base_url = SETSUB_CONFIG.SETSUB_SANDBOX_BASE_URL;
+        }
+        console.log("Base URL: ", setsub_sandbox_base_url);
+        console.log("Token: ", setsub_token);
+        const requestBody = {
+            phone_number: dto.phone_number,
+            plan_id: dto.plan_id,
+            reference: generateReference(),
+            network: dto.network,
+            transaction_pin: "6234"
+        }
+    
+        try {
+            
+            try {
+                console.log(colors.blue("Calling paystack for data purchase..."));
+                const response = await axios.post(
+                    `${setsub_sandbox_base_url}/services/data/purchase`,
+                    requestBody,
+                    {
+                        headers: {
+                            Authorization: `Bearer ${setsub_token}`,
+                            'content-type': 'application/json',
+                            Accept: 'application/json',
+                        },
+                    }
+                );
+    
+                console.log("Response: ", response)
+            } catch (error) {
+                console.log(colors.red(`Error: ${error.message}`));
+                return new ApiResponseDto(false, `Error: ${error.message}`);
+                
+            }
+    
+            // if(!response.success) {
+            //     console.log(colors.red(`Error purchasing data on setsub: ${response}`));
+            //     return new ApiResponseDto(false, `Error purchasing data on setsub: ${JSON.stringify(response)}`);
+            // }
+    
+            const newHistory = await this.prisma.transactionHistory.create({
+                data: {
+                    user_id: userPayload.sub,
+                    amount: 0,
+                    transaction_type: "data",
+                    description: "Data top-up",
+                    payment_method: "wallet",
+                    status: "pending",
+                    recipient_mobile: dto.phone_number,
+                    transaction_number: dto.plan_id,
+                    transaction_reference: requestBody.reference,
+                    session_id: generateSessionId(),
+                    icon: {
+                        create: {
+                            secure_url: "mtn url",
+                            public_id: "mtn id public"
+                        }
+                    }
+                },
+                include: { icon: true }
+            });
+            console.log("Transaction history created: ", newHistory);
+    
+            console.log(colors.magenta("Data successfully purchased on setsub"));
+            // return new ApiResponseDto(true, "Data successfully purchased on setsub", response.data);
+            
+        } catch (error) {
+            console.log(colors.red(`Error purchasing data on setsub: ${error.message}`));
+            return new ApiResponseDto(false, `Error purchasing data on setsub: ${error.message}`);
+            
+        }
+    }
+
+    async purchaseAirtimeOnSetsub(dto: SetsubPurchaseAirtimeDto, userPayload: any) {
+    
+        console.log("UserPayload: ", userPayload);
+    
+        console.log("Purchasing airtime on setsub...", dto);
+        let setsub_sandbox_base_url: any;
+        let setsub_scret_key: any;
+        let setsub_token: any;
+        if (process.env.NODE_ENV === "production") {
+            setsub_scret_key = SETSUB_CONFIG.SETSUB_CLIENT_SECRET;
+            setsub_token = SETSUB_CONFIG.SETSUB_TOKEN;
+            setsub_sandbox_base_url = SETSUB_CONFIG.SETSUB_SANDBOX_BASE_URL;
+        }
+        else {
+            setsub_scret_key = SETSUB_CONFIG.SETSUB_CLIENT_SECRET;
+            setsub_token = SETSUB_CONFIG.SETSUB_TOKEN;
+            setsub_sandbox_base_url = SETSUB_CONFIG.SETSUB_SANDBOX_BASE_URL;
+        }
+        console.log("Base URL: ", setsub_sandbox_base_url);
+        console.log("Token: ", setsub_token);
+        const requestBody = {
+            phone_number: dto.phone_number,
+            reference: generateReference(),
+            network: dto.network,
+            transaction_pin: "6234"
+        }
+    
+        try {
+            
+            try {
+                console.log(colors.blue("Calling paystack for airtime purchase..."));
+                const response = await axios.post(
+                    `${setsub_sandbox_base_url}/services/data/purchase`,
+                    requestBody,
+                    {
+                        headers: {
+                            Authorization: `Bearer ${setsub_token}`,
+                            'content-type': 'application/json',
+                            Accept: 'application/json',
+                        },
+                    }
+                );
+    
+                console.log("Response: ", response)
+            } catch (error) {
+                console.log(colors.red(`Error: ${error.message}`));
+                return new ApiResponseDto(false, `Error: ${error.message}`);
+                
+            }
+    
+            // if(!response.success) {
+            //     console.log(colors.red(`Error purchasing data on setsub: ${response}`));
+            //     return new ApiResponseDto(false, `Error purchasing data on setsub: ${JSON.stringify(response)}`);
+            // }
+    
+            const newHistory = await this.prisma.transactionHistory.create({
+                data: {
+                    user_id: userPayload.sub,
+                    amount: 0,
+                    transaction_type: "airtime",
+                    description: "airtime top-up",
+                    payment_method: "wallet",
+                    status: "success",
+                    recipient_mobile: dto.phone_number,
+                    // transaction_number: dto.plan_id,
+                    transaction_reference: generateReference(),
+                    session_id: generateSessionId(),
+                    icon: {
+                        create: {
+                            secure_url: "mtn url",
+                            public_id: "mtn id public"
+                        }
+                    }
+                },
+                include: { icon: true }
+            });
+            console.log("Transaction history created: ", newHistory);
+    
+            console.log(colors.magenta("Data successfully purchased on setsub"));
+            // return new ApiResponseDto(true, "Data successfully purchased on setsub", response.data);
+            
+        } catch (error) {
+            console.log(colors.red(`Error purchasing data on setsub: ${error.message}`));
+            return new ApiResponseDto(false, `Error purchasing data on setsub: ${error.message}`);
+            
+        }
+    }
 }
