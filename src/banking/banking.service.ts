@@ -53,6 +53,8 @@ export class BankingService {
             console.log(colors.red("User not found"));
             return new ApiResponseDto(false, "User not found");
         }
+
+        console.log("Callback url: ", dto.callback_url)
     
         try {
             // 1. Initialize Paystack payment
@@ -61,7 +63,7 @@ export class BankingService {
                 {
                     email: userPayload.email,
                     amount: amountInKobo,
-                    callback_url: "https://my-mobileapp.com/verify-paystack-funding",
+                    callback_url: dto.callback_url,
                 },
                 {
                     headers: {

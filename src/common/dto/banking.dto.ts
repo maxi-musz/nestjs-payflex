@@ -1,6 +1,10 @@
 import { IsEmail, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from "class-validator";
 
-export class PaystackFundingDto {
+export class PaystackFundingDto { 
+    @IsString()
+    @IsNotEmpty()
+    callback_url: string;
+
     @IsNumber()
     @IsNotEmpty()
     amount: number;
