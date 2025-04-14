@@ -35,12 +35,14 @@ export class TransactionHistoryService {
             const formattedResponse = transactions.map(transaction => ({
                 id: transaction.id,
                 amount: formatAmount(transaction.amount ?? 0),
-                type: transaction.transaction_type, 
+                type: transaction.transaction_type,
+                credit_debit: transaction.credit_debit,
+                transaction_type: transaction.transaction_type, 
                 description: transaction.description,
                 status: transaction.status,
                 date: formatDate(transaction.createdAt),
                 sender: transaction.sender_details?.sender_name,
-                icon: transaction.icon?.secure_url,
+                // icon: transaction.icon?.secure_url,
             }));
 
             console.log(colors.magenta("Transaction history retrieved"))

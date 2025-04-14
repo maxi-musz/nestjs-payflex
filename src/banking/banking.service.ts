@@ -61,7 +61,7 @@ export class BankingService {
                 {
                     email: userPayload.email,
                     amount: amountInKobo,
-                    callback_url: "dto.callback_url",
+                    callback_url: "https://my-mobileapp.com/verify-paystack-funding",
                 },
                 {
                     headers: {
@@ -84,7 +84,9 @@ export class BankingService {
                     user_id: existingUser?.id,
                     amount: dto.amount,
                     transaction_type: "deposit",
-                    description: "Wallet funding with Paystack",
+                    credit_debit: "credit",
+
+                    description: "Wallet funding",
                     fee: 10,
                     transaction_number: access_code,
                     transaction_reference: reference,
@@ -99,7 +101,7 @@ export class BankingService {
                     },
                     icon: {
                         create: {
-                            secure_url: "paystack-icon",
+                            secure_url: "https://res.cloudinary.com/dwqurinck/image/upload/w_1000,c_fill,ar_1:1,g_auto,r_max,bo_5px_solid_red,b_rgb:262c35/v1744555901/paystack-logo_vvc184.png",
                             public_id: "paystack-icon",
                         },
                     },
@@ -228,7 +230,8 @@ export class BankingService {
               const formattedResponse = {
                 id: updatedTx.id,
                 amount: formatAmount(updatedTx.amount ?? 0),
-                transaction_type: "deposit",
+                transaction_type: updatedTx.transaction_type || "deposit",
+                credit_debit: updatedTx.credit_debit || "null",
                 description: "wallet funding",
                 status: "success",
                 payment_method: "paystack",

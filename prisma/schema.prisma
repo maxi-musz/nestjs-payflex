@@ -26,7 +26,7 @@ model User {
   last_name         String?
   cardholder_id     String?
   email             String           @unique
-  fourDigitPin         String?
+  fourDigitPin      String?
   hash              String?
   phone_number      String?
   password          String?
@@ -117,13 +117,14 @@ model RefreshToken {
 // Transaction Table
 
 model TransactionHistory {
-  id                    String             @id @default(uuid())
-  account_id            String?
-  user_id               String
-  amount                Float?
-  transaction_type      TransactionType?
-  description           String?
-  
+  id               String           @id @default(uuid())
+  account_id       String?
+  user_id          String
+  amount           Float?
+  transaction_type TransactionType?
+  credit_debit     CreditDebit?
+  description      String?
+
   status                TransactionStatus? @default(pending)
   sender_details        SenderDetails?
   recipient_mobile      String?
@@ -135,7 +136,7 @@ model TransactionHistory {
   balance_after         Float              @default(0)
   transaction_number    String?
   transaction_reference String?            @unique
-  authorization_url    String?
+  authorization_url     String?
   session_id            String?
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
@@ -149,6 +150,11 @@ enum TransactionType {
   cable
   education
   betting
+}
+
+enum CreditDebit {
+  credit
+  debit
 }
 
 enum TransactionStatus {
