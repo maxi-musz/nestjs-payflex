@@ -3,3 +3,10 @@ export const GIFTBILL_CONFIG = {
     API_KEY: process.env.GIFTBILL_SANDBOX_API_KEY?.trim(),
     MERCHANT_ID: process.env.MERCHANT_ID
 };
+
+export const SETSUB_CONFIG = {
+    BASE_URL: process.env.SETSUB_SANDBOX_BASE_URL,
+    SETSUB_CLIENT_SECRET: process.env.SETSUB_CLIENT_SECRET,
+    SETSUB_TOKEN: process.env.SETSUB_TOKEN,
+    SETSUB_SANDBOX_BASE_URL: process.env.SETSUB_SANDBOX_BASE_URL,
+}

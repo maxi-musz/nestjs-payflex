@@ -48,4 +48,11 @@ export class VtuController {
     initiateDataPurchase(@Body() dto: DataPurchaseDto, @Request() req) {
         return this.vtuService.initiateDataPurchase(dto, req.user)
     }
+
+    // /////////////////////////////////////////////////////////////////////// SETSUB ///////////////////////////////////////////////////////////////////////
+    @UseGuards(AuthGuard('jwt'))
+    @Get('/setsub/data-prices')
+    getSetsubDataPrices() {
+        return this.vtuService.getSetsubDataPrices()
+    }
 }

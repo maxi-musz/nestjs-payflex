@@ -4,8 +4,8 @@ import * as colors from "colors"
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import axios from 'axios';
 import { response } from 'express';
-import { BuyAirtimeDto, DataPurchaseDto } from 'src/common/dto/vtu.dto';
-import { GIFTBILL_CONFIG } from 'src/common/config';
+import { BuyAirtimeDto, DataPurchaseDto, SetsubDataPricesDto } from 'src/common/dto/vtu.dto';
+import { GIFTBILL_CONFIG, SETSUB_CONFIG } from 'src/common/config';
 import { formatAmount, formatDate } from 'src/common/helper_functions/formatter';
 import { generateReference, generateSessionId } from 'src/common/helper_functions/generators';
 
@@ -356,6 +356,51 @@ export class VtuService {
             console.log(colors.red(`Transaction failed: ${error}`));
             return new ApiResponseDto(false, `Transaction failed: ${error.message}`);
         });
+    }
+
+    async getSetsubDataPrices() {
+        console.log(colors.cyan("Fetching all setsub data prices for a provider"))
+
+        let setsub_sandbox_base_url: any;
+        let setsub_scret_key: any;
+        let setsub_token: any;
+
+        if (process.env.NODE_ENV === "production") {
+            setsub_scret_key = SETSUB_CONFIG.SETSUB_CLIENT_SECRET;
+            setsub_token = SETSUB_CONFIG.SETSUB_TOKEN;
+            setsub_sandbox_base_url = SETSUB_CONFIG.SETSUB_SANDBOX_BASE_URL;
+        } else {
+            setsub_scret_key = SETSUB_CONFIG.SETSUB_CLIENT_SECRET;
+            setsub_token = SETSUB_CONFIG.SETSUB_TOKEN;
+            setsub_sandbox_base_url = SETSUB_CONFIG.SETSUB_SANDBOX_BASE_URL;
+        }
+
+        console.log("Base URL: ", setsub_sandbox_base_url);
+        console.log("Token: ", setsub_token);
+        
+
+        try {
+
+            const response = await axios.get(
+                `${setsub_sandbox_base_url}/services/data` 
+                ? `${setsub_sandbox_base_url}/services/data`
+                : "",
+            {
+            headers: {
+                Authorization: `Bearer ${setsub_token}`,
+                'content-type': 'application/json',
+                'Accept': 'application/json',
+            }
+            })
+
+            console.log(colors.magenta("Internet data types from setsub successfully fetched"))
+
+            return new ApiResponseDto(true, "Internet data types successfully fetched", response.data.data)
+            
+        } catch (error) {
+            console.log(colors.red(`Error fetching Internet data types: ${error.message}`))
+            return new ApiResponseDto(true, `Error fetching Internet data types: ${error.message}`)
+        }
     }
     
     

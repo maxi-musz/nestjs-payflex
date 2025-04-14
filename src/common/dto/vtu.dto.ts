@@ -31,3 +31,7 @@ export class DataPurchaseDto {
     @IsNotEmpty()
     amount: number;
 }
+
+export class SetsubDataPricesDto {
+    
+}
