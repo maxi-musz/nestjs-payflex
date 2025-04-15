@@ -325,7 +325,10 @@ export class BankingService {
                 const newAccount = existingAccount
                     ? await this.prisma.account.update({
                         where: { id: existingAccount.id },
-                        data: accountToSave,
+                        data: {
+                            ...accountToSave,
+                            currency: dto.currency, // Ensure currency matches the expected enum type
+                        },
                     })
                     : await this.prisma.account.create({ data: accountToSave });
                 
@@ -359,5 +362,196 @@ export class BankingService {
         }
     }
 
-    
+    // //////////////////////////////
+    // async createStaticLocalVirtualAccountNumber (userPayload: any) {
+
+    //     console.log(colors.cyan(`Creating a new NGN static virtual account for user: ${userPayload.email}`));
+
+    //     const existinguser = await this.prisma.user.findUnique({
+    //         where: { id: userPayload.sub },
+    //         include: {
+    //             kyc_verification: true,
+    //         }
+    //     })
+
+    //     if(!existinguser) {
+    //         console.log(colors.red("User not found"));
+    //         return new ApiResponseDto(false, "User not found");
+    //     }
+
+    //     // Step 2: Check if user already has account in this currency
+    //     const existingAccount = await this.prisma.account.findFirst({
+    //         where: {
+    //             user_id: userPayload.sub,
+    //             currency: 'ngn'
+    //         },
+    //     });
+
+    //     if (existingAccount?.account_number) {
+    //         console.log(colors.red(`User already has a NGN virtual account`));
+    //         return new ApiResponseDto(false, `User already has a NGN virtual account`);
+    //     }
+
+    //     // Step 3: Create virtual account on Flutterwave
+    //     const endpoint = `${this.apiUrl}/virtual-account-numbers`;
+    //     console.log("Calling flutterwave endpoint...");
+    //     const requestBody = {
+    //         email: existinguser.email,
+    //         is_permanent: false,
+    //         bvn: existinguser?.kyc_verification?.id_no || '22222222222',
+    //         tx_ref: `VA-${Date.now()}-${existinguser.id}`,
+    //         phonenumber: existinguser.phone_number || '08000000000',
+    //         firstname: existinguser.first_name || 'Unknown',
+    //         lastname: existinguser.last_name || 'User',
+    //         narration: `${existinguser.first_name || 'Unknown'} ${existinguser.last_name || 'User'}`,
+    //         currency: 'NGN',
+    //         amount: 0,
+    //     };
+    //     console.log(colors.yellow('Creating virtual account...'));
+
+    //     try {
+
+    //         const response  = await axios.post(
+    //             `${this.apiUrl}/virtual-account-numbers`,
+    //             requestBody,
+    //             {
+    //                 headers: this.getHeaders(),
+    //             }
+    //         );
+    //         const accountData = response.data.data;
+    //         console.log(colors.blue(`Newly created virtual account: ${JSON.stringify(accountData)}`));
+
+    //         // Step 4: Save virtual account to database
+    //         const accountToSave = {
+    //             user_id: existinguser.id,
+    //             currency: 'ngn',
+    //             account_number: accountData.account_number,
+    //             bank_name: accountData.bank_name,
+    //             reference: accountData.reference,
+    //             order_ref: accountData.order_ref,
+    //             flutterwave_id: accountData.id.toString(),
+    //             isActive: true,
+    //             meta_data: accountData,
+    //         };
+    //         const newAccount = existingAccount
+    //             ? await this.prisma.account.update({
+    //                 where: { id: existingAccount.id },
+    //                 data: {
+    //                     ...accountToSave,
+    //                     currency: dto.currency as CurrencyType, // Ensure currency matches the expected enum type
+    //                 },
+    //             })
+    //             : await this.prisma.account.create({ data: accountToSave });
+    //         console.log(colors.magenta(`New NGN virtual account successfully created`));
+    //         return new ApiResponseDto(
+    //             true,
+    //             `New NGN virtual account successfully created`,
+    //             newAccount
+    //         );
+            
+    //     } catch (error) {
+    //         console.log(colors.red(`Error creating account: ${error.message || error}`));
+            
+    //         // Return error response instead of undefined
+    //         return new ApiResponseDto(
+    //             false,
+    //             error.message || 'Failed to create virtual account',
+    //             null
+    //         );
+            
+    //     }
+    // }
+
+    async createTemporaryVirtualAccount (dto, userPayload: any) {
+        console.log(colors.cyan("creating new temporry virtual ngn account"))
+
+        const existingUser = await this.prisma.user.findUnique({
+            where: { id: userPayload.sub },
+        });
+
+        if (!existingUser) {
+            console.log(colors.red("User does not exist"));
+            return new ApiResponseDto(false, "User does not exist");
+        }
+
+        try {
+            console.log(colors.blue("Sending temp account creation to Flutterwave"));
+
+            console.log("Amount: ", dto.amount)
+
+            const reqBody = {
+                email: userPayload.email,
+                currency: 'NGN',
+                amount: dto.amount,
+                tx_ref: `VA-${Date.now()}-${existingUser.id}`,
+                is_permanent: false,
+                narration: `Please make a bank transfer to ${existingUser.first_name} ${existingUser.last_name}`,
+            };
+
+            const endpoint = `${this.apiUrl}/virtual-account-numbers`;
+            console.log("Endpoint: ", endpoint);
+
+            const response = await axios.post(endpoint, reqBody, {
+                headers: this.getHeaders(),
+            });
+
+            const accountData = response.data.data;
+
+            // create new temptransaction payment in db
+            await this.prisma.flwTempAcctNumber.create({
+                data: {
+                    user_id: userPayload.sub,
+                    account_number: accountData.account_number,
+                    response_code: accountData.response_code,
+                    bank_name: accountData.bank_name,
+                    accountStatus: accountData.account_status,
+                    frequency: accountData.frequency,
+                    note: accountData.note,
+                    flw_ref: accountData.flw_ref,
+                    order_ref: accountData.order_ref,
+                    order_no: accountData.order_ref,
+                    amount: parseFloat(accountData.amount),
+                    status: "pending",
+                    // expires_at: new Date(Date.now() + 30 * 60 * 1000),
+                    meta_data: accountData,
+                },
+            })
+
+            const formattedresponse = {
+                account_number: accountData.account_number,
+                bank_name: accountData.bank_name,
+                flw_ref: accountData.flw_ref,
+                order_no: accountData.order_ref,
+                amount: accountData.amount
+            }
+
+            console.log(colors.magenta("New temporary virtual account successfully created"));
+
+            return new ApiResponseDto(
+                true,
+                `Please make a transfer of ${accountData.amount} to ${accountData.bank_name}, this account number expires in 30 mins`,
+                formattedresponse
+            );
+        } catch (error: any) {
+            if (error.response) {
+                // Extract detailed error information from the response
+                const statusCode = error.response.status;
+                const errorMessage = error.response.data?.message || "Unknown error occurred";
+                const errorDetails = error.response.data || {};
+
+                console.log(colors.red(`Error creating new temp bank account: ${errorMessage} (Status Code: ${statusCode})`));
+                console.log(colors.red(`Error Details: ${JSON.stringify(errorDetails)}`));
+
+                return new ApiResponseDto(
+                    false,
+                    `Error creating new temp bank account: ${errorMessage} (Status Code: ${statusCode})`,
+                    errorDetails
+                );
+            } else {
+                // Handle other types of errors (e.g., network issues)
+                console.log(colors.red(`Unexpected error: ${error.message}`));
+                return new ApiResponseDto(false, `Unexpected error: ${error.message}`);
+            }
+        }
+    }
 }

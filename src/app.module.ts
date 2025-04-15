@@ -13,6 +13,7 @@ import { CronModule } from './cron/cron.module';
 import { VirtualCardModule } from './virtual-card/virtual-card.module';
 import { BridgeCardModule } from './bridge-card/bridge-card.module';
 import { FlutterwaveModule } from './flutterwave/flutterwave.module';
+import { VasModule } from './vas/vas.module';
 
 @Module({
   imports: [
@@ -22,7 +23,7 @@ import { FlutterwaveModule } from './flutterwave/flutterwave.module';
     AuthModule, 
     UserModule, 
     BookmarkModule, 
-    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule],
+    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule],
   controllers: [AuthController],
   providers: [AuthService],
 })

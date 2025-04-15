@@ -46,6 +46,8 @@ model User {
 
   accounts Account[] @relation("UserAccounts")
   cards    Card[]
+
+  temp_flw_accts FlwTempAcctNumber[] @relation("generatedFlwAccts")
 }
 
 model ProfileImage {
@@ -270,4 +272,26 @@ enum BridgeCurrencyType {
   USD
   GBP
   EUR
+}
+
+model FlwTempAcctNumber {
+  id             String  @id @default(uuid())
+  response_code  String?
+  flw_ref        String?
+  order_ref      String?
+  order_no       String?
+  account_number String?
+  accountStatus  String?
+  frequency      Int?
+  bank_name      String?
+  note           String?
+  amount         Float?
+  status         String?
+  meta_data      Json?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @default(now())
+
+  user_id String
+  user    User   @relation("generatedFlwAccts", fields: [user_id], references: [id])
 }

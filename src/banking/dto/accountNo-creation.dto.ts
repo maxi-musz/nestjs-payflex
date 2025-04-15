@@ -1,4 +1,4 @@
-import { IsEnum, IsNotEmpty, IsString } from "class-validator";
+import { IsEnum, IsNotEmpty, IsNumber, IsString } from "class-validator";
 
 export enum AccountCurrency {
     usd = 'usd',
@@ -12,4 +12,10 @@ export enum AccountCurrency {
     @IsNotEmpty()
     @IsEnum(AccountCurrency)
     currency: AccountCurrency;
+  }
+
+  export class CreateTempVirtualLocalAccountDto {
+    @IsNumber()
+    @IsNotEmpty()
+    amount: number;
   }
