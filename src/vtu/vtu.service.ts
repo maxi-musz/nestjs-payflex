@@ -4,7 +4,7 @@ import * as colors from "colors"
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import axios from 'axios';
 import { response } from 'express';
-import { GiftBillsBuyAirtimeDto, DataPurchaseDto, SetsubDataPricesDto, SetsubPurchaseAirtimeDto, SetsubPurchaseDataDto } from 'src/common/dto/vtu.dto';
+import { GiftBillsBuyAirtimeDto, SetsubDataPricesDto, SetsubPurchaseAirtimeDto, SetsubPurchaseDataDto, GiftBillDataPurchaseDto } from 'src/common/dto/vtu.dto';
 import { GIFTBILL_CONFIG, SETSUB_CONFIG } from 'src/common/config';
 import { formatAmount, formatDate } from 'src/common/helper_functions/formatter';
 import { generateReference, generateSessionId } from 'src/common/helper_functions/generators';
@@ -52,14 +52,14 @@ export class VtuService {
         }
     }
 
-    async topupAirtime(userPayload: any, dto: GiftBillsBuyAirtimeDto) {
-        console.log(colors.cyan("Purchasing airtime..."));
+    async topupAirtimeGiftbills(userPayload: any, dto: GiftBillsBuyAirtimeDto) {
+        console.log(colors.cyan("Purchasing airtime from gift bills..."));
     
         let response: any;
     
         const requestBody = {
-            provider: dto.provider,
-            number: dto.phoneNumber,
+            provider: dto.network.toUpperCase(),
+            number: dto.phone_number,
             amount: dto.amount,
             reference: generateReference()
         };
@@ -110,8 +110,8 @@ export class VtuService {
             const transaction = await this.prisma.transactionHistory.create({
                 data: {
                     user_id: userPayload.sub, 
-                    description: dto.provider,
-                    recipient_mobile: dto.phoneNumber,
+                    description: dto.network,
+                    recipient_mobile: dto.phone_number,
                     amount: dto.amount,
                     transaction_type: 'airtime',
                     payment_method: "wallet",
@@ -227,10 +227,29 @@ export class VtuService {
 
             console.log(colors.magenta("Internet data types successfully fetched"))
 
+            // Filter data plans with id >= 200
+            let filteredDataPlans: any[] = [];
+            if(provider === "MTN") {
+                filteredDataPlans = response.data.data.filter((plan: any) => plan.id >= 200);
+            }else if (provider === "AIRTEL") {
+                filteredDataPlans = response.data.data.filter((plan: any) => plan.id >= 229);
+            } else if (provider === "GLO") {
+                filteredDataPlans = response.data.data.filter((plan: any) => plan.id >= 185);
+            } else if (provider === "9MOBILE") {
+                filteredDataPlans = response.data.data
+            } else if( provider === "SPECTRANET") {
+                filteredDataPlans = response.data.data
+            } else if(provider === "SMILE_4G") {
+                filteredDataPlans = response.data.data
+            } else {
+                console.log(`Invalid provider selected: ${provider}")`)
+                return new ApiResponseDto(false, `Invalid provider selected: ${provider}`);
+            }
+
             return new ApiResponseDto(
                 response.data.success, 
                 response.data.message,
-                response.data.data
+                filteredDataPlans
             )
             
         } catch (error) {
@@ -242,7 +261,7 @@ export class VtuService {
         }
     }
 
-    async initiateDataPurchase(dto: DataPurchaseDto, userPayload: any) {
+    async initiateDataPurchaseGiftBills(dto: GiftBillDataPurchaseDto, userPayload: any) {
         console.log(colors.cyan("Initiating a new data purchase"));
     
         const existingUser = await this.prisma.user.findUnique({
@@ -258,7 +277,7 @@ export class VtuService {
     
         const requestBody = {
             provider: dto.provider,
-            number: dto.number,
+            number: dto.phone_number,
             plan_id: dto.plan_id,
             reference: reference
         };
@@ -327,7 +346,7 @@ export class VtuService {
                     description: "Data top-up",
                     payment_method: "wallet",
                     status: "success",
-                    recipient_mobile: dto.number,
+                    recipient_mobile: dto.phone_number,
                     transaction_number: dto.plan_id,
                     transaction_reference: reference,
                     session_id: generateSessionId(),
@@ -341,14 +360,14 @@ export class VtuService {
                 include: { icon: true }
             });
     
-            console.log(colors.magenta("Internet data successfully purchased"));
+            console.log(colors.magenta(`You have successfully purchased #${} worth of data for ${formatAmount(dto.amount)} \n to${dto.phone_number}`));
     
             return new ApiResponseDto(
                 true,
-                `You have successfully purchased #${formatAmount(dto.amount)} worth of data for ${dto.number}`,
+                `You have successfully purchased #${formatAmount(dto.amount)} worth of data for ${dto.phone_number}`,
                 {
                     amount: formatAmount(dto.amount),
-                    number: dto.number,
+                    number: dto.phone_number,
                     icon: newHistory.icon?.secure_url
                 }
             );
@@ -526,7 +545,7 @@ export class VtuService {
         try {
             
             try {
-                console.log(colors.blue("Calling paystack for airtime purchase..."));
+                console.log(colors.blue("Calling setsub for airtime purchase..."));
                 const response = await axios.post(
                     `${setsub_sandbox_base_url}/services/data/purchase`,
                     requestBody,

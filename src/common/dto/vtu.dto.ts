@@ -3,25 +3,25 @@ import { IsEnum, IsNotEmpty, IsNumber, IsString } from "class-validator";
 export class GiftBillsBuyAirtimeDto {
     @IsString()
     @IsNotEmpty()
-    provider: string;
+    network: string;
 
     @IsString()
     @IsNotEmpty()
-    phoneNumber: string;
+    phone_number: string;
 
     @IsNumber()
     @IsNotEmpty()
     amount: number;
 }
 
-export class DataPurchaseDto {
+export class GiftBillDataPurchaseDto {
     @IsString()
     @IsNotEmpty()
     provider: string;
 
     @IsString()
     @IsNotEmpty()
-    number: string;
+    phone_number: string;
 
     @IsString()
     @IsNotEmpty()

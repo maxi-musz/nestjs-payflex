@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Request, UseGuards } from '@nestjs/common';
 import { VtuService } from './vtu.service';
 import { AuthGuard } from '@nestjs/passport';
-import { GiftBillsBuyAirtimeDto, DataPurchaseDto, SetsubDataPricesDto, SetsubPurchaseAirtimeDto, SetsubPurchaseDataDto } from 'src/common/dto/vtu.dto';
+import { GiftBillsBuyAirtimeDto, GiftBillDataPurchaseDto, SetsubDataPricesDto, SetsubPurchaseAirtimeDto, SetsubPurchaseDataDto } from 'src/common/dto/vtu.dto';
 
 @Controller('vtu')
 export class VtuController {
@@ -22,8 +22,8 @@ export class VtuController {
 
     @UseGuards(AuthGuard('jwt'))
     @Post('/gb/airtime/topup')
-    topupAirtime(@Request() req, @Body() dto: GiftBillsBuyAirtimeDto) {
-        return this.vtuService.topupAirtime(req.user, dto)
+    topupAirtimeGiftbills(@Request() req, @Body() dto: GiftBillsBuyAirtimeDto) {
+        return this.vtuService.topupAirtimeGiftbills(req.user, dto)
     }
 
     @UseGuards(AuthGuard('jwt'))
@@ -46,8 +46,8 @@ export class VtuController {
 
     @UseGuards(AuthGuard('jwt'))
     @Post('/gb/internet/purchase-data')
-    initiateDataPurchase(@Body() dto: DataPurchaseDto, @Request() req) {
-        return this.vtuService.initiateDataPurchase(dto, req.user)
+    initiateDataPurchaseGiftBills(@Body() dto: GiftBillDataPurchaseDto, @Request() req) {
+        return this.vtuService.initiateDataPurchaseGiftBills(dto, req.user)
     }
 
     // //////////////////////////////////////// SETSUB /////////////////////////////////////
