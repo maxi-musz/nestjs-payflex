@@ -360,7 +360,7 @@ export class VtuService {
                 include: { icon: true }
             });
     
-            console.log(colors.magenta(`You have successfully purchased #${} worth of data for ${formatAmount(dto.amount)} \n to${dto.phone_number}`));
+            console.log(colors.magenta(`You have successfully purchased ${formatAmount(dto.amount)} worth of data to${dto.phone_number}`));
     
             return new ApiResponseDto(
                 true,

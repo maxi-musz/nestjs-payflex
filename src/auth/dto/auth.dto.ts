@@ -32,9 +32,6 @@ import {
     @IsEmail()
     @IsNotEmpty()
     email: string;
-
-    @IsString()
-    fourDigitPin: string;
   
     @IsString()
     @IsNotEmpty()

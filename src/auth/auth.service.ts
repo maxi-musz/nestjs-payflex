@@ -10,6 +10,7 @@ import { JwtService } from '@nestjs/jwt';
 import generateTokens from "src/utils/generate.token";
 import { ConfigService } from "@nestjs/config";
 import { ApiResponseDto } from "src/common/dto/api-response.dto";
+import { formatDate } from "src/common/helper_functions/formatter";
 
 @Injectable()
 export class AuthService {
@@ -119,6 +120,8 @@ export class AuthService {
                     message: `User already exists with email: ${dto.email}`,
                 };
             }
+             // Hash password
+            const hash = await argon.hash(dto.password);
     
             // Create new user
             const newUser = await this.prisma.user.create({
@@ -126,7 +129,8 @@ export class AuthService {
                     email: dto.email,
                     first_name: dto.first_name,
                     last_name: dto.last_name,
-                    fourDigitPin: dto.fourDigitPin,
+                    password: hash,
+                    hash: hash,
                 },
             });
     
@@ -153,31 +157,16 @@ export class AuthService {
                 };
             }
     
-            // Hash password
-            const hash = await argon.hash(dto.password);
-    
-            // Update user with password
-            const updatedUser = await this.prisma.user.update({
-                where: { email: dto.email },
-                data: {
-                    password: hash,
-                    hash: hash,
-                },
-            });
-    
-            // Remove sensitive data
-            const { password, hash: _, fourDigitPin, ...safeUser } = updatedUser;
-    
             return {
                 success: true,
                 message: "Enter Received Otp to verify your email",
                 data: {
                     user: {
-                        id: safeUser.id,
-                        email: safeUser.email,
-                        name: `${safeUser.first_name} ${safeUser.last_name}`,
-                        first_name: safeUser.first_name,
-                        last_name: safeUser.last_name,
+                        id: newUser.id,
+                        email: newUser.email,
+                        name: `${newUser.first_name} ${newUser.last_name}`,
+                        first_name: newUser.first_name,
+                        last_name: newUser.last_name,
                     },
                 },
             };
@@ -217,6 +206,10 @@ export class AuthService {
             // 1. Find user
             const user = await this.prisma.user.findUnique({
                 where: { email: dto.email },
+                include: {
+                    profile_image: true,
+                    kyc_verification: true,
+                }
             });
     
             if (!user) {
@@ -224,9 +217,9 @@ export class AuthService {
             }
     
             // 2. Check email verification
-            if (!user.is_email_verified) {
-                throw new ForbiddenException('Please verify your email first');
-            }
+            // if (!user.is_email_verified) {
+            //     throw new ForbiddenException('Please verify your email first');
+            // }
     
             // 3. Verify password
             const isPasswordValid = user.password && await argon.verify(user.password, dto.password);
@@ -242,6 +235,16 @@ export class AuthService {
                 id: user.id,
                 email: user.email,
                 name: `${user.first_name} ${user.last_name}`,
+                first_name: user.first_name,
+                last_name: user.last_name,
+                phone_number: user.phone_number || null,
+                is_email_verified: user.is_email_verified,
+                role: user.role || null,
+                gender: user.gender || null,
+                data_of_birth: user.date_of_birth || null,
+                profile_image: user.profile_image?.secure_url || null,
+                kyc_verified: user.kyc_verification?.is_verified || false,
+                created_at: formatDate(user.createdAt),
             };
     
             // 6. Prepare response data
