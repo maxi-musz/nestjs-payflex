@@ -320,6 +320,7 @@ export class BankingService {
                     flutterwave_id: accountData.id.toString(),
                     isActive: true,
                     meta_data: accountData,
+                    account_name: `${existingUser.first_name} ${existingUser.last_name}`, // Add account_name
                 };
                 
                 const newAccount = existingAccount
@@ -553,5 +554,187 @@ export class BankingService {
                 return new ApiResponseDto(false, `Unexpected error: ${error.message}`);
             }
         }
+    }
+
+    async createPermanentVirtualAccount (userPayload: any) {
+        console.log(colors.cyan("creating new permanent virtual ngn account"))
+
+        const existingUser = await this.prisma.user.findUnique({
+            where: { 
+                id: userPayload.sub,
+             },
+             include: {
+                accounts: true,
+                kyc_verification: true,
+             }
+        });
+
+        if (!existingUser) {
+            console.log(colors.red("User does not exist"));
+            return new ApiResponseDto(false, "User does not exist");
+        }
+
+        if (existingUser?.accounts?.some(account => account.currency === "ngn")) {
+            console.log(colors.red("User already has a NGN virtual account"));
+            return new ApiResponseDto(false, "User already has a NGN virtual account");
+        }
+
+        if(existingUser?.kyc_verification?.status !== "approved") {
+            console.log(colors.red("User KYC not verified"));
+            return new ApiResponseDto(false, "User KYC not verified");
+        }
+
+        try {
+            console.log(colors.blue("Sending permanent account creation to Flutterwave"));
+
+            const reqBody = {
+                email: userPayload.email,
+                currency: 'NGN',
+                amount: 0,
+                tx_ref: `PF-${Date.now()}-${existingUser.email}`,
+                is_permanent: true,
+                narration: `Please make a bank transfer to ${existingUser.first_name} ${existingUser.last_name}`,
+                bvn: existingUser?.kyc_verification?.id_no,
+            };
+
+            const endpoint = `${this.apiUrl}/virtual-account-numbers`;
+            console.log("Endpoint: ", endpoint);
+
+            let response: any;
+
+            try {
+
+                response = await axios.post(endpoint, reqBody, {
+                    headers: this.getHeaders(),
+                });
+                
+            } catch (error) {
+                console.error(colors.red('Error response from Flutterwave:'), 
+                    error.response?.data || error.message);
+                    
+                const errorMessage = error.response?.data?.message || 
+                    'Virtual account creation failed';
+                    
+                throw new HttpException(errorMessage, 
+                    error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR);
+                
+            }
+
+            const accountData = response.data.data;
+
+            console.log("Account data: ", accountData)
+
+            // Add new account details to db
+            const accountToSave = {
+                user_id: existingUser.id,
+                currency: 'ngn' as any,
+                account_number: accountData.account_number,
+                bank_name: accountData.bank_name,
+                reference: accountData.reference,
+                order_ref: accountData.order_ref,
+                country: "nigeria",
+                isActive: true,
+                meta_data: accountData,
+                account_name: `${existingUser.first_name} ${existingUser.last_name}`,
+            }; 
+            
+            await this.prisma.account.create({ data: accountToSave });
+
+            console.log(colors.magenta("New permanent virtual account successfully created"));
+
+            const formattedRes = {
+                account_number: accountData.account_number,
+                bank_name: accountData.bank_name,
+            }
+
+            return new ApiResponseDto(
+                true,
+                `New permanent virtual account successfully created`,
+                formattedRes
+            );
+        } catch (error: any) {
+            if (error.response) {
+                // Extract detailed error information from the response
+                const statusCode = error.response.status;
+                const errorMessage = error.response.data?.message || "Unknown error occurred";
+                const errorDetails = error.response.data || {};
+
+                console.log(colors.red(`Error creating new temp bank account: ${errorMessage} (Status Code: ${statusCode})`));
+                console.log(colors.red(`Error Details: ${JSON.stringify(errorDetails)}`));
+
+                return new ApiResponseDto(
+                    false,
+                    `Error creating new temp bank account: ${errorMessage} (Status Code: ${statusCode})`,
+                    errorDetails
+                );
+            } else {
+                // Handle other types of errors (e.g., network issues)
+                console.log(colors.red(`Unexpected error: ${error.message}`));
+                return new ApiResponseDto(false, `Unexpected error: ${error.message}`);
+            }
+        }
+    }
+
+    // // //////////////////////////////        Fetch all user virtual accounts
+    async getAllUserVirtualAccounts(userPayload: any) {
+        console.log(colors.cyan("Fetching all user virtual accounts"));
+
+        const existingUser = await this.prisma.user.findUnique({
+            where: { id: userPayload.sub },
+            include: {
+                accounts: true,
+            }
+        });
+
+        if (!existingUser) {
+            console.log(colors.red("User not found"));
+            return new ApiResponseDto(false, "User not found");
+        }
+
+        const formattedAccounts = existingUser.accounts.map((account) => ({
+            id: account.id,
+            account_number: account.account_number,
+            bank_name: account.bank_name,
+            currency: account.currency,
+            createdAt: formatDate(account.createdAt),
+        }));
+
+        console.log(colors.magenta("Fetched all user virtual accounts successfully"));
+
+        return new ApiResponseDto(true, "Fetched all user virtual accounts successfully", formattedAccounts);
+    }
+    async getUserVirtualAccountById(id: string, userPayload: any) {
+        console.log(colors.cyan("Fetching user virtual account by ID"));
+
+        const existingUser = await this.prisma.user.findUnique({
+            where: { id: userPayload.sub },
+            include: {
+                accounts: true,
+            }
+        });
+
+        if (!existingUser) {
+            console.log(colors.red("User not found"));
+            return new ApiResponseDto(false, "User not found");
+        }
+
+        const account = existingUser.accounts.find((account) => account.id === id);
+
+        if (!account) {
+            console.log(colors.red("Account not found"));
+            return new ApiResponseDto(false, "Account not found");
+        }
+
+        const formattedAccount = {
+            id: account.id,
+            account_number: account.account_number,
+            bank_name: account.bank_name,
+            currency: account.currency,
+            createdAt: formatDate(account.createdAt),
+        };
+
+        console.log(colors.magenta("Fetched user virtual account by ID successfully"));
+
+        return new ApiResponseDto(true, "Fetched user virtual account by ID successfully", formattedAccount);
     }
 }

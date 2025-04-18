@@ -17,7 +17,7 @@ export class TransactionHistoryService {
 
         try {
             const transactions =  await this.prisma.transactionHistory.findMany({
-              where: { user_id: userPayload.user_id },
+              where: { user_id: userPayload.sub },
               take: limit,
               skip: skip,
               orderBy: {
@@ -41,6 +41,7 @@ export class TransactionHistoryService {
                 description: transaction.description,
                 status: transaction.status,
                 date: formatDate(transaction.createdAt),
+                reference: transaction.transaction_reference,
                 sender: transaction.sender_details?.sender_name,
                 // icon: transaction.icon?.secure_url,
             }));

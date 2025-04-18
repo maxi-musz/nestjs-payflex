@@ -203,8 +203,14 @@ model Account {
   user_id        String
   account_number String       @unique
   accountType    AccountType? @default(savings)
-  currency       CurrencyType
-  bank_name      String
+  currency       CurrencyType?
+  bank_name      String?
+  sort_code      String?
+  routing_number String?
+  swift_code     String?
+  country        String?
+  iban          String?
+  account_name   String?
   reference      String?
   order_ref      String?
   flutterwave_id String?

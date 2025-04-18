@@ -4,6 +4,7 @@ import * as colors from "colors";
 import { ApiResponseDto } from "src/common/dto/api-response.dto";
 import { KycVerificationDto, UpdateUserDto, VerifyBvnDto } from "./dto/user.dto";
 import { formatAmount, formatDate } from "src/common/helper_functions/formatter";
+import { first } from "rxjs";
 
  @Injectable()
  export class UserService {
@@ -87,41 +88,184 @@ import { formatAmount, formatDate } from "src/common/helper_functions/formatter"
         }
     }
 
-    async fetchUserWallet(userPayload: any) {
-        console.log(colors.cyan("Fetching user wallet..."));
-
-        console.log(colors.red(`User payload: ${userPayload.email}`));
+    async fetchUserWalletAndLatestTransaction(userPayload: any) {
+        console.log(colors.cyan("Fetching user data for app homepage..."));
     
         try {
-            // Find the user and their wallet from the database
-            const userWithWallet = await this.prisma.user.findUnique({
-                where: { email: userPayload.email },
-                include: { wallet: true },
-            });
-    
-            if (!userWithWallet || !userWithWallet.wallet) {
-                console.log(colors.red("Wallet not found for the user."));
-                throw new NotFoundException("Wallet not found for the user.");
+            // Fetch user wallet details
+            const userWallet = await this.prisma.wallet.findUnique({
+                where: { user_id: userPayload.sub },
+            })
+
+            if(!userWallet) {
+                console.log(colors.red("User wallet not found"))
+                
+                await this.prisma.wallet.create({
+                    data: {
+                        user_id: userPayload.sub,
+                        current_balance: 0,
+                        all_time_fuunding: 0,
+                        all_time_withdrawn: 0,
+                        isActive: true,
+                        createdAt: new Date(),
+                        updatedAt: new Date(),
+                    },
+                })
+                console.log(colors.green("User wallet created successfully"))
             }
-    
-            console.log(colors.magenta("User wallet successfully retrieved."));
-            return new ApiResponseDto(true, "Wallet successfully retrieved", {
-                wallet: {
-                    id: userWithWallet.wallet.id,
-                    current_balance: formatAmount(userWithWallet.wallet.current_balance),
-                    all_time_fuunding: formatAmount(userWithWallet.wallet.all_time_fuunding),
-                    all_time_withdrawn: formatAmount(userWithWallet.wallet.all_time_withdrawn),
-                    isActive: userWithWallet.wallet.isActive,
-                    // createdAt: userWithWallet.wallet.createdAt,
-                    updatedAt: formatDate(userWithWallet.wallet.updatedAt),
+
+            const latest_transaction_history = await this.prisma.transactionHistory.findMany({
+                where: { user_id: userPayload.sub },
+                orderBy: { createdAt: 'desc' },
+                take: 2,
+                include: {
+                    sender_details: true,
+                    icon: true
+                }
+            })
+
+            // Fetch user first name and display image 
+            const user = await this.prisma.user.findUnique({
+                where: { id: userPayload.sub },
+                select: {
+                    first_name: true,
+                    last_name: true,
+                    profile_image: true
+                }
+            })
+            if(!user) {
+                console.log(colors.red("User not found"))
+                throw new NotFoundException("User not found")
+            }
+
+            const formattedResponse = {
+                user: {
+                    id: userPayload.sub,
+                    name: `${user.first_name} ${user.last_name}`,
+                    first_name: user.first_name,
+                    last_name: user.last_name,
+                    email: userPayload.email,
+                    profile_image: user.profile_image?.secure_url || "",
                 },
-            });
+
+                wallet_card: {
+                    id: userWallet?.id,
+                    current_balance: formatAmount(userWallet?.current_balance ?? 0),
+                    all_time_fuunding: formatAmount(userWallet?.all_time_fuunding ?? 0),
+                    all_time_withdrawn: formatAmount(userWallet?.all_time_withdrawn ?? 0),
+                    isActive: userWallet?.isActive,
+                    createdAt: userWallet?.createdAt,
+                    updatedAt: formatDate(userWallet?.updatedAt ?? new Date()),
+                },
+                transaction_history: latest_transaction_history.map(tx => ({
+                    id: tx.id,
+                    amount: tx.amount,
+                    type: tx.transaction_type,
+                    description: tx.description,
+                    credit_debit: tx.credit_debit,
+                    status: tx.status,
+                    date: formatDate(tx.createdAt),
+                    sender: tx.sender_details?.sender_name,
+                    icon: tx.icon?.secure_url
+                }))
+            }
+            console.log(colors.magenta("User data for app homepage successfully retrieved"))
+            return new ApiResponseDto(
+                true, 
+                "User data for app homepage successfully retrieved", 
+                formattedResponse
+            )
+            
         } catch (error) {
-            console.error(colors.red(`Error fetching user wallet: ${error.message}`));
+            console.log(colors.red(`Error fetching user app details: ${error.message}`))
             throw new HttpException(
-                error.response?.data?.message || "Error fetching user wallet.",
-                error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR
-            );
+                error.response?.data?.message || "Error fetching user app details",
+                error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+                { cause: new Error() }
+            )
+        }
+    }
+
+    // App Fetch for profile page
+    async fetchUserProfileForApp(userPayload: any) {
+        console.log(colors.cyan(`Fetching current user profile for app: ${userPayload.email}`))
+
+        try {
+            // fetch user from db
+            const fullUserDetails = await this.prisma.user.findUnique({
+                where: {email: userPayload.email},
+                include: {
+                    profile_image: true,
+                    address: true,
+                    kyc_verification: true,
+                    cards: true,
+                    wallet: true,
+                    accounts: true
+                }
+            })
+
+            console.log("Kyc verification details: ", fullUserDetails?.kyc_verification)
+
+            console.log(colors.magenta(`User profile data retrieved successfully for: ${fullUserDetails?.email}`))
+
+            // Format the response
+            const formattedResponse = {
+                user: {
+                    id: userPayload.sub,
+                    name: `${fullUserDetails?.first_name} ${fullUserDetails?.last_name}`,
+                    first_name: fullUserDetails?.first_name,
+                    last_name: fullUserDetails?.last_name,
+                    email: fullUserDetails?.email,
+                    is_verified: fullUserDetails?.is_email_verified,
+                    phone_number: fullUserDetails?.phone_number || null,
+                    profile_image: fullUserDetails?.profile_image?.secure_url || "",
+                    gender: fullUserDetails?.gender || "",
+                    date_of_birth: fullUserDetails?.date_of_birth || "",
+                    // role: fullUserDetails?.role || "",
+                    joined: fullUserDetails?.createdAt ? formatDate(fullUserDetails.createdAt) : "N/A",
+                    totalCards: fullUserDetails?.cards?.length || 0,
+                    totalAccounts: fullUserDetails?.accounts?.length || 0,
+                    wallet_balance: fullUserDetails?.wallet?.current_balance || 0,
+                },
+
+                address: {
+                    id: fullUserDetails?.address?.id,
+                    house_no: fullUserDetails?.address?.house_number,
+                    city: fullUserDetails?.address?.city,
+                    state: fullUserDetails?.address?.state,
+                    country: fullUserDetails?.address?.country,
+                    house_address: fullUserDetails?.address?.home_address,
+                    postal_code: fullUserDetails?.address?.postal_code
+                },
+
+                kyc_verification: {
+                    id: fullUserDetails?.kyc_verification?.id || "",
+                    is_active: fullUserDetails?.kyc_verification?.is_verified || "",
+                    status: fullUserDetails?.kyc_verification?.status || "",
+                    id_type: fullUserDetails?.kyc_verification?.id_type || "",
+                    id_number: fullUserDetails?.kyc_verification?.id_no || "",
+                },
+
+                wallet_card: {
+                    id: fullUserDetails?.wallet?.id,
+                    current_balance: formatAmount(fullUserDetails?.wallet?.current_balance || 0),
+                    all_time_fuunding: formatAmount(fullUserDetails?.wallet?.all_time_fuunding || 0),
+                    all_time_withdrawn: formatAmount(fullUserDetails?.wallet?.all_time_withdrawn || 0),
+                    isActive: fullUserDetails?.wallet?.isActive,
+                    createdAt: fullUserDetails?.wallet?.createdAt,
+                    updatedAt: formatDate(fullUserDetails?.wallet?.updatedAt ?? new Date()),
+                }
+            }
+
+            return new ApiResponseDto(
+                true,
+                "User profile successfully fetched",
+                formattedResponse
+            )
+            
+        } catch (error) {
+            console.log(colors.red(`Error fetching user details: ${error}`))
+            throw new HttpException("Error fetching user details", HttpStatus.SERVICE_UNAVAILABLE, {cause: new Error()})   
         }
     }
 
@@ -141,6 +285,7 @@ import { formatAmount, formatDate } from "src/common/helper_functions/formatter"
             })
 
             console.log(colors.magenta(`User profile data retrieved successfully for: ${fullUserDetails?.email}`))
+
             const formattedUserProfile = {
                 id: fullUserDetails?.id || "",
                 first_name: fullUserDetails?.first_name || "",

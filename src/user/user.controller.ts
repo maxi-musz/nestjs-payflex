@@ -15,9 +15,15 @@ export class UserController{
     }
 
     @UseGuards(AuthGuard('jwt'))
-    @Get('wallet')
-    fetchUserWallet(@Request() req: any) {
-        return this.userService.fetchUserWallet(req.user);
+    @Get('fetch-app-homepage-details')
+    fetchUserWalletAndLatestTransaction(@Request() req) {
+        return this.userService.fetchUserWalletAndLatestTransaction(req.user)
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Get('app-user-profile-page')
+    fetchUserProfileForApp(@Request() req: any) {
+        return this.userService.fetchUserProfileForApp(req.user);
     }
 
     @UseGuards(AuthGuard('jwt'))

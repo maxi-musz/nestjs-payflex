@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Request, UseGuards } from '@nestjs/common';
 import { BankingService } from './banking.service';
 import { PaystackFundingDto, PaystackFundingVerifyDto } from 'src/common/dto/banking.dto';
 import { AuthGuard } from '@nestjs/passport';
@@ -31,5 +31,17 @@ export class BankingController {
     @Post('/flw/create-one-time-virtual-account')
     createTemporaryVirtualAccount(@Body() dto: CreateTempVirtualLocalAccountDto, @Request() req) {
         return this.bankingService.createTemporaryVirtualAccount(dto, req.user)
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Post('/flw/create-permanent-virtual-account')
+    createPermanentVirtualAccount(@Request() req) {
+        return this.bankingService.createPermanentVirtualAccount(req.user)
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Get('fetch-user-virtual-accounts')
+    getAllUserVirtualAccounts(@Request() req) {
+        return this.bankingService.getAllUserVirtualAccounts(req.user)
     }
 }
