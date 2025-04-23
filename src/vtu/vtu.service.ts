@@ -9,6 +9,20 @@ import { GIFTBILL_CONFIG, SETSUB_CONFIG } from 'src/common/config';
 import { formatAmount, formatDate } from 'src/common/helper_functions/formatter';
 import { generateReference, generateSessionId } from 'src/common/helper_functions/generators';
 
+let apiUrl: string;
+let apiKey: string;
+let merchantId: string;
+
+if (process.env.NODE_ENV === "production") {
+    apiUrl = GIFTBILL_CONFIG.BASE_PROD_URL || "";
+    apiKey = GIFTBILL_CONFIG.PROD_API_KEY || "";
+    merchantId = GIFTBILL_CONFIG.MERCHANT_ID || "";
+} else {
+    apiUrl = GIFTBILL_CONFIG.BASE_SANDBOX_URL || "";
+    apiKey = GIFTBILL_CONFIG.SANDBOX_API_KEY || "";
+    merchantId = GIFTBILL_CONFIG.MERCHANT_ID || "";
+}
+
 @Injectable()
 export class VtuService {
     constructor(
@@ -26,8 +40,8 @@ export class VtuService {
 
         let response: any;
 
-        const apiUrl = `${GIFTBILL_CONFIG.BASE_URL}/airtime`;
-        const apiKey = GIFTBILL_CONFIG.API_KEY?.trim()
+        const apiUrl = `${GIFTBILL_CONFIG.BASE_PROD_URL}/airtime`;
+        const apiKey = GIFTBILL_CONFIG.PROD_API_KEY?.trim()
 
         try {
 
@@ -38,7 +52,7 @@ export class VtuService {
                 {
                 headers: {
                     Authorization: `Bearer ${apiKey}`,
-                    // MerchantId: merchantId,
+                    // MerchantId: merchantId,      
                     'content-type': 'application/json'
                 }
             });
@@ -53,7 +67,7 @@ export class VtuService {
     }
 
     async topupAirtimeGiftbills(userPayload: any, dto: GiftBillsBuyAirtimeDto) {
-        console.log(colors.cyan("Purchasing airtime from gift bills..."));
+        console.log(colors.cyan("Purchasing new airtime from gift bills..."));
     
         let response: any;
     
@@ -76,13 +90,13 @@ export class VtuService {
             console.log(colors.red("Insufficient wallet balance"));
             return new ApiResponseDto(false, "Insufficient wallet balance");
         }
+
+        console.log("API URL: ", apiUrl);
+        console.log("API KEY: ", apiKey);
     
         try {
-            const apiUrl = `${GIFTBILL_CONFIG.BASE_URL}/airtime/topup`;
-            const apiKey = GIFTBILL_CONFIG.API_KEY?.trim();
-            const merchantId = GIFTBILL_CONFIG.MERCHANT_ID
     
-            response = await axios.post(apiUrl, requestBody, {
+            response = await axios.post(`${apiUrl}/airtime/topup`, requestBody, {
                 headers: {
                     Authorization: `Bearer ${apiKey}`,
                     merchantId: merchantId,
@@ -90,10 +104,12 @@ export class VtuService {
                 }
             });
 
-            // if(!response.success) {
-            //     console.log(colors.red(`Error purchasing airtime top up: ${response.data}`))
-            //     return new ApiResponseDto(false, `Error purchasing airtime top up: ${response.data.message}`)
-            // }
+            
+
+            if(!response.data.success) {
+                console.log(colors.red(`Error purchasing airtime top up: ${response.data}`))
+                return new ApiResponseDto(false, `Error purchasing airtime top up: ${response.data.message}`)
+            }
 
             await this.prisma.wallet.update({
                 where: { id: userWallet.id },
@@ -134,7 +150,7 @@ export class VtuService {
                 created_at: formatDate(transaction.createdAt)
             }
     
-            console.log(colors.magenta(`Response received: ${formattedResponse}`));
+            console.log(colors.magenta(`Your airtime purchase of #${formatAmount(transaction.amount ?? 0)} to ${transaction.recipient_mobile} was successful`));
             return new ApiResponseDto(response.data.success, response.data.message, formattedResponse);
             
         } catch (error: any) {
@@ -147,15 +163,14 @@ export class VtuService {
     async fetchDataProviders() {
         console.log(colors.cyan("Returning all internet data providers"))
 
-        const apiUrl = `${GIFTBILL_CONFIG.BASE_URL}/internet`;
-        const apiKey = GIFTBILL_CONFIG.API_KEY?.trim()
-        const merchantId = GIFTBILL_CONFIG.MERCHANT_ID
+        const url = `${apiUrl}/internet`
+        console.log("URL: ", url);
 
         try {
             
             const response = await axios.get(
-                apiUrl 
-                ? apiUrl 
+                url 
+                ? url 
                 : "", 
             {
             headers: {
@@ -176,9 +191,8 @@ export class VtuService {
     async fetchAvailableDataTypes() {
         console.log(colors.cyan("Fetching available data types"))
 
-        const apiUrl = `${GIFTBILL_CONFIG.BASE_URL}/internet/data_types`;
-        const apiKey = GIFTBILL_CONFIG.API_KEY?.trim()
-        const merchantId = GIFTBILL_CONFIG.MERCHANT_ID
+        const url = `${apiUrl}/internet/data_types`
+        console.log("URL: ", url);
 
         try {
 
@@ -204,18 +218,17 @@ export class VtuService {
         }
     }
 
-    async fetchDataPlanForAProvider(provider: string) {
+    async fetchDataPlanForAProvidergiftBills(provider: string) {
         console.log(colors.cyan("Fetching data plans for a provider"))
+
+        const url = `${apiUrl}/internet/plans/${provider}`
+        console.log("URL: ", url);
 
         try {
 
-            const apiUrl = `${GIFTBILL_CONFIG.BASE_URL}/internet/plans/${provider}`;
-            const apiKey = GIFTBILL_CONFIG.API_KEY?.trim()
-            const merchantId = GIFTBILL_CONFIG.MERCHANT_ID
-
             const response = await axios.get(
-                apiUrl 
-                ? apiUrl 
+                url 
+                ? url 
                 : "", 
             {
             headers: {
@@ -296,12 +309,11 @@ export class VtuService {
             // console.log(colors.blue(`Available wallet balance: #${formatAmount(wallet?.current_balance ?? 0)}`));
     
             let apiResponse: any;
-            const apiUrl = `${GIFTBILL_CONFIG.BASE_URL}/internet/data`;
-            const apiKey = GIFTBILL_CONFIG.API_KEY?.trim();
-            const merchantId = GIFTBILL_CONFIG.MERCHANT_ID;
+            const url = `${apiUrl}/internet/data`
+            console.log("URL: ", url);
     
             try {
-                apiResponse = await axios.post(apiUrl, requestBody, {
+                apiResponse = await axios.post(url, requestBody, {
                     headers: {
                         Authorization: `Bearer ${apiKey}`,
                         merchantId: merchantId,

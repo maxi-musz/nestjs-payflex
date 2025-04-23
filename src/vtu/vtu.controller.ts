@@ -25,7 +25,7 @@ export class VtuController {
     topupAirtimeGiftbills(@Request() req, @Body() dto: GiftBillsBuyAirtimeDto) {
         return this.vtuService.topupAirtimeGiftbills(req.user, dto)
     }
-
+ 
     @UseGuards(AuthGuard('jwt'))
     @Get('/gb/internet-data')
     fetchDataProviders() {
@@ -40,8 +40,8 @@ export class VtuController {
 
     @UseGuards(AuthGuard('jwt'))
     @Get('/gb/available-data-plans/:provider')
-    fetchDataPlanForAProvider(@Param('provider') provider: string) {
-        return this.vtuService.fetchDataPlanForAProvider(provider)
+    fetchDataPlanForAProvidergiftBills(@Param('provider') provider: string) {
+        return this.vtuService.fetchDataPlanForAProvidergiftBills(provider)
     }
 
     @UseGuards(AuthGuard('jwt'))

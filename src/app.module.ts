@@ -23,7 +23,8 @@ import { VasModule } from './vas/vas.module';
     AuthModule, 
     UserModule, 
     BookmarkModule, 
-    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule],
+    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule
+  ],
   controllers: [AuthController],
   providers: [AuthService],
 })

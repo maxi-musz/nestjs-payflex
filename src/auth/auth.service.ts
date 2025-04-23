@@ -18,7 +18,7 @@ export class AuthService {
     constructor(
         private prisma: PrismaService,
         private jwt: JwtService, 
-        private config: ConfigService
+        private config: ConfigService,
     ) {}
 
     async requestEmailOTP(dto: RequestEmailOTPDto, context: 'signup' | 'resetPassword' = 'signup') {
@@ -100,19 +100,22 @@ export class AuthService {
         }
     }
 
-    async signup(dto: AuthDto): Promise<{ 
-        success: boolean; 
-        message: string; 
-        data?: { user: any } 
+    async signup(
+        dto: AuthDto
+    ): Promise<{
+        success: boolean;
+        message: string;
+        data?: { user: any };
     }> {
-        console.log("Sign up endpoint hit...");
-    
+        console.log(colors.cyan("Sign up endpoint hit..."));
+        console.log(colors.yellow("Received data:"), JSON.stringify(dto, null, 2));
+
         try {
             // Check if user exists
             const existingUser = await this.prisma.user.findUnique({
                 where: { email: dto.email },
             });
-    
+
             if (existingUser) {
                 console.log(colors.red(`⚠️ User already exists with email: ${dto.email}`));
                 return {
@@ -120,9 +123,11 @@ export class AuthService {
                     message: `User already exists with email: ${dto.email}`,
                 };
             }
-             // Hash password
+
+            // Hash password
             const hash = await argon.hash(dto.password);
-    
+            console.log(colors.green("Password hashed successfully"));
+
             // Create new user
             const newUser = await this.prisma.user.create({
                 data: {
@@ -133,11 +138,12 @@ export class AuthService {
                     hash: hash,
                 },
             });
-    
+            console.log(colors.green("User created successfully"));
+
             // Send OTP
             await this.requestEmailOTP({ email: dto.email }, 'signup');
             console.log(colors.blue("✅ OTP sent to email. Please verify your email."));
-    
+
             // Create wallet
             try {
                 await this.prisma.wallet.create({
@@ -149,6 +155,7 @@ export class AuthService {
                         isActive: true,
                     },
                 });
+                console.log(colors.green("Wallet created successfully"));
             } catch (error) {
                 console.error(colors.red("Error creating wallet"), error);
                 return {
@@ -156,7 +163,7 @@ export class AuthService {
                     message: "Failed to create wallet",
                 };
             }
-    
+
             return {
                 success: true,
                 message: "Enter Received Otp to verify your email",
@@ -172,11 +179,11 @@ export class AuthService {
             };
         } catch (error) {
             console.error("Signup error:", error);
-    
+
             if (error.code === "P2002") {
                 throw new ConflictException("Email already exists");
             }
-    
+
             throw new InternalServerErrorException("Registration failed. Please try again.");
         }
     }

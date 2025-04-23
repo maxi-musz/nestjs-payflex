@@ -5,13 +5,14 @@ import { JwtModule } from "@nestjs/jwt";
 import { JwtStrategy } from "./strategy";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 
-
 @Module({
-    imports: [JwtModule.register({
-      global: true
-    })],
+    imports: [
+        JwtModule.register({
+            global: true
+        }),
+    ],
     providers: [AuthService, JwtStrategy],
     controllers: [AuthController],
-  })
-  export class AuthModule {}
+})
+export class AuthModule {}
   

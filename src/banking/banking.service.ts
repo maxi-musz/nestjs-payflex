@@ -7,8 +7,26 @@ import axios from "axios";
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import { formatAmount, formatDate } from 'src/common/helper_functions/formatter';
 import { generateSessionId } from 'src/common/helper_functions/generators';
-import { CreateVirtualAccountDto } from './dto/accountNo-creation.dto';
+import { CreateVirtualAccountDto, InitiateTransferDto, VerifyAccountNumberDto } from './dto/accountNo-creation.dto';
 import { ConfigService } from '@nestjs/config';
+import { error } from 'console';
+
+// Determine Paystack environment key
+const paystackKey =
+process.env.NODE_ENV === "development"
+    ? process.env.PAYSTACK_TEST_SECRET_KEY || ''
+    : process.env.PAYSTACK_LIVE_SECRET_KEY || '';
+
+const generateTransferReference = () => {
+    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let reference = '';
+    
+    for (let i = 0; i < 16; i++) {
+        reference += characters.charAt(Math.floor(Math.random() * characters.length));
+    } 
+
+    return reference;
+};
 
 @Injectable()
 export class BankingService {
@@ -134,11 +152,7 @@ export class BankingService {
     async verifyPaystackFunding(dto: PaystackFundingVerifyDto, userPayload: any) {
         console.log(colors.cyan("Verifying wallet funding with Paystack"));
     
-        // Determine Paystack environment key
-        const paystackKey =
-            process.env.NODE_ENV === "development"
-                ? process.env.PAYSTACK_TEST_SECRET_KEY || ''
-                : process.env.PAYSTACK_LIVE_SECRET_KEY || '';
+        
     
         try {
             // Fetch the transaction from the database
@@ -179,7 +193,7 @@ export class BankingService {
             try {
                 response = await axios.get(`https://api.paystack.co/transaction/verify/${dto.reference}`, {
                     headers: {
-                        Authorization: `Bearer ${process.env.PAYSTACK_TEST_SECRET_KEY}`
+                        Authorization: `Bearer ${paystackKey}`
                     }
                 });
             } catch (error) {
@@ -581,7 +595,7 @@ export class BankingService {
 
         if(existingUser?.kyc_verification?.status !== "approved") {
             console.log(colors.red("User KYC not verified"));
-            return new ApiResponseDto(false, "User KYC not verified");
+            return new ApiResponseDto(false, "User KYC not verified, Complete KYC to create a permanent virtual account");
         }
 
         try {
@@ -736,5 +750,131 @@ export class BankingService {
         console.log(colors.magenta("Fetched user virtual account by ID successfully"));
 
         return new ApiResponseDto(true, "Fetched user virtual account by ID successfully", formattedAccount);
+    }
+
+    async fetchAllBanks(userPayload: any) {
+        console.log(colors.cyan("Fetching all banks..."));
+
+
+
+        try {
+            const response = await axios.get(`https://api.paystack.co/bank`, {
+                headers: this.getHeaders(),
+            });
+
+            // console.log("Response: ", response.data);
+
+            const { status, data } = response.data;
+            if(!status) {
+                console.log(colors.red(`Error fetching banks: ${error}`));
+                return new ApiResponseDto(false, "Error fetching banks");
+            }
+
+            const formattedPaystackBanks = data.map(bank => ({
+                id: bank.id,
+                name: bank.name,
+                code: bank.code
+            }));
+
+            console.log(colors.magenta("Fetched all banks successfully"));
+
+            return new ApiResponseDto(true, "Fetched all banks successfully", formattedPaystackBanks);
+            
+            
+        } catch (error) {
+            
+        }
+        
+    }
+
+    async verifyAccountNumberPaystack(dto: VerifyAccountNumberDto, userPayload: any) {
+        console.log("User verifying account number".blue)
+
+        const reqBody = {
+            account_number: dto.account_number,
+            bank_code: dto.bank_code
+        }
+    
+        try {
+            const response = await axios.get(`https://api.paystack.co/bank/resolve`, {
+                params: reqBody,
+                headers: {
+                    Authorization: `Bearer ${process.env.PAYSTACK_TEST_SECRET_KEY}`
+                }
+            });
+    
+            const { status, data } = response.data;
+    
+            if (status) {
+                console.log("Account name successfully retrieved: ", data.account_name);
+                return new ApiResponseDto(true, "Bank details verified successfully", data.account_name);
+            } else {
+                console.log(`Failed to verify bank details: ${data.message}`);
+                return new ApiResponseDto(false, `Failed to verify bank details: ${data.message}`);
+            }
+        } catch (error) {
+            // Handle the error message and extract the response message
+            if (error.response && error.response.data && error.response.data.message) {
+                console.error(error.response.data.message);
+                return new ApiResponseDto(false, error.response.data.message);
+            } else {
+                // For unexpected errors
+                console.error("Unexpected error verifying bank details", error);
+                return new ApiResponseDto(false, "An unexpected error occurred while verifying bank details");
+            }
+        }
+    }
+
+    async initiateNewTransferFlutterwave(dto: InitiateTransferDto, userPayload: any) {
+        console.log("Initiating new transfer with Flutterwave");
+
+        const transferReference = generateTransferReference();
+
+        const reqBody = {
+            bank: dto.bank_code,
+            account_number: dto.account_number,
+            amount: dto.amount,
+            currency: "NGN",
+            beneficiary_name: dto.beneficiary_name,
+            reference: transferReference,
+            callback_url: `${process.env.BASE_URL}/api/v1/banking/flutterwave/callback`,
+            narration: dto.narration,
+        };
+
+        try {
+            const response = await axios.post(`${this.apiUrl}/transfers`, reqBody, {
+                headers: this.getHeaders(),
+            });
+
+            console.log("Flutterwave Response: ", response.data);
+
+            const createdTransaction = await this.prisma.$transaction(async (tx) => {
+                return await tx.transactionHistory.create({
+                    data: {
+                        user_id: userPayload.sub,
+                        amount: Number(dto.amount),
+                        transaction_type: "transfer",
+                        description: dto.narration,
+                        status: "pending",
+                        transaction_reference: transferReference,
+                        createdAt: new Date(),
+                        updatedAt: new Date(),
+                    },
+                });
+            });
+
+            return new ApiResponseDto(true, "Transfer initiated successfully", {
+                flutterwave: response.data,
+                transaction: createdTransaction,
+            });
+            
+        } catch (error) {
+            console.error("Transfer initiation failed", {
+                error: error?.response?.data || error.message,
+                stack: error.stack,
+            });
+        
+            return new ApiResponseDto(false, "Failed to initiate transfer", null);
+        }
     }
 }

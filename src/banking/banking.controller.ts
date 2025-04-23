@@ -2,7 +2,7 @@ import { Body, Controller, Get, Post, Request, UseGuards } from '@nestjs/common'
 import { BankingService } from './banking.service';
 import { PaystackFundingDto, PaystackFundingVerifyDto } from 'src/common/dto/banking.dto';
 import { AuthGuard } from '@nestjs/passport';
-import { CreateTempVirtualLocalAccountDto, CreateVirtualAccountDto } from './dto/accountNo-creation.dto';
+import { CreateTempVirtualLocalAccountDto, CreateVirtualAccountDto, InitiateTransferDto, VerifyAccountNumberDto } from './dto/accountNo-creation.dto';
 
 @Controller('banking')
 export class BankingController {
@@ -43,5 +43,23 @@ export class BankingController {
     @Get('fetch-user-virtual-accounts')
     getAllUserVirtualAccounts(@Request() req) {
         return this.bankingService.getAllUserVirtualAccounts(req.user)
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Get('fetch-all-banks')
+    fetchAllBanks(@Request() req) {
+        return this.bankingService.fetchAllBanks(req.user)
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Post('verify-account-number')
+    verifyAccountNumberPaystack(@Body() dto: VerifyAccountNumberDto, @Request() req) {
+        return this.bankingService.verifyAccountNumberPaystack(dto, req.user)
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Post('send-ngn-money')
+    initiateTransferFlutterwave(@Body() dto: InitiateTransferDto, @Request() req) {
+        return this.bankingService.initiateNewTransferFlutterwave(dto, req.user)
     }
 }

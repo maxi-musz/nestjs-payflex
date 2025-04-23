@@ -9,6 +9,7 @@ import * as colors from "colors"
 import * as AES256 from 'aes-everywhere';
 import axios from 'axios';
 import * as crypto from 'crypto';
+import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 
 
 @Injectable()
@@ -39,6 +40,61 @@ export class BridgeCardService {
     };
   }
 
+  // /////////////////////////////////////////////    FETCH ALL CARDS FOR A USER  /////////////////////////////////////////////
+  async fetchAllCards(userPayload: any): Promise<any> {
+    console.log(colors.cyan(`Fetching all cards for user ${userPayload.email}...`));
+
+    try {
+        const cards = await this.prisma.card.findMany({
+            where: { user_id: userPayload.sub },
+        });
+
+        console.log(colors.green(`Total cards found for user ${userPayload.email}: ${cards.length}`));
+
+        if (cards.length === 0) {
+            console.log(colors.magenta(`No cards found for user ${userPayload.email} at the moment`));
+            // Return a successful response with an empty array
+            return new ApiResponseDto(
+                true,
+                "No cards available at the moment",
+                []
+            );
+        }
+
+        // Format cards response 
+        const formattedCards = cards.map((card) => ({
+            id: card.id,
+            bridge_card_id: card.bridge_card_id,
+            user_id: card.user_id,
+            card_currency: card.card_currency || 'USD',
+            masked_pan: card.masked_pan || "1234-5678-9012-3456",
+            expiry_month: card.expiry_month || "12",
+            expiry_year: card.expiry_year || "25",
+            card_type: card.card_type || "virtual",
+            card_brand: card.card_brand || "Mastercard",
+            first_funding_amount: card.first_funding_amount || 0,
+            current_balance: card.current_balance || 0,
+            card_limit: card.card_limit || 0,
+            status: card.status || "active",
+            is_active: card.is_active || true,
+            transaction_reference: card.transaction_reference || "N/A",
+        }));
+
+        return new ApiResponseDto(
+            true,
+            "Cards successfully retrieved",
+            formattedCards
+        );
+    } catch (error) {
+        console.error(colors.red('Error fetching cards:'), error);
+        throw new HttpException(
+            "Error fetching cards",
+            HttpStatus.INTERNAL_SERVER_ERROR
+        );
+    }
+  }
+
+  // /////////////////////////////////////////////    FUND ISSUING WALLET  /////////////////////////////////////////////
   async fundIssuingWallet() {
     console.log(colors.cyan(`Funding BridgeCard issuing wallet`));
 
@@ -66,6 +122,7 @@ export class BridgeCardService {
     }
   }
 
+    // /////////////////////////////////////////////    CREATE  NEW CARD  /////////////////////////////////////////////
   async createCard(userId: any, dto: CreateCardDto): Promise<any> {
     console.log(colors.cyan(`Creating new ${dto.currency} card...`));
   
@@ -83,8 +140,8 @@ export class BridgeCardService {
       if (!user) throw new HttpException('User not found', HttpStatus.NOT_FOUND);
 
       if(!user.kyc_verification?.is_verified) {
-        console.log(colors.red(`user ${user.email} needs to cmplete kyc before creating card`))
-        return new BadRequestException(`user ${user.email} needs to cmplete kyc before creating card`)
+        console.log(colors.red(`You need to complete kyc before creating virtual card`))
+        return new BadRequestException(`You need to complete kyc before creating virtual card`)
       }
   
       // Step 2: Check if user already has card
@@ -221,6 +278,7 @@ export class BridgeCardService {
     }
   }
   
+  // /////////////////////////////////////////////    CREATE CARD HOLDER  /////////////////////////////////////////////
   async createCardHolder(user: any, userId: string) {
     console.log("Card holder does not exist, creating a new one...")
     const endpoint = `${this.apiUrl}/issuing/sandbox/cardholder/register_cardholder`;
@@ -275,8 +333,4 @@ export class BridgeCardService {
       );
     }
   }
-  
-  
-  
-  
 }

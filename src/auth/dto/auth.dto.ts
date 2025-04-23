@@ -46,6 +46,7 @@ import {
     @IsString()
     @IsNotEmpty()
     last_name: string;
+    
   }
 
 export class RequestEmailOTPDto {

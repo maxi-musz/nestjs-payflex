@@ -502,6 +502,8 @@ import { first } from "rxjs";
         console.log(colors.cyan("Updating user KYC..."))
         try {
             // find the user from the db using the supplied user email
+
+            
             const existingUser = await this.prisma.user.findFirst({
                 where: {email: userPayload.email},
                 include: {

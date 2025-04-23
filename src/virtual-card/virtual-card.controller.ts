@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, Request, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Request, UseGuards } from "@nestjs/common";
 import { AuthGuard } from "@nestjs/passport";
 import { BridgeCardService } from "./virtual-card.service";
 import { CreateCardDto } from "./dto/card.dto";
@@ -8,18 +8,24 @@ import { CreateCardDto } from "./dto/card.dto";
 export class BridgeCardController {
   constructor(private readonly bridgeCardService: BridgeCardService) {}
 
+  @UseGuards(AuthGuard('jwt'))
+  @Get()
+  fetchAllCards(@Request() req) {
+    return this.bridgeCardService.fetchAllCards(req.user);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
   @Post('create')
-  @HttpCode(HttpStatus.CREATED)
-  async createCard(
+  createCard(
     @Request() req,
     @Body() dto: CreateCardDto,
   ) {
     const userId = req.user.sub;
-    return await this.bridgeCardService.createCard(userId, dto);
+    return this.bridgeCardService.createCard(userId, dto);
     }
 
-    @Post('fund-sandbox-issuing-wallet')
-  @HttpCode(HttpStatus.CREATED)
+  @UseGuards(AuthGuard('jwt'))
+  @Post('fund-sandbox-issuing-wallet')
   async fundIssuingWallet() {
     return await this.bridgeCardService.fundIssuingWallet();
   }

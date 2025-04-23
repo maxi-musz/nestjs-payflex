@@ -19,3 +19,35 @@ export enum AccountCurrency {
     @IsNotEmpty()
     amount: number;
   }
+
+export class VerifyAccountNumberDto {
+    @IsString()
+    @IsNotEmpty()
+    account_number: string;
+    
+    @IsString()
+    @IsNotEmpty()
+    bank_code: string;
+}
+
+export class InitiateTransferDto {
+    @IsString()
+    @IsNotEmpty()
+    account_number: string;
+
+    @IsString()
+    @IsNotEmpty()
+    bank_code: string;
+
+    @IsString()
+    @IsNotEmpty()
+    amount: string;
+
+    @IsString()
+    @IsNotEmpty()
+    beneficiary_name: string;
+
+    @IsString()
+    @IsNotEmpty()
+    narration: string;
+}

@@ -1,6 +1,8 @@
 export const GIFTBILL_CONFIG = {
-    BASE_URL: process.env.GIFTBILL_SANDBOX_BASE_URL,
-    API_KEY: process.env.GIFTBILL_SANDBOX_API_KEY?.trim(),
+    BASE_PROD_URL: process.env.GIFTBILL_PRODUCTION_BASE_URL,
+    BASE_SANDBOX_URL: process.env.GIFTBILL_SANDBOX_BASE_URL,
+    PROD_API_KEY: process.env.GIFTBILL_PROD_API_KEY?.trim(),
+    SANDBOX_API_KEY: process.env.GIFTBILL_SANDBOX_API_KEY?.trim(),
     MERCHANT_ID: process.env.MERCHANT_ID
 };
 
