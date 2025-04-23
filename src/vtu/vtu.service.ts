@@ -119,6 +119,9 @@ export class VtuService {
                     },
                     all_time_withdrawn: {
                         increment: dto.amount  
+                    },
+                    all_time_fuunding: {
+                        increment: dto.amount
                     }
                 }
             })
@@ -340,13 +343,23 @@ export class VtuService {
                 throw new Error(giftbillErrorMessage || "Failed to process request");
             }
     
-            // Deduct balance
-            const updatedWallet = await prisma.wallet.update({
+            // Deduct balance, update all time withdrawn and expense
+            await this.prisma.wallet.update({
                 where: { id: wallet?.id },
-                data: { current_balance: { decrement: dto.amount } }
-            });
+                data: {
+                    current_balance: {
+                        decrement: dto.amount
+                    },
+                    all_time_withdrawn: {
+                        increment: dto.amount  
+                    },
+                    all_time_fuunding: {
+                        increment: dto.amount
+                    }
+                }
+            })
     
-            console.log(colors.yellow(`New Wallet Balance: ${updatedWallet.current_balance}`));
+            console.log(colors.yellow(`New Wallet Balance: ${wallet.current_balance}`));
     
             // Record transaction
             const newHistory = await prisma.transactionHistory.create({
