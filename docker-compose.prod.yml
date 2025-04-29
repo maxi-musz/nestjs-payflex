@@ -1,0 +1,20 @@
+# Production environment overrides
+
+services:
+  api:
+    build:
+      context: .
+      target: production
+    environment:
+      - NODE_ENV=production
+      - PORT=1000
+      - DATABASE_URL=${PROD_DATABASE_URL}
+    ports:
+      - "1000:1000"
+    # Remove volumes that watch for changes
+    volumes: []
+    # Don't depend on the local db in production
+    depends_on: []
+    # Override the network settings to not use the local db network
+    networks:
+      - payflex-network

@@ -1,3 +1,22 @@
+<!-- rebuild Image -->
+docker build -t payflex-api .
+
+<!-- Kill a container -->
+docker 
+
+<!-- run container  -->
+docker run -v $(pwd):/app -d --env-file .env.dev --name payflex -p 1000:1000 payflex-api
+
+<!-- remove container -->
+docker rm payflex -f
+
+<!-- View logs -->
+docker logs -f --tail=100 payflex
+
+
+
+
+
 <p align="center">
   <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
 </p>

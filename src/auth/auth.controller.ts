@@ -20,7 +20,12 @@ export class AuthController{
 
     @Get('health') 
     healthCheck() {
-        return { status: 'OK', message: 'Service is running' };
+        return { status: 'OK', message: 'Service is running on local machine not dockerized yet' };
+    }
+
+    @Get('health/docker') 
+    healthCheckDocker() {
+        return { status: 'OK', message: 'Service is running on Docker' };
     }
 
     @Post('request-email-otp')

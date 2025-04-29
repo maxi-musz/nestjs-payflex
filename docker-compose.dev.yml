@@ -1,0 +1,17 @@
+# Development environment overrides
+
+services:
+  api:
+    build:
+      context: .
+      target: dev
+    environment:
+      - NODE_ENV=development
+      - PORT=1000
+      - DATABASE_URL=postgresql://postgres:maximus@db:5432/local-payflex?schema=public
+    ports:
+      - "1000:1000"
+    command: npm run start:dev
+    volumes:
+      - .:/app
+      - /app/node_modules # This prevents the node_modules inside the container from being overwritten
