@@ -1,3 +1,5 @@
+# Dockerfile for a Node.js application with Prisma ...... Dcokerfile
+
 # Base image
 FROM node:20-alpine AS base
 

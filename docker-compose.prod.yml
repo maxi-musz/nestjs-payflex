@@ -1,4 +1,6 @@
-# Production environment overrides
+# Production environment overrides ..... docker-compose.prod.yml
+
+# Prod: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 services:
   api:
@@ -7,14 +9,34 @@ services:
       target: production
     environment:
       - NODE_ENV=production
-      - PORT=1000
-      - DATABASE_URL=${PROD_DATABASE_URL}
+      - PORT=1002
+      - DATABASE_URL=postgresql://postgres:prodpassword@prod-db:5432/prod-payflex?schema=public
     ports:
-      - "1000:1000"
-    # Remove volumes that watch for changes
-    volumes: []
-    # Don't depend on the local db in production
-    depends_on: []
-    # Override the network settings to not use the local db network
+      - "1002:1000"
+      - "5555:5555" # prisma studio port
+    depends_on:
+      - prod-db
     networks:
       - payflex-network
+
+  prod-db:
+    image: postgres:15-alpine
+    container_name: prod-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: prodpassword
+      POSTGRES_DB: prod-payflex
+    ports:
+      - "5434:5432"
+    volumes:
+      - prod_data:/var/lib/postgresql/data
+    networks:
+      - payflex-network
+
+networks:
+  payflex-network:
+    driver: bridge
+
+volumes:
+  prod_data:

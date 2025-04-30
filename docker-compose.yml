@@ -1,37 +1,16 @@
-# Docker Compose configuration for NestJS application
+# Docker Compose file for Payflex API ..... docker-compose.yml
 
 services:
   # API service - shared configuration for both dev and prod
   api:
     container_name: payflex-api
     restart: unless-stopped
-    depends_on:
-      - db
     networks:
       - payflex-network
     volumes:
       - .:/app
       - /app/node_modules
 
-  # PostgreSQL database - local development database
-  db:
-    image: postgres:15-alpine
-    container_name: payflex-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: maximus
-      POSTGRES_DB: local-payflex
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - payflex-network
-
 networks:
   payflex-network:
     driver: bridge
-
-volumes:
-  postgres_data:

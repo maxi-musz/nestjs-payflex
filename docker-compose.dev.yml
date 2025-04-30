@@ -1,4 +1,6 @@
-# Development environment overrides
+# Development environment overrides..... docker-compose.dev.yml
+
+# Dev: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 services:
   api:
@@ -11,7 +13,27 @@ services:
       - DATABASE_URL=postgresql://postgres:maximus@db:5432/local-payflex?schema=public
     ports:
       - "1000:1000"
+      - "5555:5555" # prisma studio port
     command: npm run start:dev
     volumes:
       - .:/app
       - /app/node_modules # This prevents the node_modules inside the container from being overwritten
+
+  # PostgreSQL database - local development database
+  db:
+    image: postgres:15-alpine
+    container_name: local-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: maximus
+      POSTGRES_DB: local-payflex
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - payflex-network
+
+volumes:
+  postgres_data:
