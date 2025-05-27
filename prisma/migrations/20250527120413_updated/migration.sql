@@ -1,0 +1,15 @@
+-- AlterTable
+ALTER TABLE "KycVerification" ADD COLUMN     "date_of_birth" TIMESTAMP(3),
+ADD COLUMN     "email" TEXT,
+ADD COLUMN     "face_image" TEXT,
+ADD COLUMN     "first_name" TEXT,
+ADD COLUMN     "gender" TEXT,
+ADD COLUMN     "last_name" TEXT,
+ADD COLUMN     "lga_of_origin" TEXT,
+ADD COLUMN     "lga_of_residence" TEXT,
+ADD COLUMN     "middle_name" TEXT,
+ADD COLUMN     "nin" TEXT,
+ADD COLUMN     "phone" TEXT,
+ADD COLUMN     "state_of_origin" TEXT,
+ADD COLUMN     "state_of_residence" TEXT,
+ADD COLUMN     "watchlisted" BOOLEAN NOT NULL DEFAULT false;

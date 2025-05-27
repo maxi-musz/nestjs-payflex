@@ -6,6 +6,13 @@ import { KycVerificationDto, UpdateUserDto, VerifyBvnDto } from "./dto/user.dto"
 import { formatAmount, formatDate } from "src/common/helper_functions/formatter";
 import { first } from "rxjs";
 
+function maskAccountNumber(accountNumber: string): string {
+    if (!accountNumber) return "";
+    const visibleDigits = 3;
+    const maskedLength = Math.max(0, accountNumber.length - visibleDigits);
+    return '*'.repeat(maskedLength) + accountNumber.slice(-visibleDigits);
+}
+
  @Injectable()
  export class UserService {
     constructor(
@@ -130,13 +137,20 @@ import { first } from "rxjs";
                 select: {
                     first_name: true,
                     last_name: true,
-                    profile_image: true
+                    profile_image: true,
+                    is_email_verified: true,
                 }
             })
             if(!user) {
                 console.log(colors.red("User not found"))
                 throw new NotFoundException("User not found")
             }
+
+            const accounts = await this.prisma.account.findMany({
+                where: { user_id: userPayload.sub },
+            })
+
+            const createdCurrencies = new Set(accounts.map(account => account.currency));
 
             const formattedResponse = {
                 user: {
@@ -146,13 +160,27 @@ import { first } from "rxjs";
                     last_name: user.last_name,
                     email: userPayload.email,
                     profile_image: user.profile_image?.secure_url || "",
+                    is_email_verified: user.is_email_verified
                 },
+
+                accounts: accounts.map(account => ({
+                    id: account.id,
+                    account_holder_name: account.account_name,
+                    account_number: maskAccountNumber(account.account_number ?? ""),
+                    bank_name: account.bank_name,
+                    currency: account.currency,
+                    balance: formatAmount(account.current_balance),
+                    isActive: account.isActive,
+                    createdAt: formatDate(account.createdAt),
+                    updatedAt: formatDate(account.updatedAt)
+                })),
 
                 wallet_card: {
                     id: userWallet?.id,
                     current_balance: formatAmount(userWallet?.current_balance ?? 0),
                     all_time_fuunding: formatAmount(userWallet?.all_time_fuunding ?? 0),
                     all_time_withdrawn: formatAmount(userWallet?.all_time_withdrawn ?? 0),
+                    owned_currencies: Array.from(createdCurrencies),
                     isActive: userWallet?.isActive,
                     createdAt: userWallet?.createdAt,
                     updatedAt: formatDate(userWallet?.updatedAt ?? new Date()),

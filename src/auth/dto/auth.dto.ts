@@ -7,6 +7,8 @@ import {
     IsDateString,
     MinLength,
     MaxLength,
+    IsOptional,
+    IsBoolean,
   } from "class-validator";
   import { Type } from "class-transformer";
   
@@ -35,19 +37,47 @@ import {
   
     @IsString()
     @IsNotEmpty()
-    @MinLength(4)
-    @MaxLength(32)
+    @MinLength(6)
+    @MaxLength(64)
     password: string;
   
     @IsString()
     @IsNotEmpty()
-    first_name: string;
+    firstName: string;
   
     @IsString()
     @IsNotEmpty()
-    last_name: string;
-    
+    lastName: string;
+  
+    @IsString()
+    @IsOptional()
+    middleName?: string;
+  
+    @IsString()
+    @IsNotEmpty()
+    gender: string;
+  
+    @IsString()
+    @IsNotEmpty()
+    phone: string;
+  
+    @IsString()
+    @IsOptional()
+    referral?: string;
+  
+    @IsString()
+    @IsNotEmpty()
+    country: string;
+  
+    @IsBoolean()
+    @IsNotEmpty()
+    agreeToTerms: boolean;
+  
+    @IsBoolean()
+    @IsOptional()
+    updatesOptIn?: boolean;
   }
+  
 
 export class RequestEmailOTPDto {
   @IsEmail()

@@ -52,7 +52,7 @@ export class AuthController{
     verifyOTP(@Body() dto: VerifyEmailOTPDto) {
         return this.authService.verifyEmailOTP(dto)
     }
-
+ 
     @Post('reset-password')
     resetPassword(@Body() dto: ResetPasswordDto) {
         return this.authService.resetPassword(dto)

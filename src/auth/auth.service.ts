@@ -128,14 +128,30 @@ export class AuthService {
             const hash = await argon.hash(dto.password);
             console.log(colors.green("Password hashed successfully"));
 
+            const genderValue = dto.gender.toLowerCase();
+
             // Create new user
             const newUser = await this.prisma.user.create({
                 data: {
-                    email: dto.email,
-                    first_name: dto.first_name,
-                    last_name: dto.last_name,
-                    password: hash,
-                    hash: hash,
+                email: dto.email,
+                password: hash,       // Store hashed password
+                hash: hash,           // Optional: if you’re using this for token validation
+            
+                first_name: dto.firstName,
+                last_name: dto.lastName,
+                middle_name: dto.middleName || null,
+            
+                gender: genderValue as Gender,
+                phone_number: dto.phone,
+                referral_code: dto.referral || null,
+                address: {
+                    create: {
+                        country: dto.country,
+                    }
+                },
+            
+                agree_to_terms: dto.agreeToTerms,
+                updates_opt_in: dto.updatesOptIn ?? false,  // default to false if undefined
                 },
             });
             console.log(colors.green("User created successfully"));

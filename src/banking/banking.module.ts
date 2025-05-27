@@ -4,7 +4,7 @@ import { BankingController } from './banking.controller';
 
 @Module({
   providers: [BankingService],
-  controllers: [BankingController]
+  controllers: [BankingController],
+  exports: [BankingService],
 })
 export class BankingModule {}
- 

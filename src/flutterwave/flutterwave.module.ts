@@ -4,6 +4,7 @@ import { FlutterwaveController } from './flutterwave.controller';
 
 @Module({
   providers: [FlutterwaveService],
-  controllers: [FlutterwaveController]
+  controllers: [FlutterwaveController],
+  exports: [FlutterwaveService],
 })
 export class FlutterwaveModule {}

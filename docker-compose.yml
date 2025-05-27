@@ -3,7 +3,7 @@
 services:
   # API service - shared configuration for both dev and prod
   api:
-    container_name: payflex-api
+    container_name: paysmi-api
     restart: unless-stopped
     networks:
       - payflex-network

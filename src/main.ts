@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { json, urlencoded } from 'express';
+import * as colors from 'colors';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -29,12 +30,10 @@ async function bootstrap() {
   const port = parseInt(process.env.PORT || '3000', 10);
   await app.listen(port, '0.0.0.0');
 
-  // await app.listen(process.env.PORT ?? 1000);
-
-  // Log explicitly with the correct binding
-  console.log(`Application is running on: http://0.0.0.0:${port}`);
-  console.log(`Access URL from host: http://localhost:${port}`);
-  console.log(`Environment: ${process.env.NODE_ENV}`);
-  console.log(`Port: ${port}`);
+  
+  console.log(colors.blue(`Application is running on: http://0.0.0.0:${port}`));
+  // console.log(`Access URL from host: http://localhost:${port}`);
+  // console.log(`Environment: ${process.env.NODE_ENV}`);
+  // console.log(`Port: ${port}`);
 } 
 bootstrap();

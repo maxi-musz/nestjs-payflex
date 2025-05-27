@@ -14,6 +14,10 @@ import { VirtualCardModule } from './virtual-card/virtual-card.module';
 import { BridgeCardModule } from './bridge-card/bridge-card.module';
 import { FlutterwaveModule } from './flutterwave/flutterwave.module';
 import { VasModule } from './vas/vas.module';
+import { WebhooksService } from './webhooks/webhooks.service';
+import { WebhooksController } from './webhooks/webhooks.controller';
+import { WebhooksModule } from './webhooks/webhooks.module';
+import { FlutterwaveService } from './flutterwave/flutterwave.service';
 
 @Module({
   imports: [
@@ -23,9 +27,9 @@ import { VasModule } from './vas/vas.module';
     AuthModule, 
     UserModule, 
     BookmarkModule, 
-    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule
+    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule, WebhooksModule
   ],
-  controllers: [AuthController],
-  providers: [AuthService],
+  controllers: [AuthController, WebhooksController],
+  providers: [AuthService, WebhooksService, FlutterwaveService],
 })
 export class AppModule {}

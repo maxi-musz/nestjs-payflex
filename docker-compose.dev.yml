@@ -15,6 +15,8 @@ services:
       - "1000:1000"
       - "5555:5555" # prisma studio port
     command: npm run start:dev
+    depends_on:
+      - db
     volumes:
       - .:/app
       - /app/node_modules # This prevents the node_modules inside the container from being overwritten
