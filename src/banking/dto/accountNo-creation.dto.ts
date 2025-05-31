@@ -48,6 +48,5 @@ export class InitiateTransferDto {
     beneficiary_name: string;
 
     @IsString()
-    @IsNotEmpty()
     narration: string;
 }
