@@ -54,7 +54,7 @@ import {
     middleName?: string;
   
     @IsString()
-    @IsNotEmpty()
+    @IsOptional()
     gender: string;
   
     @IsString()
@@ -66,7 +66,7 @@ import {
     referral?: string;
   
     @IsString()
-    @IsNotEmpty()
+    @IsOptional()
     country: string;
   
     @IsBoolean()

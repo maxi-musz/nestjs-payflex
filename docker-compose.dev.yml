@@ -9,21 +9,23 @@ services:
       target: dev
     environment:
       - NODE_ENV=development
-      - PORT=1000
+      - PORT=3000
       - DATABASE_URL=postgresql://postgres:maximus@db:5432/local-payflex?schema=public
     ports:
-      - "1000:1000"
-      - "5555:5555" # prisma studio port
+      - "${API_PORT:-3000}:3000"
+      - "${PRISMA_STUDIO_PORT:-5556}:5555" # prisma studio port (host default 5556)
     command: npm run start:dev
     depends_on:
       - db
     volumes:
       - .:/app
       - /app/node_modules # This prevents the node_modules inside the container from being overwritten
+    networks:
+      - payflex-network
 
   # PostgreSQL database - local development database
   db:
-    image: postgres:15-alpine
+    image: postgres:17-alpine
     container_name: local-db
     restart: unless-stopped
     environment:
@@ -31,11 +33,15 @@ services:
       POSTGRES_PASSWORD: maximus
       POSTGRES_DB: local-payflex
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - payflex-network
+
+networks:
+  payflex-network:
+    driver: bridge
 
 volumes:
   postgres_data:

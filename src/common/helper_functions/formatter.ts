@@ -3,10 +3,10 @@ export const formatDateWithoutTime = (date: string | number | Date): string => {
         month: 'short',  // e.g. "Aug"
         day: 'numeric',  // e.g. "16"
         weekday: 'short' // e.g "Wed"
-        // year: 'numeric', // Uncomment if you want to include the year
-        // hour: 'numeric',  // Remove these lines to exclude time
-        // minute: 'numeric', // Remove these lines to exclude time
-        // hour12: true // Remove this line if you don't want AM/PM
+        // year: 'numeric', 
+        // hour: 'numeric',  
+        // minute: 'numeric', 
+        // hour12: true 
     });
 };
 

@@ -9,18 +9,18 @@ services:
       target: production
     environment:
       - NODE_ENV=production
-      - PORT=1002
+      - PORT=3000
       - DATABASE_URL=postgresql://postgres:prodpassword@prod-db:5432/prod-payflex?schema=public
     ports:
-      - "1002:1000"
-      - "5555:5555" # prisma studio port
+      - "${API_PORT:-3002}:3000"
+      - "${PRISMA_STUDIO_PORT:-5558}:5555" # prisma studio port (host default 5558)
     depends_on:
       - prod-db
     networks:
       - payflex-network
 
   prod-db:
-    image: postgres:15-alpine
+    image: postgres:17-alpine
     container_name: prod-db
     restart: unless-stopped
     environment:
@@ -28,7 +28,7 @@ services:
       POSTGRES_PASSWORD: prodpassword
       POSTGRES_DB: prod-payflex
     ports:
-      - "5434:5432"
+      - "${DB_PORT:-5434}:5432"
     volumes:
       - prod_data:/var/lib/postgresql/data
     networks:

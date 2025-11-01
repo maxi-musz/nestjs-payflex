@@ -32,8 +32,8 @@ async function bootstrap() {
 
   
   console.log(colors.blue(`Application is running on: http://0.0.0.0:${port}`));
-  // console.log(`Access URL from host: http://localhost:${port}`);
-  // console.log(`Environment: ${process.env.NODE_ENV}`);
-  // console.log(`Port: ${port}`);
+  console.log(`Access URL from host: http://localhost:${port}`);
+  console.log(`Environment: ${process.env.NODE_ENV}`);
+  console.log(`Port: ${port}`);
 } 
 bootstrap();

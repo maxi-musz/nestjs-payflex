@@ -752,7 +752,7 @@ export class BankingService {
         return new ApiResponseDto(true, "Fetched user virtual account by ID successfully", formattedAccount);
     }
 
-    async fetchAllBanks(userPayload: any) {
+    async fetchAllBanks() {
         console.log(colors.cyan("Fetching all banks..."));
 
 

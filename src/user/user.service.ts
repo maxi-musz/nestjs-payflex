@@ -30,7 +30,8 @@ function maskAccountNumber(accountNumber: string): string {
                 include: {
                     address: true,
                     profile_image: true,
-                    wallet: true
+                    wallet: true,
+                    kyc_verification: true
                 }
             })
 
@@ -76,6 +77,19 @@ function maskAccountNumber(accountNumber: string): string {
                     isActive: true,
                     createdAt: existingUser?.wallet?.createdAt,
                     updatedAt: existingUser?.wallet?.updatedAt,
+                },
+                kyc_verification: {
+                    id: existingUser?.kyc_verification?.id || "",
+                    is_verified: existingUser?.kyc_verification?.is_verified || false,
+                    status: existingUser?.kyc_verification?.status || "",
+                    id_type: existingUser?.kyc_verification?.id_type || "",
+                    id_no: existingUser?.kyc_verification?.id_no || "",
+                    bvn: existingUser?.kyc_verification?.bvn || "",
+                    bvn_verified: existingUser?.kyc_verification?.bvn_verified || false,
+                    watchlisted: existingUser?.kyc_verification?.watchlisted || false,
+                    initiated_at: existingUser?.kyc_verification?.initiated_at || "",
+                    approved_at: existingUser?.kyc_verification?.approved_at || "",
+                    failure_reason: existingUser?.kyc_verification?.failure_reason || ""
                 },
                 transactionHistory: recentTransactions.map(tx => ({
                     id: tx.id,
@@ -134,11 +148,9 @@ function maskAccountNumber(accountNumber: string): string {
             // Fetch user first name and display image 
             const user = await this.prisma.user.findUnique({
                 where: { id: userPayload.sub },
-                select: {
-                    first_name: true,
-                    last_name: true,
+                include: {
                     profile_image: true,
-                    is_email_verified: true,
+                    kyc_verification: true,
                 }
             })
             if(!user) {
@@ -195,7 +207,20 @@ function maskAccountNumber(accountNumber: string): string {
                     date: formatDate(tx.createdAt),
                     sender: tx.sender_details?.sender_name,
                     icon: tx.icon?.secure_url
-                }))
+                })),
+                kyc_verification: {
+                    id: user?.kyc_verification?.id || "",
+                    is_verified: user?.kyc_verification?.is_verified || false,
+                    status: user?.kyc_verification?.status || "",
+                    id_type: user?.kyc_verification?.id_type || "",
+                    id_no: user?.kyc_verification?.id_no || "",
+                    bvn: user?.kyc_verification?.bvn || "",
+                    bvn_verified: user?.kyc_verification?.bvn_verified || false,
+                    watchlisted: user?.kyc_verification?.watchlisted || false,
+                    initiated_at: user?.kyc_verification?.initiated_at || "",
+                    approved_at: user?.kyc_verification?.approved_at || "",
+                    failure_reason: user?.kyc_verification?.failure_reason || ""
+                }
             }
             console.log(colors.magenta("User data for app homepage successfully retrieved"))
             return new ApiResponseDto(

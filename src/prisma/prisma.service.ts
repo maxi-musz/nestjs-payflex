@@ -23,3 +23,4 @@ export class PrismaService extends PrismaClient {
         console.log(colors.blue(`prisma.service --- DB_URL: ${config.get('DATABASE_URL')}`))
     }
 }
+ 

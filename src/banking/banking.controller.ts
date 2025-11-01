@@ -45,10 +45,10 @@ export class BankingController {
         return this.bankingService.getAllUserVirtualAccounts(req.user)
     }
 
-    @UseGuards(AuthGuard('jwt'))
+    // @UseGuards(AuthGuard('jwt'))
     @Get('fetch-all-banks')
     fetchAllBanks(@Request() req) {
-        return this.bankingService.fetchAllBanks(req.user)
+        return this.bankingService.fetchAllBanks()
     }
 
     @UseGuards(AuthGuard('jwt'))
