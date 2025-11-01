@@ -98,20 +98,20 @@ export class BankingService {
             const { authorization_url, access_code, reference } = response.data.data;
     
             // 2. Create transaction history record
-            const newHistory = await this.prisma.transactionHistory.create({
+            await this.prisma.transactionHistory.create({
                 data: {
                     account_id: wallet?.id,
                     user_id: existingUser?.id,
                     amount: dto.amount,
                     transaction_type: "deposit",
                     credit_debit: "credit",
-
-                    description: "Wallet funding",
+                    description: "Wallet Funding Via Gateway",
                     fee: 10,
                     transaction_number: access_code,
                     transaction_reference: reference,
                     authorization_url: authorization_url,
                     session_id: generateSessionId(),
+                    payment_channel: "paystack",
                     sender_details: {
                         create: {
                             sender_name: "",
@@ -857,6 +857,7 @@ export class BankingService {
                         description: dto.narration,
                         status: "pending",
                         transaction_reference: transferReference,
+                        payment_channel: "flutterwave",
                         createdAt: new Date(),
                         updatedAt: new Date(),
                     },
@@ -875,6 +876,164 @@ export class BankingService {
             });
         
             return new ApiResponseDto(false, "Failed to initiate transfer", null);
+        }
+    }
+
+    /**
+     * Handle Paystack payment success webhook
+     * This is called automatically by Paystack when a payment is successful
+     */
+    async handlePaystackPaymentSuccess(data: any): Promise<void> {
+        try {
+            const { reference, amount, status, customer } = data;
+            
+            console.log(colors.cyan(`Processing Paystack payment success for reference: ${reference}`));
+
+            // Find the transaction in database
+            const transaction = await this.prisma.transactionHistory.findFirst({
+                where: { transaction_reference: reference }
+            });
+
+            if (!transaction) {
+                console.log(colors.red(`Transaction not found for reference: ${reference}`));
+                return;
+            }
+
+            // Check if already processed
+            if (transaction.status === 'success') {
+                console.log(colors.yellow(`Transaction ${reference} already processed`));
+                return;
+            }
+
+            // Verify amount matches (amount is in kobo from Paystack)
+            const amountInKobo = Math.round((transaction.amount || 0) * 100);
+            if (amount !== amountInKobo) {
+                console.error(colors.red(`Amount mismatch for transaction ${reference}. Expected: ${amountInKobo}, Got: ${amount}`));
+                return;
+            }
+
+            // Get user wallet
+            const wallet = await this.prisma.wallet.findFirst({
+                where: { user_id: transaction.user_id }
+            });
+
+            if (!wallet) {
+                console.log(colors.red(`Wallet not found for user: ${transaction.user_id}`));
+                return;
+            }
+
+            // Update transaction status
+            await this.prisma.transactionHistory.update({
+                where: { id: transaction.id },
+                data: {
+                    status: 'success',
+                    updatedAt: new Date()
+                }
+            });
+
+            // Update wallet balance
+            const transactionAmount = transaction.amount || 0;
+            await this.prisma.wallet.update({
+                where: { id: wallet.id },
+                data: {
+                    current_balance: wallet.current_balance + transactionAmount,
+                    all_time_fuunding: wallet.all_time_fuunding + transactionAmount,
+                    updatedAt: new Date()
+                }
+            });
+
+            console.log(colors.green(`Successfully processed Paystack payment for reference: ${reference}`));
+        } catch (error) {
+            console.error(colors.red(`Error processing Paystack payment success: ${error.message}`));
+            throw error;
+        }
+    }
+
+    /**
+     * Handle Paystack payment failed webhook
+     */
+    async handlePaystackPaymentFailed(data: any): Promise<void> {
+        try {
+            const { reference } = data;
+            
+            console.log(colors.cyan(`Processing Paystack payment failure for reference: ${reference}`));
+
+            // Find and update transaction
+            const transaction = await this.prisma.transactionHistory.findFirst({
+                where: { transaction_reference: reference }
+            });
+
+            if (transaction && transaction.status !== 'failed') {
+                await this.prisma.transactionHistory.update({
+                    where: { id: transaction.id },
+                    data: {
+                        status: 'failed',
+                        updatedAt: new Date()
+                    }
+                });
+
+                console.log(colors.green(`Transaction ${reference} marked as failed`));
+            }
+        } catch (error) {
+            console.error(colors.red(`Error processing Paystack payment failure: ${error.message}`));
+        }
+    }
+
+    /**
+     * Handle Paystack transfer success webhook
+     */
+    async handlePaystackTransferSuccess(data: any): Promise<void> {
+        try {
+            const { reference, amount, status } = data;
+            
+            console.log(colors.cyan(`Processing Paystack transfer success for reference: ${reference}`));
+
+            const transaction = await this.prisma.transactionHistory.findFirst({
+                where: { transaction_reference: reference }
+            });
+
+            if (transaction && transaction.status !== 'success') {
+                await this.prisma.transactionHistory.update({
+                    where: { id: transaction.id },
+                    data: {
+                        status: 'success',
+                        updatedAt: new Date()
+                    }
+                });
+
+                console.log(colors.green(`Transfer ${reference} marked as successful`));
+            }
+        } catch (error) {
+            console.error(colors.red(`Error processing Paystack transfer success: ${error.message}`));
+        }
+    }
+
+    /**
+     * Handle Paystack transfer failed webhook
+     */
+    async handlePaystackTransferFailed(data: any): Promise<void> {
+        try {
+            const { reference, reason } = data;
+            
+            console.log(colors.cyan(`Processing Paystack transfer failure for reference: ${reference}`));
+
+            const transaction = await this.prisma.transactionHistory.findFirst({
+                where: { transaction_reference: reference }
+            });
+
+            if (transaction && transaction.status !== 'failed') {
+                await this.prisma.transactionHistory.update({
+                    where: { id: transaction.id },
+                    data: {
+                        status: 'failed',
+                        updatedAt: new Date()
+                    }
+                });
+
+                console.log(colors.green(`Transfer ${reference} marked as failed. Reason: ${reason || 'Unknown'}`));
+            }
+        } catch (error) {
+            console.error(colors.red(`Error processing Paystack transfer failure: ${error.message}`));
         }
     }
 }

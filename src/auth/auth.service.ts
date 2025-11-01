@@ -11,6 +11,7 @@ import generateTokens from "src/utils/generate.token";
 import { ConfigService } from "@nestjs/config";
 import { ApiResponseDto } from "src/common/dto/api-response.dto";
 import { formatDate } from "src/common/helper_functions/formatter";
+import { generateSmipayTag } from "src/common/helper_functions/generators";
 
 @Injectable()
 export class AuthService {
@@ -130,12 +131,17 @@ export class AuthService {
 
             const genderValue = dto.gender.toLowerCase();
 
+            // Generate unique Smipay tag
+            const smipayTag = await generateSmipayTag(this.prisma);
+            console.log(colors.green(`Smipay tag generated: ${smipayTag}`));
+
             // Create new user
             const newUser = await this.prisma.user.create({
                 data: {
                 email: dto.email,
+                smipay_tag: smipayTag,
                 password: hash,       // Store hashed password
-                hash: hash,           // Optional: if you’re using this for token validation
+                hash: hash,           // Optional: if you're using this for token validation
             
                 first_name: dto.firstName,
                 last_name: dto.lastName,

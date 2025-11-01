@@ -167,12 +167,13 @@ function maskAccountNumber(accountNumber: string): string {
             const formattedResponse = {
                 user: {
                     id: userPayload.sub,
+                    smipay_tag: user.smipay_tag || "",
                     name: `${user.first_name} ${user.last_name}`,
-                    first_name: user.first_name,
-                    last_name: user.last_name,
-                    email: userPayload.email,
+                    first_name: user.first_name || "",
+                    last_name: user.last_name || "",
+                    email: userPayload.email || "",
                     profile_image: user.profile_image?.secure_url || "",
-                    is_email_verified: user.is_email_verified
+                    is_email_verified: user.is_email_verified || false
                 },
 
                 accounts: accounts.map(account => ({

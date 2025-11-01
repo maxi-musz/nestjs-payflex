@@ -26,6 +26,7 @@ model User {
   last_name         String?
   cardholder_id     String?
   email             String           @unique
+  smipay_tag        String?          @unique
   fourDigitPin      String?
   hash              String?
   phone_number      String?
@@ -158,6 +159,7 @@ model TransactionHistory {
   recipient_mobile      String?
   currency_type         CurrencyType?      @default(ngn)
   payment_method        PaymentMethod?     @default(paystack)
+  payment_channel       PaymentChannel?
   icon                  TransactionIcon?
   fee                   Float?             @default(0.0)
   balance_before        Float              @default(0)
@@ -205,6 +207,14 @@ enum PaymentMethod {
   bank_transfer
   wallet
   ussd
+}
+
+enum PaymentChannel {
+  bank_transfer
+  smipay_tag
+  paystack
+  flutterwave
+  other
 }
 
 model SenderDetails {

@@ -43,7 +43,9 @@ export class TransactionHistoryService {
                 date: formatDate(transaction.createdAt),
                 reference: transaction.transaction_reference,
                 sender: transaction.sender_details?.sender_name,
-                // icon: transaction.icon?.secure_url,
+                icon: transaction.icon?.secure_url,
+                payment_channel: transaction.payment_channel,
+                payment_method: transaction.payment_method,
             }));
 
             console.log(colors.magenta("Transaction history retrieved"))

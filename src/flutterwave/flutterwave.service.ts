@@ -89,6 +89,7 @@ export class FlutterwaveService {
                   status: 'pending',
                   transaction_reference: dto.reference,
                   description: dto.narration,
+                  payment_channel: 'flutterwave',
                 //   metadata: { flutterwaveResponse: result },
                 },
               }),

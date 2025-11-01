@@ -3,12 +3,16 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { json, urlencoded } from 'express';
 import * as colors from 'colors';
+import * as express from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.setGlobalPrefix('api/v1');
 
+  // Middleware to preserve raw body for Paystack webhook signature verification
+  app.use('/api/v1/webhook/paystack', express.raw({ type: 'application/json', limit: '50mb' }));
+  
   // Increase payload size limit
   app.use(json({ limit: '50mb' }));
   app.use(urlencoded({ extended: true, limit: '50mb' }));
