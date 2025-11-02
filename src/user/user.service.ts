@@ -180,7 +180,7 @@ function maskAccountNumber(accountNumber: string): string {
                 accounts: accounts.map(account => ({
                     id: account.id,
                     account_holder_name: account.account_name,
-                    account_number: maskAccountNumber(account.account_number ?? ""),
+                    account_number: account.account_number ?? "",
                     bank_name: account.bank_name,
                     currency: account.currency,
                     balance: formatAmount(account.current_balance),
