@@ -169,6 +169,7 @@ model TransactionHistory {
   transaction_reference String?            @unique
   authorization_url     String?
   session_id            String?
+  meta_data             Json?              @default("{}")
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
 }

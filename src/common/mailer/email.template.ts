@@ -401,3 +401,202 @@ mso-hide:all;
 </html>
   `
 }
+
+//  DEPOSIT NOTIFICATION EMAIL
+export const depositNotificationTemplate = (
+  firstName: string,
+  amount: number,
+  balanceAfter: number,
+  transactionReference: string,
+  accountNumber: string,
+  bankName: string,
+  transactionDate: string,
+  senderName?: string | null,
+  senderAccountNumber?: string | null,
+  senderBank?: string | null
+): string => {
+  const formattedAmount = new Intl.NumberFormat('en-NG', {
+    style: 'currency',
+    currency: 'NGN',
+    minimumFractionDigits: 0,
+  }).format(amount);
+
+  const formattedBalance = new Intl.NumberFormat('en-NG', {
+    style: 'currency',
+    currency: 'NGN',
+    minimumFractionDigits: 0,
+  }).format(balanceAfter);
+
+  return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html dir="ltr" xmlns="http://www.w3.org/1999/xhtml" xmlns:o="urn:schemas-microsoft-com:office:office" lang="en">
+ <head>
+  <meta charset="UTF-8">
+  <meta content="width=device-width, initial-scale=1" name="viewport">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta content="telephone=no" name="format-detection">
+  <title>Deposit Confirmation</title>
+  <style type="text/css">
+    @media only screen and (max-width:600px) {
+      .es-m-p0r { padding-right:0px!important }
+      .es-m-p0l { padding-left:0px!important }
+      .es-p-default { }
+      *[class="gmail-fix"] { display:none!important }
+      p, a { line-height:150%!important }
+      h1, h1 a { line-height:120%!important }
+      h2, h2 a { line-height:120%!important }
+      h3, h3 a { line-height:120%!important }
+      h4, h4 a { line-height:120%!important }
+      h5, h5 a { line-height:120%!important }
+      h6, h6 a { line-height:120%!important }
+      .es-header-body p { }
+      .es-content-body p { }
+      .es-footer-body p { }
+      .es-infoblock p { }
+      h1 { font-size:36px!important; text-align:left }
+      h2 { font-size:26px!important; text-align:left }
+      h3 { font-size:20px!important; text-align:left }
+      h4 { font-size:24px!important; text-align:left }
+      h5 { font-size:20px!important; text-align:left }
+      h6 { font-size:16px!important; text-align:left }
+      .es-content-body table, .es-header table, .es-footer table, .es-content, .es-footer, .es-header { width:100%!important; max-width:600px!important }
+      .adapt-img { width:100%!important; height:auto!important }
+    }
+  </style>
+ </head>
+ <body class="body" style="width:100%;height:100%;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;padding:0;Margin:0">
+  <div dir="ltr" class="es-wrapper-color" lang="en" style="background-color:#FAFAFA">
+   <table width="100%" cellspacing="0" cellpadding="0" class="es-wrapper" role="none" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;padding:0;Margin:0;width:100%;height:100%;background-repeat:repeat;background-position:center top;background-color:#FAFAFA">
+     <tr>
+      <td valign="top" style="padding:0;Margin:0">
+       <table cellpadding="0" cellspacing="0" align="center" class="es-content" role="none" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;width:100%;table-layout:fixed !important">
+       </table>
+       <table cellpadding="0" cellspacing="0" align="center" class="es-header" role="none" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;width:100%;table-layout:fixed !important;background-color:transparent;background-repeat:repeat;background-position:center top">
+       </table>
+       <table cellpadding="0" cellspacing="0" align="center" class="es-content" role="none" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;width:100%;table-layout:fixed !important">
+         <tr>
+          <td align="center" style="padding:0;Margin:0">
+           <table bgcolor="#ffffff" align="center" cellpadding="0" cellspacing="0" class="es-content-body" role="none" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;background-color:#FFFFFF;width:600px">
+             <tr>
+              <td align="left" style="Margin:0;padding-top:30px;padding-right:20px;padding-bottom:30px;padding-left:20px">
+               <table cellpadding="0" cellspacing="0" width="100%" role="none" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">
+                 <tr>
+                  <td align="center" valign="top" style="padding:0;Margin:0;width:560px">
+                   <table cellpadding="0" cellspacing="0" width="100%" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">
+                     <tr>
+                      <td align="center" style="padding:0;Margin:0;padding-top:10px;padding-bottom:10px;font-size:0px"><img src="https://fttbmkf.stripocdn.email/content/guids/CABINET_67e080d830d87c17802bd9b4fe1c0912/images/55191618237638326.png" alt="PayFlex" width="100" style="display:block;font-size:14px;border:0;outline:none;text-decoration:none"></td>
+                     </tr>
+                     <tr>
+                      <td align="center" style="padding:0;Margin:0;padding-bottom:10px"><h1 style="Margin:0;font-family:arial, 'helvetica neue', helvetica, sans-serif;mso-line-height-rule:exactly;letter-spacing:0;font-size:32px;font-style:normal;font-weight:bold;line-height:38px;color:#2CB543">✅ Deposit Successful!</h1></td>
+                     </tr>
+                     <tr>
+                      <td align="left" class="es-m-p0r es-m-p0l" style="Margin:0;padding-top:15px;padding-right:40px;padding-bottom:15px;padding-left:40px">
+                        <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:16px">Dear <strong>${firstName}</strong>,</p>
+                        <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:16px;padding-top:15px">We're pleased to inform you that your deposit has been successfully received and your wallet has been credited.</p>
+                      </td>
+                     </tr>
+                     <tr>
+                      <td align="center" style="padding:0;Margin:0;padding-top:20px;padding-bottom:20px">
+                       <table cellpadding="0" cellspacing="0" width="100%" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;background-color:#F8F9FA;border-radius:8px;padding:20px">
+                         <tr>
+                          <td align="left" style="padding:10px">
+                            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:20px;letter-spacing:0;color:#666666;font-size:14px;padding-bottom:8px"><strong style="color:#333333">Amount Deposited:</strong></p>
+                            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:28px;letter-spacing:0;color:#2CB543;font-size:24px;font-weight:bold">${formattedAmount}</p>
+                          </td>
+                         </tr>
+                         <tr>
+                          <td align="left" style="padding:10px;padding-top:0">
+                            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:20px;letter-spacing:0;color:#666666;font-size:14px;padding-bottom:8px"><strong style="color:#333333">New Wallet Balance:</strong></p>
+                            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:28px;letter-spacing:0;color:#333333;font-size:24px;font-weight:bold">${formattedBalance}</p>
+                          </td>
+                         </tr>
+                         <tr>
+                          <td align="left" style="padding:10px;padding-top:15px;border-top:1px solid #E5E5E5">
+                            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:18px;letter-spacing:0;color:#666666;font-size:12px;padding-bottom:5px"><strong style="color:#333333">Transaction Reference:</strong> ${transactionReference}</p>
+                            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:18px;letter-spacing:0;color:#666666;font-size:12px;padding-bottom:5px"><strong style="color:#333333">Your Account Number:</strong> ${accountNumber}</p>
+                            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:18px;letter-spacing:0;color:#666666;font-size:12px;padding-bottom:5px"><strong style="color:#333333">Bank:</strong> ${bankName}</p>
+                            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:18px;letter-spacing:0;color:#666666;font-size:12px;padding-bottom:5px"><strong style="color:#333333">Date:</strong> ${transactionDate}</p>
+                            ${senderName && senderAccountNumber && senderBank ? `
+                            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:18px;letter-spacing:0;color:#666666;font-size:12px;padding-top:10px;padding-bottom:5px;border-top:1px solid #E5E5E5;margin-top:10px"><strong style="color:#333333">From:</strong></p>
+                            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:18px;letter-spacing:0;color:#666666;font-size:12px;padding-bottom:5px"><strong style="color:#333333">Sender Name:</strong> ${senderName}</p>
+                            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:18px;letter-spacing:0;color:#666666;font-size:12px;padding-bottom:5px"><strong style="color:#333333">Sender Account:</strong> ${senderAccountNumber}</p>
+                            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:18px;letter-spacing:0;color:#666666;font-size:12px"><strong style="color:#333333">Sender Bank:</strong> ${senderBank}</p>
+                            ` : ''}
+                          </td>
+                         </tr>
+                       </table>
+                      </td>
+                     </tr>
+                     <tr>
+                      <td align="left" class="es-m-p0r es-m-p0l" style="Margin:0;padding-top:20px;padding-right:40px;padding-bottom:20px;padding-left:40px">
+                        <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:16px">Your funds are now available in your wallet and ready to use for your transactions.</p>
+                        <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:16px;padding-top:15px">If you have any questions or concerns about this transaction, please don't hesitate to contact our support team.</p>
+                      </td>
+                     </tr>
+                     <tr>
+                      <td align="center" style="padding:0;Margin:0;padding-top:10px;padding-bottom:10px"><span class="es-button-border" style="border-style:solid;border-color:#2CB543;background:#2CB543;border-width:0;display:inline-block;border-radius:33px;width:auto"><a href="" target="_blank" class="es-button" style="mso-style-priority:100 !important;text-decoration:none !important;mso-line-height-rule:exactly;color:#FFFFFF;font-size:18px;padding:12px 30px 12px 30px;display:inline-block;background:#2CB543;border-radius:33px;font-family:arial, 'helvetica neue', helvetica, sans-serif;font-weight:normal;font-style:normal;line-height:24px;width:auto;text-align:center;letter-spacing:0;mso-padding-alt:0;mso-border-alt:10px solid #2CB543;padding-left:30px;padding-right:30px">View Transaction History</a></span></td>
+                     </tr>
+                     <tr>
+                      <td align="left" class="es-m-p0r es-m-p0l" style="Margin:0;padding-top:20px;padding-right:40px;padding-bottom:20px;padding-left:40px">
+                        <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#999999;font-size:14px">Thank you for choosing PayFlex!</p>
+                        <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#999999;font-size:14px;padding-top:5px">Best regards,<br>The PayFlex Team</p>
+                      </td>
+                     </tr>
+                   </table></td>
+                 </tr>
+               </table></td>
+             </tr>
+           </table></td>
+         </tr>
+       </table>
+       <table cellpadding="0" cellspacing="0" align="center" class="es-footer" role="none" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;width:100%;table-layout:fixed !important;background-color:transparent;background-repeat:repeat;background-position:center top">
+         <tr>
+          <td align="center" style="padding:0;Margin:0">
+           <table align="center" cellpadding="0" cellspacing="0" class="es-footer-body" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;background-color:transparent;width:640px" role="none">
+             <tr>
+              <td align="left" style="Margin:0;padding-right:20px;padding-left:20px;padding-top:20px;padding-bottom:20px">
+               <table cellpadding="0" cellspacing="0" width="100%" role="none" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">
+                 <tr>
+                  <td align="center" style="padding:0;Margin:0;padding-top:15px;padding-bottom:15px;font-size:0">
+                   <table cellpadding="0" cellspacing="0" class="es-table-not-adapt es-social" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">
+                     <tr>
+                      <td align="center" valign="top" style="padding:0;Margin:0;padding-right:40px"><a target="_blank" href="https://web.facebook.com/btechltd/" style="mso-line-height-rule:exactly;text-decoration:underline;color:#333333;font-size:12px"><img title="Facebook" src="https://fttbmkf.stripocdn.email/content/assets/img/social-icons/logo-black/facebook-logo-black.png" alt="Fb" width="32" style="display:block;font-size:14px;border:0;outline:none;text-decoration:none"></a></td>
+                      <td align="center" valign="top" style="padding:0;Margin:0;padding-right:40px"><a target="_blank" href="https://x.com/besttech_ltd" style="mso-line-height-rule:exactly;text-decoration:underline;color:#333333;font-size:12px"><img title="X" src="https://fttbmkf.stripocdn.email/content/assets/img/social-icons/logo-black/x-logo-black.png" alt="X" width="32" style="display:block;font-size:14px;border:0;outline:none;text-decoration:none"></a></td>
+                      <td align="center" valign="top" style="padding:0;Margin:0;padding-right:40px"><a target="_blank" href="https://www.instagram.com/besttechnologiesltd/" style="mso-line-height-rule:exactly;text-decoration:underline;color:#333333;font-size:12px"><img title="Instagram" src="https://fttbmkf.stripocdn.email/content/assets/img/social-icons/logo-black/instagram-logo-black.png" alt="Inst" width="32" style="display:block;font-size:14px;border:0;outline:none;text-decoration:none"></a></td>
+                     </tr>
+                   </table></td>
+                 </tr>
+                 <tr>
+                  <td align="center" style="padding:0;Margin:0;padding-bottom:35px"><p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:18px;letter-spacing:0;color:#333333;font-size:12px">PayFlex© 2025, Inc. All Rights Reserved.</p><p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:18px;letter-spacing:0;color:#333333;font-size:12px">Oke-Ado, Molete, Ibadan, Oyo State</p></td>
+                 </tr>
+                 <tr>
+                  <td style="padding:0;Margin:0">
+                   <table cellpadding="0" cellspacing="0" width="100%" class="es-menu" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">
+                     <tr class="links">
+                      <td align="center" valign="top" width="33.33%" style="Margin:0;border:0;padding-top:5px;padding-bottom:5px;padding-right:5px;padding-left:5px">
+                       <div style="vertical-align:middle;display:block">
+                        <a target="_blank" href="" style="mso-line-height-rule:exactly;text-decoration:none;font-family:arial, 'helvetica neue', helvetica, sans-serif;display:block;color:#999999;font-size:12px">Visit Us </a>
+                       </div></td>
+                      <td align="center" valign="top" width="33.33%" style="Margin:0;border:0;padding-top:5px;padding-bottom:5px;padding-right:5px;padding-left:5px;border-left:1px solid #cccccc">
+                       <div style="vertical-align:middle;display:block">
+                        <a target="_blank" href="" style="mso-line-height-rule:exactly;text-decoration:none;font-family:arial, 'helvetica neue', helvetica, sans-serif;display:block;color:#999999;font-size:12px">Privacy Policy</a>
+                       </div></td>
+                      <td align="center" valign="top" width="33.33%" style="Margin:0;border:0;padding-top:5px;padding-bottom:5px;padding-right:5px;padding-left:5px;border-left:1px solid #cccccc">
+                       <div style="vertical-align:middle;display:block">
+                        <a target="_blank" href="" style="mso-line-height-rule:exactly;text-decoration:none;font-family:arial, 'helvetica neue', helvetica, sans-serif;display:block;color:#999999;font-size:12px">Terms of Use</a>
+                       </div></td>
+                     </tr>
+                   </table></td>
+                 </tr>
+               </table></td>
+             </tr>
+           </table></td>
+         </tr>
+       </table>
+      </td>
+     </tr>
+   </table>
+  </div>
+ </body>
+</html>`;
+}
