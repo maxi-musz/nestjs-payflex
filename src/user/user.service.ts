@@ -169,6 +169,7 @@ function maskAccountNumber(accountNumber: string): string {
                     id: userPayload.sub,
                     smipay_tag: user.smipay_tag || "",
                     name: `${user.first_name} ${user.last_name}`,
+                    phone_number: user.phone_number || "",
                     first_name: user.first_name || "",
                     last_name: user.last_name || "",
                     email: userPayload.email || "",

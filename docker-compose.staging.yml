@@ -7,10 +7,12 @@ services:
     build:
       context: .
       target: production
+    env_file:
+      - .env  # Loads ALL variables from .env file automatically
     environment:
-      - NODE_ENV=staging
-      - PORT=3000  # Keep this consistent with what's inside the container
-      - DATABASE_URL=postgresql://postgres:stagingpassword@staging-db:5432/staging-payflex?schema=public
+      # Override for staging-specific settings
+      - NODE_ENV=staging  # Force staging mode
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:stagingpassword@staging-db:5432/staging-payflex?schema=public}
     ports:
       - "${API_PORT:-3001}:3000"  # Maps host port to container port 3000
       - "${PRISMA_STUDIO_PORT:-5557}:5555" # prisma studio port (host default 5557)

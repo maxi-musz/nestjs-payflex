@@ -7,9 +7,10 @@ services:
     build:
       context: .
       target: dev
+    env_file:
+      - .env  # Loads ALL variables from .env file automatically
     environment:
-      - NODE_ENV=development
-      - PORT=3000
+      # Override DATABASE_URL to use Docker service name 'db' instead of 'localhost'
       - DATABASE_URL=postgresql://postgres:maximus@db:5432/local-payflex?schema=public
     ports:
       - "${API_PORT:-3000}:3000"

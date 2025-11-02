@@ -7,10 +7,12 @@ services:
     build:
       context: .
       target: production
+    env_file:
+      - .env  # Loads ALL variables from .env file automatically
     environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - DATABASE_URL=postgresql://postgres:prodpassword@prod-db:5432/prod-payflex?schema=public
+      # Override for production-specific settings
+      - NODE_ENV=production  # Force production mode
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:prodpassword@prod-db:5432/prod-payflex?schema=public}
     ports:
       - "${API_PORT:-3002}:3000"
       - "${PRISMA_STUDIO_PORT:-5558}:5555" # prisma studio port (host default 5558)

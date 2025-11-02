@@ -18,6 +18,7 @@ import { WebhooksService } from './webhooks/webhooks.service';
 import { WebhooksController } from './webhooks/webhooks.controller';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { FlutterwaveService } from './flutterwave/flutterwave.service';
+import { VtpassModule } from './vtpass/vtpass.module';
 
 @Module({
   imports: [
@@ -27,7 +28,7 @@ import { FlutterwaveService } from './flutterwave/flutterwave.service';
     AuthModule, 
     UserModule, 
     BookmarkModule, 
-    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule, WebhooksModule
+    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule, WebhooksModule, VtpassModule
   ],
   controllers: [AuthController, WebhooksController],
   providers: [AuthService, WebhooksService, FlutterwaveService],
