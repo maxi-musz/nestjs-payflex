@@ -57,3 +57,30 @@ export async function generateSmipayTag(
     const timestamp = Date.now().toString().slice(-4);
     return `${prefix}${timestamp}${Math.floor(Math.random() * 10)}`;
 }
+
+/**
+ * Generate a unique transaction reference and guarantee DB uniqueness.
+ * Uses a UUID-based reference and checks the database before returning.
+ *
+ * Example output: smipay-4f3a6e4d-9fe2-4c77-8d0e-2b0f2f7a1c2b
+ */
+export async function generateUniqueTransactionReference(
+    prismaClient: any,
+    prefix: string = 'smipay',
+    maxRetries: number = 5
+): Promise<string> {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        const reference = `${prefix}-${uuidv4()}`;
+
+        // Check collision in DB (transaction_reference is unique in schema)
+        const existing = await prismaClient.transactionHistory.findUnique({
+            where: { transaction_reference: reference }
+        });
+
+        if (!existing) {
+            return reference;
+        }
+    }
+    // If repeated collisions (extremely unlikely), append timestamp to ensure uniqueness
+    return `${prefix}-${uuidv4()}-${Date.now()}`;
+}
