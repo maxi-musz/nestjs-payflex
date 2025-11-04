@@ -12,11 +12,11 @@ export class DataController {
 
   @UseGuards(AuthGuard('jwt'), RateLimitGuard)
   @Get('variation-codes')
-  getVariationCodes(@Query('serviceID') serviceID: string) {
+  getVariationCodes(@Query('serviceID') serviceID: string, @Request() req) {
     if (!serviceID) {
       throw new BadRequestException('serviceID query parameter is required');
     }
-    return this.dataService.getVariationCodes(serviceID);
+    return this.dataService.getVariationCodes(serviceID, req.user);
   }
 
   @UseGuards(AuthGuard('jwt'), RateLimitGuard)

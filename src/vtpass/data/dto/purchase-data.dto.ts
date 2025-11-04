@@ -27,7 +27,7 @@ export class PurchaseDataDto {
   amount?: number; // Optional: variation_code determines the price
 
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   phone: string; // The phone number of the customer or recipient
 
   @IsString()

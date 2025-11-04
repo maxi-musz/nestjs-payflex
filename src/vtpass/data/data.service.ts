@@ -127,7 +127,7 @@ export class DataService {
     return this.getProviderServiceIds('data');
   }
 
-  async getVariationCodes(serviceID: string) {
+  async getVariationCodes(serviceID: string, userPayload?: any) {
     const url = `${this.getBaseUrl()}/service-variations?serviceID=${encodeURIComponent(serviceID)}`;
     this.logger.log(`Fetching variation codes for serviceID='${serviceID}' from: ${url}`);
 
@@ -142,8 +142,32 @@ export class DataService {
       const content = response.data?.content || {};
       const variations = content.variations || content.varations || [];
 
-      // Categorize variations
-      const categorized = categorizeVariations(variations);
+      // Apply markup and round down to nearest whole number for client display
+      const isFriendlyUser = Boolean(userPayload?.is_friendly || userPayload?.friendlies);
+      const generalPct = Number(process.env.DATA_MARKUP_PERCENT || 0);
+      const friendlyPct = Number(process.env.DATA_MARKUP_PERCENT_FRIENDLIES || generalPct);
+      const markupPercentForList = isFriendlyUser ? friendlyPct : generalPct;
+
+      const transformed = variations.map((v: any) => {
+        const vtpassAmount = Number(v.variation_amount);
+        if (isNaN(vtpassAmount)) return v;
+        const underThreshold = vtpassAmount < 300;
+        const markupValue = underThreshold ? 0 : (vtpassAmount * markupPercentForList) / 100;
+        const smipayAmountFloat = underThreshold ? vtpassAmount : vtpassAmount + markupValue;
+        const roundedDown = Math.floor(smipayAmountFloat);
+        const smipayAmountStr = roundedDown.toFixed(2);
+
+        // Update variation_amount
+        const updated: any = { ...v, variation_amount: smipayAmountStr, vtpass_amount: vtpassAmount.toFixed(2) };
+        // Update name leading price pattern like "N100" → new value
+        if (typeof v.name === 'string') {
+          updated.name = v.name.replace(/^\s*N\s*[0-9,]+(?:\.\d{1,2})?\s*/i, `N${roundedDown} `);
+        }
+        return updated;
+      });
+
+      // Categorize variations based on transformed prices/names
+      const categorized = categorizeVariations(transformed);
 
       // Build response: counts (per category + total), then content, then categorized + original variations
       const counts = {
@@ -158,14 +182,14 @@ export class DataService {
         Hynetflex: categorized.Hynetflex?.count || 0,
         'Broadband router': (categorized['Broadband router']?.count) || 0,
         Others: categorized.Others?.count || 0,
-        total: variations.length,
+        total: transformed.length,
       } as any;
       const result = {
         counts,
         ...content,
         variations_categorized: categorized,
         // Use id-enriched variations for stable keys in clients
-        variations: (categorized as any)._all_with_id || variations,
+        variations: (categorized as any)._all_with_id || transformed,
       };
 
       this.logger.log(`Variation codes retrieved successfully for ${serviceID}`);
@@ -173,16 +197,14 @@ export class DataService {
     } catch (error: any) {
       this.logger.error(`Error fetching variation codes for ${serviceID}: ${error.message}`);
       if (error.response) {
-        this.logger.error('VTpass API Error Response:', JSON.stringify({
-          status: error.response.status,
-          statusText: error.response.statusText,
-          data: error.response.data,
-        }, null, 2));
+        try {
+          this.logger.error('VTpass API Error Response: ' + JSON.stringify(error.response.data));
+        } catch {}
         const message = error.response.data?.response_description || error.response.data?.message || 'Failed to fetch variation codes';
         throw new HttpException(message, error.response.status || HttpStatus.BAD_REQUEST);
       }
       if (error.request) {
-        this.logger.error('VTpass API Request Error:', JSON.stringify(error.request, null, 2));
+        this.logger.error('VTpass API Request Error: network/request issue');
       }
       throw new HttpException('Failed to fetch variation codes', HttpStatus.INTERNAL_SERVER_ERROR);
     }
@@ -218,6 +240,10 @@ export class DataService {
       where: { transaction_reference: request_id }
     });
 
+    const existingUser = await this.prisma.user.findUnique({
+      where: { id: userPayload.sub }
+    });
+
     if (existingTx) {
       // Transaction already exists - return cached result (idempotent)
       this.logger.log(`Found existing transaction with request_id=${request_id}, status=${existingTx.status}`);
@@ -251,6 +277,12 @@ export class DataService {
       );
     }
 
+    // Prepare markup vars for use across try/catch
+    let vtpassAmount = 0;
+    let smipayAmount = 0;
+    let markupPercent = 0;
+    let markupValue = 0;
+
     try {
       // Get variation amount if not provided
       let amount = dto.amount;
@@ -267,18 +299,33 @@ export class DataService {
         }
       }
 
+      // Compute markup: prefer friendlies percentage if user is friendly
+      const isFriendlyUser = Boolean((userPayload as any)?.is_friendly || (userPayload as any)?.friendlies);
+      const generalPct = Number(process.env.DATA_MARKUP_PERCENT || 0);
+      const friendlyPct = Number(process.env.DATA_MARKUP_PERCENT_FRIENDLIES || generalPct);
+      markupPercent = isFriendlyUser ? friendlyPct : generalPct;
+      vtpassAmount = Number(amount);
+      const underThreshold = vtpassAmount < 300;
+      markupValue = underThreshold ? 0 : (vtpassAmount * markupPercent) / 100;
+      smipayAmount = Math.floor(underThreshold ? vtpassAmount : vtpassAmount + markupValue);
+
+      let phone: string;
+      if(process.env.NODE_ENV === 'development') {
+        phone = "08011111111";
+      } else {
+        phone = dto.phone?.trim() || existingUser?.phone_number?.trim() || '';
+      }
+
       const payload = {
         request_id,
         serviceID: dto.serviceID,
         billersCode: dto.billersCode,
         variation_code: dto.variation_code,
-        amount: amount,
-        phone: dto.phone,
+        amount: vtpassAmount,
+        phone
       };
 
       this.logger.log(`Payload: ${JSON.stringify(payload)}`);
-      this.logger.log(`Headers: ${JSON.stringify(this.getPostHeaders())}`);
-      this.logger.log(`URL: ${url}`);
 
       // Wallet hold + create pending transaction atomically
       const provider = this.getProviderLabelFromServiceId(dto.serviceID);
@@ -289,7 +336,7 @@ export class DataService {
         if (existing) return existing;
 
         const wallet = await tx.wallet.findUnique({ where: { user_id: userPayload.sub } });
-        const amountNum = Number(amount);
+        const amountNum = Number(smipayAmount);
         if (!wallet || Number(wallet.current_balance) < amountNum) {
           throw new HttpException('Insufficient wallet balance', HttpStatus.BAD_REQUEST);
         }
@@ -303,9 +350,13 @@ export class DataService {
         });
 
         return await tx.transactionHistory.create({
-          data: {
+          data: ({
             user_id: userPayload.sub,
             amount: amountNum,
+            vtpass_amount: vtpassAmount,
+            smipay_amount: smipayAmount,
+            markup_percent: markupPercent,
+            markup_value: markupValue,
             transaction_type: 'data',
             credit_debit: 'debit',
             description,
@@ -317,7 +368,7 @@ export class DataService {
             balance_before,
             balance_after,
             meta_data: payload,
-          }
+          } as any)
         });
       });
 
@@ -355,7 +406,7 @@ export class DataService {
       if (!finalSuccess) {
         await this.prisma.wallet.update({
           where: { user_id: userPayload.sub },
-          data: { current_balance: { increment: Number(amount) } }
+          data: { current_balance: { increment: Number(smipayAmount) } }
         });
         
         const errorMessage = response.data?.response_description || 
@@ -373,51 +424,54 @@ export class DataService {
     } catch (error: any) {
       this.logger.error(`Error purchasing data: ${error.message}`);
       
-      // Update transaction status to failed and refund (idempotent - safe to retry)
+      // Update transaction status to failed and refund only if the pending transaction exists
       try {
-        const amount = dto.amount || 0;
-        await this.prisma.$transaction(async (tx) => {
-          await tx.transactionHistory.update({
-            where: { transaction_reference: request_id },
-            data: { 
-              status: 'failed', 
-              meta_data: { 
-                request_id, 
-                payload: {
-                  request_id,
-                  serviceID: dto.serviceID,
-                  billersCode: dto.billersCode,
-                  variation_code: dto.variation_code,
-                  amount: dto.amount,
-                  phone: dto.phone,
-                },
-                vtpass_error: error.response?.data || error.message || 'Unknown error'
-              } 
+        const existingForUpdate = await this.prisma.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
+        if (existingForUpdate) {
+          const amount = Number(smipayAmount) || 0;
+          await this.prisma.$transaction(async (tx) => {
+            await tx.transactionHistory.update({
+              where: { transaction_reference: request_id },
+              data: { 
+                status: 'failed', 
+                meta_data: { 
+                  request_id, 
+                  payload: {
+                    request_id,
+                    serviceID: dto.serviceID,
+                    billersCode: dto.billersCode,
+                    variation_code: dto.variation_code,
+                    vtpass_amount: vtpassAmount,
+                    smipay_amount: smipayAmount,
+                    markup_percent: markupPercent,
+                    markup_value: markupValue,
+                    phone: dto.phone,
+                  },
+                  vtpass_error: (error.response?.data || error.message || 'Unknown error')
+                } 
+              }
+            });
+            if (amount > 0) {
+              await tx.wallet.update({
+                where: { user_id: userPayload.sub },
+                data: { current_balance: { increment: Number(amount) } }
+              });
             }
           });
-          if (amount > 0) {
-            await tx.wallet.update({
-              where: { user_id: userPayload.sub },
-              data: { current_balance: { increment: Number(amount) } }
-            });
-          }
-        });
+        }
       } catch (updateError: any) {
-        // Transaction might not exist if error occurred before creation
-        this.logger.warn(`Could not update transaction status: ${updateError.message}`);
+        this.logger.warn(`Could not update transaction status: ${updateError.message || updateError}`);
       }
-
+      
       if (error.response) {
-        this.logger.error('VTpass API Error Response:', JSON.stringify({
-          status: error.response.status,
-          statusText: error.response.statusText,
-          data: error.response.data,
-        }, null, 2));
+        try {
+          this.logger.error('VTpass API Error Response: ' + JSON.stringify(error.response.data));
+        } catch {}
         const message = error.response.data?.response_description || error.response.data?.message || 'Failed to purchase data';
         throw new HttpException(message, error.response.status || HttpStatus.BAD_REQUEST);
       }
       if (error.request) {
-        this.logger.error('VTpass API Request Error:', JSON.stringify(error.request, null, 2));
+        this.logger.error('VTpass API Request Error: network/request issue');
       }
       throw new HttpException('Failed to purchase data', HttpStatus.INTERNAL_SERVER_ERROR);
     }

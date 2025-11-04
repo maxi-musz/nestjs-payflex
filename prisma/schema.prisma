@@ -31,6 +31,7 @@ model User {
   hash                   String?
   phone_number           String?
   middle_name            String?
+  is_friendly            Boolean          @default(false)
   referral_code          String?
   password               String?
   otp                    String?
@@ -151,6 +152,10 @@ model TransactionHistory {
   account_id       String?
   user_id          String
   amount           Float?
+  vtpass_amount    Float? // raw amount sent to VTpass (from variation)
+  smipay_amount    Float? // amount charged to customer (after markup)
+  markup_percent   Float? // percent applied (general or friendlies)
+  markup_value     Float? // smipay_amount - vtpass_amount
   transaction_type TransactionType?
   credit_debit     CreditDebit?
   description      String?

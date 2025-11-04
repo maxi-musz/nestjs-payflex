@@ -173,6 +173,7 @@ function maskAccountNumber(accountNumber: string): string {
                     first_name: user.first_name || "",
                     last_name: user.last_name || "",
                     email: userPayload.email || "",
+                    role: user.role || "",
                     profile_image: user.profile_image?.secure_url || "",
                     is_email_verified: user.is_email_verified || false
                 },
