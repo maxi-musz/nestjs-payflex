@@ -4,12 +4,12 @@ import axios from 'axios';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import { PurchaseAirtimeDto } from './dto/purchase-airtime.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
 
 @Injectable()
 export class AirtimeService {
   private readonly logger = new Logger(AirtimeService.name);
-  private readonly vtpassSandboxBaseUrl = process.env.VT_PASS_SANDBOX_API_URL || '';
-  private readonly vtpassLiveBaseUrl = process.env.VT_PASS_LIVE_API_URL || '';
+  private readonly credentials: ReturnType<typeof VtpassCredentialsHelper.getCredentials>;
 
   private readonly apiKey: string;
   private readonly publicKey: string;
@@ -20,69 +20,13 @@ export class AirtimeService {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
   ) {
-    this.isDevelopment = process.env.NODE_ENV === 'development';
+    this.credentials = VtpassCredentialsHelper.getCredentials(configService);
+    this.apiKey = this.credentials.apiKey;
+    this.publicKey = this.credentials.publicKey;
+    this.secretKey = this.credentials.secretKey;
+    this.isDevelopment = this.credentials.isDevelopment;
 
-    // Prefer env-specific keys; fall back to generic
-    // Support both prefixes: VTPASS_* and VT_PASS_*
-    const sandboxApiKey =
-      this.configService.get<string>('VT_PASS_SANDBOX_API_KEY') ||
-      process.env.VT_PASS_SANDBOX_API_KEY ||
-      this.configService.get<string>('VTPASS_SANDBOX_API_KEY') ||
-      process.env.VTPASS_SANDBOX_API_KEY || '';
-    const sandboxPublicKey =
-      this.configService.get<string>('VT_PASS_SANDBOX_PUBLIC_KEY') ||
-      process.env.VT_PASS_SANDBOX_PUBLIC_KEY ||
-      this.configService.get<string>('VTPASS_SANDBOX_PUBLIC_KEY') ||
-      process.env.VTPASS_SANDBOX_PUBLIC_KEY || '';
-    const sandboxSecretKey =
-      this.configService.get<string>('VT_PASS_SANDBOX_SECRET_KEY') ||
-      process.env.VT_PASS_SANDBOX_SECRET_KEY ||
-      this.configService.get<string>('VTPASS_SANDBOX_SECRET_KEY') ||
-      process.env.VTPASS_SANDBOX_SECRET_KEY || '';
-
-    const liveApiKey =
-      this.configService.get<string>('VT_PASS_LIVE_API_KEY') ||
-      process.env.VT_PASS_LIVE_API_KEY ||
-      this.configService.get<string>('VTPASS_LIVE_API_KEY') ||
-      process.env.VTPASS_LIVE_API_KEY || '';
-    const livePublicKey =
-      this.configService.get<string>('VT_PASS_LIVE_PUBLIC_KEY') ||
-      process.env.VT_PASS_LIVE_PUBLIC_KEY ||
-      this.configService.get<string>('VTPASS_LIVE_PUBLIC_KEY') ||
-      process.env.VTPASS_LIVE_PUBLIC_KEY || '';
-    const liveSecretKey =
-      this.configService.get<string>('VT_PASS_LIVE_SECRET_KEY') ||
-      process.env.VT_PASS_LIVE_SECRET_KEY ||
-      this.configService.get<string>('VTPASS_LIVE_SECRET_KEY') ||
-      process.env.VTPASS_LIVE_SECRET_KEY || '';
-
-    const genericApiKey =
-      this.configService.get<string>('VT_PASS_API_KEY') ||
-      process.env.VT_PASS_API_KEY ||
-      this.configService.get<string>('VTPASS_API_KEY') ||
-      process.env.VTPASS_API_KEY || '';
-    const genericPublicKey =
-      this.configService.get<string>('VT_PASS_PUBLIC_KEY') ||
-      process.env.VT_PASS_PUBLIC_KEY ||
-      this.configService.get<string>('VTPASS_PUBLIC_KEY') ||
-      process.env.VTPASS_PUBLIC_KEY || '';
-    const genericSecretKey =
-      this.configService.get<string>('VT_PASS_SECRET_KEY') ||
-      process.env.VT_PASS_SECRET_KEY ||
-      this.configService.get<string>('VTPASS_SECRET_KEY') ||
-      process.env.VTPASS_SECRET_KEY || '';
-
-    if (this.isDevelopment) {
-      this.apiKey = sandboxApiKey || genericApiKey;
-      this.publicKey = sandboxPublicKey || genericPublicKey;
-      this.secretKey = sandboxSecretKey || genericSecretKey;
-    } else {
-      this.apiKey = liveApiKey || genericApiKey;
-      this.publicKey = livePublicKey || genericPublicKey;
-      this.secretKey = liveSecretKey || genericSecretKey;
-    }
-
-    const baseUrlPreview = (this.isDevelopment ? this.vtpassSandboxBaseUrl : this.vtpassLiveBaseUrl) || 'NOT SET';
+    const baseUrlPreview = this.credentials.baseUrl || 'NOT SET';
     this.logger.log(`VTpass mode: ${this.isDevelopment ? 'SANDBOX' : 'LIVE'} | Base URL: ${baseUrlPreview}`);
 
     if (!this.apiKey || !this.publicKey) {
@@ -94,13 +38,12 @@ export class AirtimeService {
   }
 
   private getBaseUrl(): string {
-    const envBase = this.isDevelopment ? this.vtpassSandboxBaseUrl : this.vtpassLiveBaseUrl;
-    if (!envBase) {
+    if (!this.credentials.baseUrl) {
       const which = this.isDevelopment ? 'VT_PASS_SANDBOX_API_URL' : 'VT_PASS_LIVE_API_URL';
       this.logger.error(`VTpass base URL not configured. Please set ${which}.`);
       throw new HttpException(`VTpass base URL not configured. Please set ${which}.`, HttpStatus.INTERNAL_SERVER_ERROR);
     }
-    return envBase.replace(/\/+$/, '');
+    return this.credentials.baseUrl.replace(/\/+$/, '');
   }
 
   private getGetHeaders() {
@@ -357,6 +300,8 @@ export class AirtimeService {
       throw new HttpException('Failed to purchase airtime', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
+
+  
 }
 
 
