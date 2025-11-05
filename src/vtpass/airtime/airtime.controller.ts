@@ -3,7 +3,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { AirtimeService } from './airtime.service';
 import { PurchaseAirtimeDto } from './dto/purchase-airtime.dto';
 import { AirtimeLimitsGuard } from './guards/airtime.limits.guard';
-import { RateLimitGuard } from './guards/rate-limit.guard';
+import { RateLimitGuard } from '../guards/rate-limit.guard';
 
 @Controller('vtpass/airtime')
 export class AirtimeController {

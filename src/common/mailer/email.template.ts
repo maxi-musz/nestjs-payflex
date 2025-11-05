@@ -600,3 +600,154 @@ export const depositNotificationTemplate = (
  </body>
 </html>`;
 }
+
+// CABLE PURCHASE SUCCESS EMAIL
+export const cablePurchaseSuccessTemplate = (
+  firstName: string,
+  serviceName: string,
+  billersCode: string,
+  amount: number,
+  transactionReference: string,
+  transactionDate: string,
+  productName?: string
+): string => {
+  const formattedAmount = new Intl.NumberFormat('en-NG', {
+    style: 'currency',
+    currency: 'NGN',
+    minimumFractionDigits: 0,
+  }).format(amount);
+
+ 
+
+  return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html dir="ltr" xmlns="http://www.w3.org/1999/xhtml" xmlns:o="urn:schemas-microsoft-com:office:office" lang="en">
+ <head>
+  <meta charset="UTF-8">
+  <meta content="width=device-width, initial-scale=1" name="viewport">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta content="telephone=no" name="format-detection">
+  <title>Cable Subscription Successful</title>
+  <style type="text/css">
+    @media only screen and (max-width:600px) {
+      .es-m-p0r { padding-right:0px!important }
+      .es-m-p0l { padding-left:0px!important }
+      .es-p-default { }
+      *[class="gmail-fix"] { display:none!important }
+      p, a { line-height:150%!important }
+      h1, h1 a { line-height:120%!important }
+      h2, h2 a { line-height:120%!important }
+      h3, h3 a { line-height:120%!important }
+      h4, h4 a { line-height:120%!important }
+      h5, h5 a { line-height:120%!important }
+      h6, h6 a { line-height:120%!important }
+      .es-header-body p { }
+      .es-content-body p { }
+      .es-footer-body p { }
+      .es-infoblock p { }
+      h1 { font-size:18px!important; text-align:center!important }
+      h2 { font-size:26px!important; text-align:left }
+      h3 { font-size:20px!important; text-align:left }
+      h4 { font-size:24px!important; text-align:left }
+      h5 { font-size:20px!important; text-align:left }
+      h6 { font-size:16px!important; text-align:left }
+      .es-content-body table, .es-header table, .es-footer table, .es-content, .es-footer, .es-header { width:100%!important; max-width:600px!important }
+      .adapt-img { width:100%!important; height:auto!important }
+    }
+  </style>
+ </head>
+ <body class="body" style="width:100%;height:100%;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;padding:0;Margin:0">
+  <div dir="ltr" class="es-wrapper-color" lang="en" style="background-color:#FAFAFA">
+   <table width="100%" cellspacing="0" cellpadding="0" class="es-wrapper" role="none" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;padding:0;Margin:0;width:100%;height:100%;background-repeat:repeat;background-position:center top;background-color:#FAFAFA">
+     <tr>
+      <td valign="top" style="padding:0;Margin:0">
+       <table cellpadding="0" cellspacing="0" align="center" class="es-content" role="none" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;width:100%;table-layout:fixed !important">
+       </table>
+       <table cellpadding="0" cellspacing="0" align="center" class="es-header" role="none" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;width:100%;table-layout:fixed !important;background-color:transparent;background-repeat:repeat;background-position:center top">
+       </table>
+       <table cellpadding="0" cellspacing="0" align="center" class="es-content" role="none" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;width:100%;table-layout:fixed !important">
+         <tr>
+          <td align="center" style="padding:0;Margin:0">
+           <table bgcolor="#ffffff" align="center" cellpadding="0" cellspacing="0" class="es-content-body" role="none" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;background-color:#FFFFFF;width:600px">
+             <tr>
+              <td align="left" style="Margin:0;padding-top:30px;padding-right:20px;padding-bottom:30px;padding-left:20px">
+               <table cellpadding="0" cellspacing="0" width="100%" role="none" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">
+                 <tr>
+                  <td align="center" valign="top" style="padding:0;Margin:0;width:560px">
+                   <table cellpadding="0" cellspacing="0" width="100%" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">
+                     <tr>
+                      <td align="center" style="padding:0;Margin:0;padding-top:10px;padding-bottom:10px;font-size:0px"><img src="https://fttbmkf.stripocdn.email/content/guids/CABINET_67e080d830d87c17802bd9b4fe1c0912/images/55191618237638326.png" alt="PayFlex" width="100" style="display:block;font-size:14px;border:0;outline:none;text-decoration:none"></td>
+                     </tr>
+                     <tr>
+                    
+                     </tr>
+                     <tr>
+                      <td align="center" style="padding:0;Margin:0;padding-bottom:10px"><h1 style="Margin:0;font-family:arial, 'helvetica neue', helvetica, sans-serif;mso-line-height-rule:exactly;letter-spacing:0;font-size:18px!important;font-style:normal;font-weight:bold;line-height:24px!important;color:#2CB543;text-align:center!important">✅ Cable Subscription Successful!</h1></td>
+                     </tr>
+                     <tr>
+                      <td align="left" class="es-m-p0r es-m-p0l" style="Margin:0;padding-top:15px;padding-right:40px;padding-bottom:15px;padding-left:40px">
+                        <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:16px">Dear <strong>${firstName}</strong>,</p>
+                        <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:16px;padding-top:15px">Your ${serviceName} cable subscription has been successfully purchased and activated on your decoder.</p>
+                      </td>
+                     </tr>
+                     <tr>
+                      <td align="center" style="padding:0;Margin:0;padding-top:20px;padding-bottom:20px">
+                       <table cellpadding="0" cellspacing="0" width="100%" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;border:2px solid #2CB543;border-radius:8px">
+                         <tr>
+                          <td align="left" style="padding:20px;Margin:0">
+                           <table cellpadding="0" cellspacing="0" width="100%" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px">
+                             <tr>
+                              <td align="left" style="padding:0;Margin:0;padding-bottom:10px"><p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:14px"><strong>Service Provider:</strong></p></td>
+                              <td align="right" style="padding:0;Margin:0;padding-bottom:10px"><p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:14px">${serviceName}</p></td>
+                             </tr>
+                             <tr>
+                              <td align="left" style="padding:0;Margin:0;padding-bottom:10px"><p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:14px"><strong>Smartcard Number:</strong></p></td>
+                              <td align="right" style="padding:0;Margin:0;padding-bottom:10px"><p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:14px">${billersCode}</p></td>
+                             </tr>
+                             ${productName ? `<tr>
+                              <td align="left" style="padding:0;Margin:0;padding-bottom:10px"><p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:14px"><strong>Product:</strong></p></td>
+                              <td align="right" style="padding:0;Margin:0;padding-bottom:10px"><p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:14px">${productName}</p></td>
+                             </tr>` : ''}
+                             <tr>
+                              <td align="left" style="padding:0;Margin:0;padding-bottom:10px"><p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:14px"><strong>Amount:</strong></p></td>
+                              <td align="right" style="padding:0;Margin:0;padding-bottom:10px"><p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#2CB543;font-size:16px;font-weight:bold">${formattedAmount}</p></td>
+                             </tr>
+                             <tr>
+                              <td align="left" style="padding:0;Margin:0;padding-bottom:10px"><p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:14px"><strong>Transaction Reference:</strong></p></td>
+                              <td align="right" style="padding:0;Margin:0;padding-bottom:10px"><p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:14px">${transactionReference}</p></td>
+                             </tr>
+                             <tr>
+                              <td align="left" style="padding:0;Margin:0"><p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:14px"><strong>Date:</strong></p></td>
+                              <td align="right" style="padding:0;Margin:0"><p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:14px">${transactionDate}</p></td>
+                             </tr>
+                           </table>
+                          </td>
+                         </tr>
+                       </table>
+                      </td>
+                     </tr>
+                     <tr>
+                      <td align="left" class="es-m-p0r es-m-p0l" style="Margin:0;padding-top:20px;padding-right:40px;padding-bottom:20px;padding-left:40px">
+                        <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:16px">Your subscription is now active. Please allow a few minutes for the service to reflect on your decoder.</p>
+                        <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#333333;font-size:16px;padding-top:15px">If you have any questions or concerns, please contact our support team.</p>
+                      </td>
+                     </tr>
+                     <tr>
+                      <td align="left" class="es-m-p0r es-m-p0l" style="Margin:0;padding-top:20px;padding-right:40px;padding-bottom:20px;padding-left:40px">
+                        <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:24px;letter-spacing:0;color:#666666;font-size:14px">Thank you for using SmiPay!</p>
+                      </td>
+                     </tr>
+                   </table></td>
+                 </tr>
+               </table></td>
+             </tr>
+           </table></td>
+         </tr>
+       </table>
+      </td>
+     </tr>
+   </table>
+  </div>
+ </body>
+</html>`;
+}

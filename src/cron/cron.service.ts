@@ -30,19 +30,21 @@ export class CronService implements OnModuleInit {
     if (process.env.NODE_ENV === 'production') {
       cron.schedule('*/3 * * * *', async () => {  // Runs every 3 minutes
         try {
-          console.log("Pinging service to keep alive...");
+          this.logger.log("Pinging service to keep alive...");
           await axios.get(url); // Replace with your actual endpoint
-          console.log(colors.america("Service is up"));
+          this.logger.log(colors.america("Service is up"));
         } catch (error: any) {
-          console.error("Failed to ping service:", error.message);
+          this.logger.error("Failed to ping service:", error.message);
         }
       });
     }
 
-    // VTpass transaction requery - runs every 3 minutes
-    cron.schedule('*/3 * * * *', async () => {
-      await this.requeryPendingVtpassTransactions();
-    });
+    // VTpass transaction requery - runs every 3 minutes - production only
+    if (process.env.NODE_ENV === 'production') {
+      cron.schedule('*/3 * * * *', async () => {
+          await this.requeryPendingVtpassTransactions();
+        });
+      }
   }
 
   /**

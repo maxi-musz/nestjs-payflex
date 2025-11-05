@@ -1,6 +1,6 @@
 import * as nodemailer from 'nodemailer';
 import { SentMessageInfo } from 'nodemailer';
-import { otpVerificationCodeTemplate, depositNotificationTemplate } from './email.template';
+import { otpVerificationCodeTemplate, depositNotificationTemplate, cablePurchaseSuccessTemplate } from './email.template';
 
 export const sendOTPByEmail = async (email: string, otp: string): Promise<void> => {
     try {
@@ -26,7 +26,7 @@ export const sendOTPByEmail = async (email: string, otp: string): Promise<void> 
 
         const mailOptions = {
             from: {
-                name: "PayFlex LTD",
+                name: "SmiPay MFB",
                 address: process.env.EMAIL_USER as string,
             },
             to: email,
@@ -90,7 +90,7 @@ export const sendDepositNotificationEmail = async (
 
         const mailOptions = {
             from: {
-                name: "PayFlex LTD",
+                name: "SmiPay MFB",
                 address: process.env.EMAIL_USER as string,
             },
             to: email,
@@ -103,6 +103,66 @@ export const sendDepositNotificationEmail = async (
     } catch (error) {
         console.error('Error sending deposit notification email:', error);
         // Don't throw error - email failure shouldn't break webhook processing
+        // Just log it for monitoring
+    }
+};
+
+/**
+ * Send cable purchase success notification email to user
+ */
+export const sendCablePurchaseSuccessEmail = async (
+    email: string,
+    firstName: string,
+    serviceName: string,
+    billersCode: string,
+    amount: number,
+    transactionReference: string,
+    transactionDate: string,
+    productName?: string
+): Promise<void> => {
+    try {
+        // Check if env vars exist
+        if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
+            console.warn('SMTP credentials missing. Skipping cable purchase notification email.');
+            return;
+        }
+
+        const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            host: process.env.GOOGLE_SMTP_HOST,
+            port: process.env.GOOGLE_SMTP_PORT ? parseInt(process.env.GOOGLE_SMTP_PORT) : 587,
+            secure: false,
+            auth: {
+                user: process.env.EMAIL_USER,
+                pass: process.env.EMAIL_PASSWORD,
+            },
+        });
+
+        const htmlContent = cablePurchaseSuccessTemplate(
+            firstName,
+            serviceName,
+            billersCode,
+            amount,
+            transactionReference,
+            transactionDate,
+            productName
+        );
+
+        const mailOptions = {
+            from: {
+                name: "SmiPay MFB",
+                address: process.env.EMAIL_USER as string,
+            },
+            to: email,
+            subject: `✅ ${serviceName} Subscription Successful - ${new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(amount)}`,
+            html: htmlContent
+        };
+
+        await transporter.sendMail(mailOptions);
+        console.log(`Cable purchase success email sent successfully to ${email}`);
+    } catch (error) {
+        console.error('Error sending cable purchase success email:', error);
+        // Don't throw error - email failure shouldn't break transaction processing
         // Just log it for monitoring
     }
 };

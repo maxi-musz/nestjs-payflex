@@ -4,7 +4,7 @@ import { DataService } from './data.service';
 import { PurchaseDataDto } from './dto/purchase-data.dto';
 import { QueryTransactionDto } from './dto/query-transaction.dto';
 import { DataLimitsGuard } from './guards/data.limits.guard';
-import { RateLimitGuard } from './guards/rate-limit.guard';
+import { RateLimitGuard } from '../guards/rate-limit.guard';
 
 @Controller('vtpass/data')
 export class DataController {
