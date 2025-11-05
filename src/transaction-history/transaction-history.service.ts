@@ -98,9 +98,13 @@ export class TransactionHistoryService {
             type: transaction.transaction_type,
             description: transaction.description,
             status: transaction.status,
-            date: formatDate(transaction.createdAt),
+            recipient_mobile: transaction.recipient_mobile,
+            tx_reference: transaction.transaction_reference,
+            created_on: formatDate(transaction.createdAt),
+            updated_on: formatDate(transaction.updatedAt),
+            // date: formatDate(transaction.createdAt),
             sender: transaction.sender_details?.sender_name,
-            icon: transaction.icon?.secure_url
+            icon: transaction.icon?.secure_url || "",
         }
 
         console.log(colors.magenta("Single transaction retrieved"))

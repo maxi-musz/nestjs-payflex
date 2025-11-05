@@ -1,0 +1,125 @@
+VTpass Callback/Webhook API Integration
+This section contains the recommended flow for integrating VTpass Callback/Webhook services when using the VTpass RESTful API.
+
+The webhook service enables VTpass to send your system an update on certain activities. Such activities will include:
+
+1. Transaction status update (Only transactions that are stuck on pending status and later resolved by one of our staff)
+2. Variation codes update
+
+ 
+
+The is usually sent to a URL you will provide to us via your VTpass dashboard. Please see
+
+ 
+
+IMPORTANT NOTES:
+To receive the VTpass callback requests, the below refers:
+
+1. Make sure to update your callback URL on your VTpass dashboard when logged in on the website.
+2. Make sure the URL is a POST method kind.
+3. Make sure to reply with a json data with key “response” and value “success”. e.g { “response”:”success”}
+4. We will be sending request to your URL repeatedly until we get the response expected as stated above and this will be done 5 times before giving up.
+5. The request data will come as a JSON with two parent keys: “type” and “data” (and maybe more)..
+6. The “type” parent key will define the type of callback that has been sent.
+7. The “data” parent key will contain data that you require for your action.
+8. Look out for other parent keys that maybe relevant for your use.
+EXPECTED RESPONSE
+
+{
+    "response":"success"
+}
+
+
+TRANSACTION UPDATE WEBHOOK
+The transaction update webhook is used to communicate an update on the status of a transaction from VTpass to your system. This will most likely be the final state of such transaction. As stated above, the JSON will contain two (2) keys “type” and “data”.
+
+The type for transaction update is “transaction-update”.
+
+NOTE: The data is very similar to the transaction requery response
+
+ 
+
+EXPECTED REQUEST DATA FOR TRANSACTION WITH AN UPDATE
+{
+    "type": "transaction-update",
+    "data": {
+        "code": "000",
+        "content": {
+            "transactions": {
+                "status": "delivered",
+                "product_name": "Airtel Airtime",
+                "unique_element": "08011111111",
+                "unit_price": 5,
+                "quantity": 1,
+                "service_verification": null,
+                "channel": "api",
+                "commission": 0,
+                "total_amount": 4.85,
+                "discount": null,
+                "type": "Airtime Recharge", "email": "degodtest@gmail.com",
+                "phone": "07061933309",
+                "name": null,
+                "convinience_fee": 0,
+                "amount": 5,
+                "platform": "api",
+                "method": "wallet",
+                "transactionId": "1583519914158857111079"
+            }
+        },
+        "response_description": "TRANSACTION DELIVERED",
+        "amount": 5,
+        "transaction_date": null,
+        "requestId": "ELAET1RA7PC06250-12S5962-2102P",
+        "purchased_code": ""
+    }
+}
+FIELDS	M/O	TYPE	DESCRIPTION
+type	M	string	The definition of the callback. In this case, it is transaction-update
+code	M	string	This is the response code for the transaction as defined in the response codes pages. In this case, it is 000 which could mean a couple of states. Always look into the inner status “data[content][transactions][status]” for the accurate transaction status.
+status	M	string	The transaction status defines the final state of a given transaction
+requestId	M	string	The requestId you sent for this transaction on initial request
+transactionId	M	string	This is an identifier for a given transaction on VTpass
+response_description	M	string	TRANSACTION DELIVERED
+ 
+
+TRANSACTION REVERSAL UPDATE
+VTpass will send your webhook an update when a transaction has been reversed. A reversal will happen when a transaction that was requested for has been bounced by the provider.
+
+This is different from the outright “failed” that is automatically reversed on request. The inner status for transaction reversal is “reversed” as against the former which is “failed”.
+
+EXPECTED REQUEST DATA FOR A TRANSACTION WITH A REVERSAL
+{
+    "type": "transaction-update",
+    "data": {
+        "code": "040",
+        "content": {
+            "transactions": {
+                "status": "reversed",
+                "unique_element": "08011111111",
+                "unit_price": 50,
+                "commission": 2,
+                "total_amount": 48.5,
+                "discount": null,
+                "amount": 50,
+                "transactionId": "1583501216545377109916",
+                "wallet_credit_id": "15835022148401519675278125"
+            }
+        },
+        "response_description": "TRANSACTION REVERSAL TO WALLET",
+        "amount": 48.5,
+        "transaction_date": null,
+        "requestId": "ELAET1A7PC06250-12S592-2102P",
+        "purchased_code": ""
+    }
+
+}
+FIELDS	M/O	TYPE	DESCRIPTION
+type	M	string	The definition of the callback. In this case, it is transaction-update
+code	M	string	This is the response code for the transaction as defined in the response codes pages. In this case, it is 040 which significantly means TRANSACTION REVERSED TO WALLET. Always look into the inner status data[content][transactions][status] for the accurate transaction status.
+amount	M	float	The amount of the transaction as charged by VTpass. This is different from the inner transaction amount. This is the amount being reversed to your wallet for the service requested for after well considering the initial discount given during the request for this service.
+status	M	string	The transaction status defines the final state of a given transaction
+requestId	M	string	The requestId you sent for this transaction on initial request
+transactionId	M	string	This is an identifier for a given transaction on VTpass
+wallet_credit_id	M	string	This the identifier for the wallet reverse transaction done on the initial transaction requested
+response_description	M	string	TRANSACTION REVERSAL TO WALLET
+

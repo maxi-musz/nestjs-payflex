@@ -22,4 +22,12 @@ export class WebhooksController {
     await this.webhookService.handlePaystackEvent(body, headers, rawBody);
     return { status: 'ok' };
   }
+
+  @Post('vtpass')
+  @HttpCode(200)
+  async handleVtpass(@Body() body: any) {
+    // VTpass expects a JSON response with key "response" and value "success"
+    await this.webhookService.handleVtpassEvent(body);
+    return { response: 'success' };
+  }
 }

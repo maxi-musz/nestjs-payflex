@@ -4,6 +4,7 @@ import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
 import { FlutterwaveModule } from 'src/flutterwave/flutterwave.module';
 import { PaystackWebhookModule } from './paystack-webhook/paystack-webhook.module';
+import { VtpassWebhookModule } from './vtpass-webhook/vtpass-webhook.module';
 import { FlutterwaveService } from 'src/flutterwave/flutterwave.service';
 import { FlutterwaveController } from 'src/flutterwave/flutterwave.controller';
 
@@ -12,6 +13,7 @@ import { FlutterwaveController } from 'src/flutterwave/flutterwave.controller';
     ConfigModule,
     FlutterwaveModule,
     PaystackWebhookModule,
+    VtpassWebhookModule,
   ],
   controllers: [WebhooksController, FlutterwaveController],
   providers: [WebhooksService, FlutterwaveService],

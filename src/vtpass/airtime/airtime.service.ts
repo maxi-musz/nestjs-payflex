@@ -207,43 +207,92 @@ export class AirtimeService {
       const response = await axios.post(url, payload, { headers: this.getPostHeaders() });
 
       const txContent = response.data?.content?.transactions || {};
-      const isSuccess = response.data?.code === '000' || response.data?.response_description === 'TRANSACTION SUCCESSFUL';
+      const responseCode = response.data?.code || '';
       const txStatus = txContent.status?.toLowerCase() || '';
-      const isDelivered = txStatus === 'delivered';
-      const finalSuccess = isSuccess && isDelivered;
+      const responseDescription = response.data?.response_description || '';
+      
+      // Determine transaction status based on VTpass documentation
+      // Code "000" with status "delivered" = success
+      // Code "000" with status "pending" or "initiated" = processing (keep as pending, don't refund)
+      // Code "099" = TRANSACTION IS PROCESSING (keep as pending, requery recommended)
+      // Code "016" = TRANSACTION FAILED (actual failure)
+      // Code "040" = TRANSACTION REVERSAL (refund)
+      // Other codes = check response_description for actual status
+      
+      const isProcessing = responseCode === '000' && (txStatus === 'pending' || txStatus === 'initiated') ||
+                           responseCode === '099' ||
+                           responseDescription.includes('PROCESSING') ||
+                           responseDescription.includes('PENDING');
+      
+      const isDelivered = responseCode === '000' && txStatus === 'delivered';
+      const isReversed = responseCode === '040' || txStatus === 'reversed';
+      const isFailed = responseCode === '016' || 
+                      (responseCode === '000' && txStatus === 'failed') ||
+                      (!isProcessing && !isDelivered && !isReversed && responseCode !== '000');
 
-      if (!finalSuccess) {
-        // Extract error message from VTpass response
-        const errorReason = response.data?.response_description || 
-                           txContent.product_name || 
-                           `Transaction failed with code: ${response.data?.code || 'unknown'}`;
-        
-        this.logger.warn(`VTpass purchase failed: ${errorReason}`, JSON.stringify(response.data));
+      let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
+      let shouldRefund = false;
+      let shouldThrow = false;
+      let errorMessage = '';
+
+      if (isDelivered) {
+        finalStatus = 'success';
+      } else if (isReversed) {
+        finalStatus = 'failed';
+        shouldRefund = true;
+        errorMessage = responseDescription || 'Transaction was reversed';
+        shouldThrow = true;
+      } else if (isFailed) {
+        finalStatus = 'failed';
+        shouldRefund = true;
+        errorMessage = responseDescription || `Transaction failed with code: ${responseCode}`;
+        shouldThrow = true;
+      } else if (isProcessing) {
+        // Keep as pending - transaction is processing, don't refund yet
+        finalStatus = 'pending';
+        this.logger.log(`Transaction is processing: ${responseDescription || `Status: ${txStatus}`}`);
+      } else {
+        // Unknown status - treat as pending and log for investigation
+        finalStatus = 'pending';
+        this.logger.warn(`Unknown transaction status. Code: ${responseCode}, Status: ${txStatus}, Description: ${responseDescription}`);
       }
 
       await this.prisma.transactionHistory.update({
         where: { transaction_reference: request_id },
         data: {
-          status: finalSuccess ? 'success' : 'failed',
+          status: finalStatus,
           transaction_number: txContent.transactionId?.toString() || null,
           fee: typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || 0,
           meta_data: {
             ...(createdTx.meta_data as any),
             vtpass_response: response.data,
+            vtpass_status: txStatus,
+            vtpass_code: responseCode,
           }
         }
       });
 
-      // Refund on failure
-      if (!finalSuccess) {
+      // Only refund and throw error for actual failures or reversals
+      if (shouldRefund) {
         await this.prisma.wallet.update({
           where: { user_id: userPayload.sub },
           data: { current_balance: { increment: Number(dto.amount) } }
         });
         
-        const errorMessage = response.data?.response_description || 
-                           `Transaction failed. Status: ${txStatus || 'unknown'}`;
+        if (shouldThrow) {
         throw new HttpException(errorMessage, HttpStatus.BAD_REQUEST);
+        }
+      }
+
+      // If processing, return success response with pending status info
+      if (isProcessing) {
+        const formattedResponse = {
+          id: createdTx.id,
+          ...response.data,
+          status: 'processing',
+          message: 'Transaction is being processed. Status will be updated via webhook.',
+        };
+        return new ApiResponseDto(true, 'Transaction is being processed', formattedResponse);
       }
 
       const formattedResponse = {
@@ -301,7 +350,132 @@ export class AirtimeService {
     }
   }
 
-  
+  /**
+   * Internal method to requery a transaction (called by cron service)
+   * Updates transaction status based on VTpass response
+   */
+  async requeryPendingTransaction(requestId: string): Promise<{ updated: boolean; status?: string }> {
+    const url = `${this.getBaseUrl()}/requery`;
+    this.logger.log(`[Cron] Querying pending transaction: request_id=${requestId}`);
+
+    try {
+      // Get transaction from database
+      const transaction = await this.prisma.transactionHistory.findUnique({
+        where: { transaction_reference: requestId },
+      });
+
+      if (!transaction) {
+        this.logger.warn(`[Cron] Transaction not found: ${requestId}`);
+        return { updated: false };
+      }
+
+      // Skip if already successful
+      if (transaction.status === 'success') {
+        this.logger.log(`[Cron] Transaction ${requestId} already successful, skipping`);
+        return { updated: false, status: 'success' };
+      }
+
+      // Skip if already failed
+      if (transaction.status === 'failed') {
+        this.logger.log(`[Cron] Transaction ${requestId} already failed, skipping`);
+        return { updated: false, status: 'failed' };
+      }
+
+      // Check requery count
+      const metaData = transaction.meta_data as any || {};
+      const requeryCount = metaData.requery_count || 0;
+      const maxRequeryAttempts = 3;
+
+      if (requeryCount >= maxRequeryAttempts) {
+        this.logger.warn(`[Cron] Transaction ${requestId} exceeded max requery attempts (${maxRequeryAttempts}), skipping`);
+        return { updated: false };
+      }
+
+      // Check if transaction is too old (older than 30 minutes)
+      const transactionAge = Date.now() - transaction.createdAt.getTime();
+      const maxAge = 30 * 60 * 1000; // 30 minutes
+      if (transactionAge > maxAge) {
+        this.logger.warn(`[Cron] Transaction ${requestId} is too old (${Math.round(transactionAge / 60000)} minutes), skipping`);
+        return { updated: false };
+      }
+
+      // Query VTpass
+      const payload = { request_id: requestId };
+      const response = await axios.post(url, payload, { headers: this.getPostHeaders() });
+
+      const txContent = response.data?.content?.transactions || {};
+      const responseCode = response.data?.code || '';
+      const txStatus = txContent.status?.toLowerCase() || '';
+      const responseDescription = response.data?.response_description || '';
+
+      // Determine status (same logic as purchase method)
+      const isDelivered = responseCode === '000' && txStatus === 'delivered';
+      const isReversed = responseCode === '040' || txStatus === 'reversed';
+      const isFailed = responseCode === '016' || (responseCode === '000' && txStatus === 'failed');
+      const isProcessing = responseCode === '000' && (txStatus === 'pending' || txStatus === 'initiated') ||
+                           responseCode === '099' ||
+                           responseDescription.includes('PROCESSING') ||
+                           responseDescription.includes('PENDING');
+
+      let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
+      let shouldRefund = false;
+
+      if (isDelivered) {
+        finalStatus = 'success';
+        this.logger.log(`[Cron] Transaction ${requestId} delivered successfully`);
+      } else if (isReversed || isFailed) {
+        finalStatus = 'failed';
+        shouldRefund = true;
+        this.logger.warn(`[Cron] Transaction ${requestId} ${isReversed ? 'reversed' : 'failed'}`);
+      } else if (isProcessing) {
+        finalStatus = 'pending';
+        this.logger.log(`[Cron] Transaction ${requestId} still processing`);
+      } else {
+        finalStatus = 'pending';
+        this.logger.warn(`[Cron] Unknown status for transaction ${requestId}: ${responseCode}/${txStatus}`);
+      }
+
+      // Update transaction
+      await this.prisma.$transaction(async (tx) => {
+        await tx.transactionHistory.update({
+          where: { transaction_reference: requestId },
+          data: {
+            status: finalStatus,
+            transaction_number: txContent.transactionId?.toString() || transaction.transaction_number,
+            fee: typeof txContent.commission === 'number' 
+              ? txContent.commission 
+              : Number(txContent.commission) || transaction.fee || 0,
+            meta_data: {
+              ...metaData,
+              vtpass_response: response.data,
+              vtpass_status: txStatus,
+              vtpass_code: responseCode,
+              requery_count: requeryCount + 1,
+              last_requery_at: new Date().toISOString(),
+            },
+          },
+        });
+
+        // Refund on failure/reversal
+        if (shouldRefund && transaction.status !== 'failed') {
+          const refundAmount = transaction.amount || 0;
+          if (refundAmount > 0) {
+            await tx.wallet.update({
+              where: { user_id: transaction.user_id },
+              data: { current_balance: { increment: Number(refundAmount) } },
+            });
+            this.logger.log(`[Cron] Refunded ${refundAmount} to user ${transaction.user_id}`);
+          }
+        }
+      });
+
+      return { updated: true, status: finalStatus };
+    } catch (error: any) {
+      this.logger.error(`[Cron] Error querying transaction ${requestId}: ${error.message}`);
+      // Don't throw - just log and return
+      return { updated: false };
+    }
+  }
 }
 
 

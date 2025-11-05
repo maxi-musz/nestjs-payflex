@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { FlutterwaveService } from 'src/flutterwave/flutterwave.service';
 import { PaystackWebhookService } from './paystack-webhook/paystack-webhook.service';
+import { VtpassWebhookService } from './vtpass-webhook/vtpass-webhook.service';
 import * as colors from 'colors/safe';
 
 @Injectable()
@@ -9,7 +10,8 @@ export class WebhooksService {
   constructor(
     private readonly configService: ConfigService,
     private readonly flutterwaveService: FlutterwaveService,
-    private readonly paystackWebhookService: PaystackWebhookService
+    private readonly paystackWebhookService: PaystackWebhookService,
+    private readonly vtpassWebhookService: VtpassWebhookService
   ) {}
 
   async handleFlutterwaveEvent(payload: any, headers: any): Promise<void> {
@@ -50,5 +52,12 @@ export class WebhooksService {
       rawBody || Buffer.from(JSON.stringify(payload)),
       hash || ''
     );
+  }
+
+  async handleVtpassEvent(payload: any): Promise<void> {
+    console.log(colors.cyan('Received VTpass webhook payload'));
+
+    // Delegate to VtpassWebhookService
+    await this.vtpassWebhookService.handleWebhookEvent(payload);
   }
 }

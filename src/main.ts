@@ -31,6 +31,11 @@ async function bootstrap() {
     },
   }));
 
+  // health endpoint 
+  app.getHttpAdapter().get('/api/v1/auth/health', (req: express.Request, res: express.Response) => {
+    res.json({ status: 'OK', message: 'Service is running' });
+  });
+
   const port = parseInt(process.env.PORT || '3000', 10);
   await app.listen(port, '0.0.0.0');
 
