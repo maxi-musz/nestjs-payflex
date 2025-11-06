@@ -56,6 +56,7 @@ model User {
   cards    Card[]
 
   temp_flw_accts FlwTempAcctNumber[] @relation("generatedFlwAccts")
+  deviceTokens DeviceToken[]
 }
 
 model ProfileImage {
@@ -350,4 +351,27 @@ model FlwTempAcctNumber {
 
   user_id String
   user    User   @relation("generatedFlwAccts", fields: [user_id], references: [id])
+}
+
+// Push Notification Device Tokens
+model DeviceToken {
+  id        String   @id @default(uuid())
+  user_id   String
+  token     String   @unique
+  platform  Platform
+  is_active Boolean  @default(true)
+  device_id String?  // Optional device identifier
+  app_version String? // Optional app version
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([token])
+}
+
+enum Platform {
+  ios
+  android
 }

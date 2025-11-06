@@ -17,6 +17,7 @@ import { VasModule } from './vas/vas.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { FlutterwaveService } from './flutterwave/flutterwave.service';
 import { VtpassModule } from './vtpass/vtpass.module';
+import { PushNotificationModule } from './push-notification/push-notification.module';
 
 @Module({
   imports: [
@@ -26,7 +27,7 @@ import { VtpassModule } from './vtpass/vtpass.module';
     AuthModule, 
     UserModule, 
     BookmarkModule, 
-    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule, WebhooksModule, VtpassModule
+    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule, WebhooksModule, VtpassModule, PushNotificationModule
   ],
   controllers: [AuthController],
   providers: [AuthService, FlutterwaveService],
