@@ -5,6 +5,7 @@ import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import { PurchaseAirtimeDto } from './dto/purchase-airtime.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
+import { PushNotificationService } from 'src/push-notification/push-notification.service';
 
 @Injectable()
 export class AirtimeService {
@@ -19,6 +20,7 @@ export class AirtimeService {
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly pushNotificationService: PushNotificationService,
   ) {
     this.credentials = VtpassCredentialsHelper.getCredentials(configService);
     this.apiKey = this.credentials.apiKey;
@@ -301,6 +303,19 @@ export class AirtimeService {
       };
 
       this.logger.log('Airtime purchase request completed successfully');
+
+      // Send push notification on success (non-blocking)
+      if (finalStatus === 'success') {
+        this.pushNotificationService
+          .sendTransactionNotification(
+            userPayload.sub,
+            'airtime',
+            Number(dto.amount),
+            'success',
+            createdTx.id,
+          )
+          .catch((e) => this.logger.warn(`Push notification failed: ${e.message}`));
+      }
       return new ApiResponseDto(true, 'Airtime purchase successful', formattedResponse);
     } catch (error: any) {
       this.logger.error(`Error purchasing airtime: ${error.message}`);
