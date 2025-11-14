@@ -2,7 +2,7 @@ import { Body, Controller, Get, Post, Put, UseGuards } from "@nestjs/common";
 import { Request } from '@nestjs/common'
 import { UserService } from "./user.service";
 import { AuthGuard } from "@nestjs/passport";
-import { KycVerificationDto, UpdateUserDto } from "./dto/user.dto";
+import { KycVerificationDto, UpdateUserDto, SetupTransactionPinDto, UpdateTransactionPinDto } from "./dto/user.dto";
 
 @Controller('user')
 export class UserController{
@@ -48,5 +48,17 @@ export class UserController{
     @Put('update-kyc')
     UpdateKyc(@Body() dto: KycVerificationDto, @Request() req) {
         return this.userService.UpdateKyc(dto, req.user)
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Post('setup-transaction-pin')
+    setupTransactionPin(@Body() dto: SetupTransactionPinDto, @Request() req) {
+        return this.userService.setupTransactionPin(dto, req.user)
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Put('update-transaction-pin')
+    updateTransactionPin(@Body() dto: UpdateTransactionPinDto, @Request() req) {
+        return this.userService.updateTransactionPin(dto, req.user)
     }
 } 

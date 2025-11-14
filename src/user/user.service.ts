@@ -1,10 +1,11 @@
-import { HttpException, HttpStatus, Injectable, NotFoundException } from "@nestjs/common";
+import { HttpException, HttpStatus, Injectable, NotFoundException, BadRequestException, Logger } from "@nestjs/common";
 import { PrismaService } from "src/prisma/prisma.service";
 import * as colors from "colors";
 import { ApiResponseDto } from "src/common/dto/api-response.dto";
-import { KycVerificationDto, UpdateUserDto, VerifyBvnDto } from "./dto/user.dto";
+import { KycVerificationDto, UpdateUserDto, VerifyBvnDto, SetupTransactionPinDto, UpdateTransactionPinDto } from "./dto/user.dto";
 import { formatAmount, formatDate } from "src/common/helper_functions/formatter";
 import { first } from "rxjs";
+import * as bcrypt from "bcrypt";
 
 function maskAccountNumber(accountNumber: string): string {
     if (!accountNumber) return "";
@@ -15,6 +16,8 @@ function maskAccountNumber(accountNumber: string): string {
 
  @Injectable()
  export class UserService {
+    private readonly logger = new Logger(UserService.name);
+
     constructor(
         private prisma: PrismaService,
     ) {}
@@ -169,6 +172,7 @@ function maskAccountNumber(accountNumber: string): string {
                     id: userPayload.sub,
                     smipay_tag: user.smipay_tag || "",
                     name: `${user.first_name} ${user.last_name}`,
+                    isTransactionPinSetup: !!user.transactionPinHash,
                     phone_number: user.phone_number || "",
                     first_name: user.first_name || "",
                     last_name: user.last_name || "",
@@ -348,7 +352,7 @@ function maskAccountNumber(accountNumber: string): string {
                 last_name: fullUserDetails?.last_name || "",
                 email: fullUserDetails?.email || "",
                 phone_number: fullUserDetails?.phone_number || "",
-                gender: fullUserDetails?.phone_number || "",
+                gender: fullUserDetails?.gender || "",
                 role: fullUserDetails?.role || "",
                 date_of_birth: fullUserDetails?.date_of_birth || "",
                 email_verification: fullUserDetails?.is_email_verified || false,
@@ -380,7 +384,7 @@ function maskAccountNumber(accountNumber: string): string {
                 "User profile successfully fetched",
                 {
                     profile_data: formattedUserProfile,
-                    addres: address,
+                    address: address,
                     user_kyc_data: user_kyc
                 }
             )
@@ -645,6 +649,113 @@ function maskAccountNumber(accountNumber: string): string {
             console.error(colors.red(`Error saving four-digit PIN: ${error.message}`));
             throw new HttpException(
                 error.response?.data?.message || "Error saving four-digit PIN.",
+                error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    async setupTransactionPin(dto: SetupTransactionPinDto, userPayload: any) {
+        this.logger.log(colors.cyan("Setting up transaction PIN..."));
+
+        try {
+            // Validate PIN format (should be numeric and 4-6 digits)
+            if (!/^\d{4,6}$/.test(dto.pin)) {
+                this.logger.error(colors.red("Invalid PIN format"));
+                throw new BadRequestException("PIN must be 4-6 digits");
+            }
+
+            // Check if user already has a transaction PIN
+            const existingUser = await this.prisma.user.findUnique({
+                where: { id: userPayload.sub },
+                select: { transactionPinHash: true }
+            });
+
+            if (existingUser?.transactionPinHash) {
+                throw new BadRequestException("Transaction PIN already set. Use update endpoint to change it.");
+            }
+
+            // Hash the PIN using bcrypt (salt rounds: 10 as per SECURITY.md)
+            const saltRounds = 10;
+            const hashedPin = await bcrypt.hash(dto.pin, saltRounds);
+
+            // Store the hashed PIN
+            const updatedUser = await this.prisma.user.update({
+                where: { id: userPayload.sub },
+                data: { transactionPinHash: hashedPin },
+            });
+
+            this.logger.log(colors.magenta("Transaction PIN set up successfully."));
+            return new ApiResponseDto(true, "Transaction PIN set up successfully.", {
+                userId: updatedUser.id,
+            });
+        } catch (error) {
+            this.logger.error(colors.red(`Error setting up transaction PIN: ${error.message}`));
+            if (error instanceof BadRequestException) {
+                throw error;
+            }
+            throw new HttpException(
+                error.response?.data?.message || "Error setting up transaction PIN.",
+                error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    async updateTransactionPin(dto: UpdateTransactionPinDto, userPayload: any) {
+        this.logger.log(colors.cyan("Updating transaction PIN..."));
+
+        try {
+            // Validate new PIN format
+            if (!/^\d{4,6}$/.test(dto.newPin)) {
+                throw new BadRequestException("New PIN must be 4-6 digits");
+            }
+
+            // Check if new PIN is different from current PIN
+            if (dto.currentPin === dto.newPin) {
+                throw new BadRequestException("New PIN must be different from current PIN");
+            }
+
+            // Get user with transaction PIN hash
+            const user = await this.prisma.user.findUnique({
+                where: { id: userPayload.sub },
+                select: { transactionPinHash: true }
+            });
+
+            if (!user) {
+                throw new NotFoundException("User not found");
+            }
+
+            // Check if transaction PIN is set
+            if (!user.transactionPinHash) {
+                throw new BadRequestException("Transaction PIN not set. Please set up your transaction PIN first.");
+            }
+
+            // Verify current PIN
+            const isCurrentPinValid = await bcrypt.compare(dto.currentPin, user.transactionPinHash);
+            if (!isCurrentPinValid) {
+                throw new BadRequestException("Current transaction PIN is incorrect");
+            }
+
+            // Hash the new PIN
+            const saltRounds = 10;
+            const hashedNewPin = await bcrypt.hash(dto.newPin, saltRounds);
+
+            // Update the transaction PIN hash
+            const updatedUser = await this.prisma.user.update({
+                where: { id: userPayload.sub },
+                data: { transactionPinHash: hashedNewPin },
+            });
+
+            this.logger.log(colors.magenta("Transaction PIN updated successfully."));
+            return new ApiResponseDto(true, "Transaction PIN updated successfully.", {
+                userId: updatedUser.id,
+            });
+        } catch (error) {
+            this.logger.error(colors.red(`Error updating transaction PIN: ${error.message}`));
+            if (error instanceof BadRequestException || error instanceof NotFoundException) {
+                throw error;
+            }
+            throw new HttpException(
+                error.response?.data?.message || "Error updating transaction PIN.",
                 error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR
             );
         }

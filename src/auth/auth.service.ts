@@ -273,6 +273,7 @@ export class AuthService {
                 data_of_birth: user.date_of_birth || null,
                 profile_image: user.profile_image?.secure_url || null,
                 kyc_verified: user.kyc_verification?.is_verified || false,
+                isTransactionPinSetup: !!user.transactionPinHash,
                 created_at: formatDate(user.createdAt),
             };
     

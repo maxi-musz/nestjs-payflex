@@ -73,3 +73,19 @@ export class VerifyBvnDto {
     @IsNotEmpty()
     redirect_url: string;
 }
+
+export class SetupTransactionPinDto {
+    @IsString()
+    @IsNotEmpty()
+    pin: string;
+}
+
+export class UpdateTransactionPinDto {
+    @IsString()
+    @IsNotEmpty()
+    currentPin: string;
+
+    @IsString()
+    @IsNotEmpty()
+    newPin: string;
+}
