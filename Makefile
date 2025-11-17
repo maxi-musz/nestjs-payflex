@@ -103,6 +103,15 @@ studio: ## Open Prisma Studio (forwards port); Ctrl+C to stop
 seed: ## Run npm seed script inside app container if available
 	docker compose -f $(COMPOSE_FILE) exec -T $(SERVICE) npm run seed || true
 
+.PHONY: db-reset
+db-reset: ## Clear all data from database (keeps tables). WARNING: This deletes all data!
+	@echo "⚠️  WARNING: This will delete ALL data from the database!"
+	@echo "Press Ctrl+C to cancel, or wait 5 seconds to continue..."
+	@sleep 5
+	@echo "Clearing all data from database..."
+	docker compose -f $(COMPOSE_FILE) exec -T db psql -U postgres -d local-payflex -c "DO \$\$ DECLARE r RECORD; BEGIN FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' CASCADE'; END LOOP; END \$\$;"
+	@echo "✅ Database reset complete - all data cleared, tables preserved"
+
 # -------- Local Docker utilities --------
 .PHONY: build
 build: ## Build image directly from Dockerfile (no compose)

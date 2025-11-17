@@ -2,8 +2,6 @@ import { Module } from '@nestjs/common';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { BookmarkModule } from './bookmark/bookmark.module';
-import { AuthController } from './auth/auth.controller';
-import { AuthService } from './auth/auth.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { ConfigModule } from '@nestjs/config';
 import { BankingModule } from './banking/banking.module';
@@ -18,18 +16,20 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { FlutterwaveService } from './flutterwave/flutterwave.service';
 import { VtpassModule } from './vtpass/vtpass.module';
 import { PushNotificationModule } from './push-notification/push-notification.module';
+import { CommonModule } from './common/common.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true
-    }), 
+    }),
+    CommonModule, // Global guards available to all modules
     AuthModule, 
     UserModule, 
     BookmarkModule, 
     PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule, WebhooksModule, VtpassModule, PushNotificationModule
   ],
-  controllers: [AuthController],
-  providers: [AuthService, FlutterwaveService],
+  controllers: [],
+  providers: [FlutterwaveService],
 })
 export class AppModule {}

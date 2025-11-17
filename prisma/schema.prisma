@@ -58,6 +58,11 @@ model User {
 
   temp_flw_accts FlwTempAcctNumber[] @relation("generatedFlwAccts")
   deviceTokens   DeviceToken[]
+
+  // Referral relationships
+  referrals_given    Referral[]   @relation("Referrer") // Referrals this user gave
+  referrals_received Referral[]   @relation("Referee") // Referrals this user received
+  userDevices        UserDevice[] @relation("UserDevices")
 }
 
 model ProfileImage {
@@ -372,7 +377,180 @@ model DeviceToken {
   @@index([token])
 }
 
+// User Device Management (for viewing, removing, restricting devices)
+model UserDevice {
+  id      String @id @default(uuid())
+  user_id String
+  user    User   @relation("UserDevices", fields: [user_id], references: [id], onDelete: Cascade)
+
+  // Device identification
+  device_id          String // Unique device identifier from device_metadata
+  device_fingerprint String? // Device fingerprint for security
+
+  // Device information (from device_metadata)
+  device_name  String? // e.g., "John's iPhone"
+  device_model String? // e.g., "iPhone 14 Pro"
+  platform     Platform // ios or android
+  os_name      String? // e.g., "iOS"
+  os_version   String? // e.g., "17.2"
+  app_version  String? // e.g., "1.0.0"
+
+  // Device status
+  is_active         Boolean @default(true) // Device is active/trusted
+  is_restricted     Boolean @default(false) // Device is restricted/blocked
+  is_current_device Boolean @default(false) // Is this the current device making the request
+
+  // Location & Network
+  last_ip_address String?
+  last_location   String? // e.g., "Lagos, Nigeria"
+
+  // Timestamps
+  first_seen_at DateTime  @default(now()) // When device was first registered
+  last_seen_at  DateTime  @default(now()) // Last time device was used
+  restricted_at DateTime? // When device was restricted
+  restricted_by String? // User ID or admin who restricted it
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([user_id, device_id]) // One record per device per user
+  @@index([user_id])
+  @@index([device_id])
+  @@index([is_active])
+  @@index([is_restricted])
+  @@index([last_seen_at])
+}
+
 enum Platform {
   ios
   android
+}
+
+// Registration Progress Tracking
+model RegistrationProgress {
+  id           String @id @default(uuid())
+  phone_number String @unique
+  current_step Int    @default(1)
+  total_steps  Int    @default(9)
+
+  // Step completion flags
+  step_1_completed Boolean @default(false)
+  step_2_completed Boolean @default(false)
+  step_3_completed Boolean @default(false)
+  step_3_verified  Boolean @default(false)
+  step_4_completed Boolean @default(false)
+  step_5_completed Boolean @default(false)
+  step_6_completed Boolean @default(false)
+  step_7_completed Boolean @default(false)
+  step_8_completed Boolean @default(false)
+  step_9_completed Boolean @default(false)
+
+  // Registration data (JSON for flexibility)
+  registration_data Json @default("{}")
+
+  // Referral code
+  referral_code String?
+
+  // Verification statuses
+  is_phone_verified        Boolean @default(false)
+  id_verification_status   String?
+  face_verification_status String?
+
+  // OTP for phone verification
+  otp            String?
+  otp_expires_at DateTime?
+
+  // Metadata
+  is_complete           Boolean   @default(false)
+  expires_at            DateTime?
+  verification_attempts Int       @default(0)
+
+  // Device metadata
+  device_metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([phone_number])
+  @@index([is_complete])
+  @@index([is_phone_verified])
+}
+
+// Referral Tracking
+model Referral {
+  id String @id @default(uuid())
+
+  // Referrer (the person who owns the referral code)
+  referrer_id String
+  referrer    User   @relation("Referrer", fields: [referrer_id], references: [id], onDelete: Cascade)
+
+  // Referee (the person who used the referral code)
+  referee_phone_number String // Phone number from registration (before user is created)
+  referee_user_id      String? // User ID after registration is complete (null until user completes registration)
+  referee              User?   @relation("Referee", fields: [referee_user_id], references: [id], onDelete: SetNull)
+
+  // Referral code used
+  referral_code_used String
+
+  // Status
+  is_active       Boolean   @default(true)
+  reward_given    Boolean   @default(false)
+  reward_amount   Decimal?  @db.Decimal(10, 2)
+  reward_given_at DateTime?
+
+  // Metadata
+  registration_progress_id String? // Link to registration progress
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@unique([referee_phone_number, referrer_id]) // One referral per phone per referrer
+  @@index([referrer_id])
+  @@index([referee_user_id])
+  @@index([referee_phone_number])
+  @@index([is_active])
+  @@index([reward_given])
+}
+
+// Security Events Logging
+model SecurityEvent {
+  id String @id @default(uuid())
+
+  // Event identification
+  event_type     String // e.g., 'device_change', 'rate_limit_exceeded', 'suspicious_activity'
+  event_category String // e.g., 'registration', 'authentication', 'transaction', 'fraud'
+  severity       String // 'low', 'medium', 'high', 'critical'
+
+  // Context
+  phone_number             String? // Phone number if available (for registration events)
+  user_id                  String? // User ID if available (for authenticated events)
+  registration_progress_id String? // Link to registration progress if applicable
+
+  // Device & Network Info
+  device_id          String?
+  device_fingerprint String?
+  ip_address         String?
+  user_agent         String?
+
+  // Event details
+  description String
+  metadata    Json? // Additional event data (device info, previous values, etc.)
+
+  // Status
+  is_resolved      Boolean   @default(false)
+  resolved_at      DateTime?
+  resolved_by      String? // Admin user ID or system
+  resolution_notes String?
+
+  createdAt DateTime @default(now())
+
+  @@index([event_type])
+  @@index([event_category])
+  @@index([severity])
+  @@index([phone_number])
+  @@index([user_id])
+  @@index([registration_progress_id])
+  @@index([device_id])
+  @@index([ip_address])
+  @@index([is_resolved])
+  @@index([createdAt])
 }

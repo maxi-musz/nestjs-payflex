@@ -12,6 +12,8 @@ import { ConfigService } from "@nestjs/config";
 import { ApiResponseDto } from "src/common/dto/api-response.dto";
 import { formatDate } from "src/common/helper_functions/formatter";
 import { generateSmipayTag } from "src/common/helper_functions/generators";
+import { DeviceTrackerService } from "./helpers/device-tracker.service";
+import { DeviceMetadataDto } from "./dto/registration.dto";
 
 @Injectable()
 export class AuthService {
@@ -20,6 +22,7 @@ export class AuthService {
         private prisma: PrismaService,
         private jwt: JwtService, 
         private config: ConfigService,
+        private deviceTracker: DeviceTrackerService,
     ) {}
 
     async requestEmailOTP(dto: RequestEmailOTPDto, context: 'signup' | 'resetPassword' = 'signup') {
@@ -102,7 +105,9 @@ export class AuthService {
     }
 
     async signup(
-        dto: AuthDto
+        dto: AuthDto,
+        deviceMetadata?: DeviceMetadataDto,
+        ipAddress?: string,
     ): Promise<{
         success: boolean;
         message: string;
@@ -161,6 +166,18 @@ export class AuthService {
                 },
             });
             console.log(colors.green("User created successfully"));
+
+            // Track device (if device metadata is provided)
+            if (deviceMetadata && deviceMetadata.device_id) {
+                // Don't await - let it run in background to not slow down signup
+                this.deviceTracker.registerOrUpdateDevice(
+                    newUser.id,
+                    deviceMetadata,
+                    ipAddress,
+                ).catch((error) => {
+                    console.error(colors.yellow("Device tracking failed (non-critical):"), error.message);
+                });
+            }
 
             // Send OTP
             await this.requestEmailOTP({ email: dto.email }, 'signup');
@@ -228,7 +245,7 @@ export class AuthService {
         })
     }
 
-    async signin(dto: SignInDto) {
+    async signin(dto: SignInDto, deviceMetadata?: DeviceMetadataDto, ipAddress?: string) {
         console.log(colors.cyan("Signing in user..."));
     
         try {
@@ -259,7 +276,19 @@ export class AuthService {
             // 4. Generate access token
             const access_token = await this.signToken(user.id, user.email);
     
-            // 5. Format user data for response
+            // 5. Track device (if device metadata is provided)
+            if (deviceMetadata && deviceMetadata.device_id) {
+                // Don't await - let it run in background to not slow down login
+                this.deviceTracker.registerOrUpdateDevice(
+                    user.id,
+                    deviceMetadata,
+                    ipAddress,
+                ).catch((error) => {
+                    console.error(colors.yellow("Device tracking failed (non-critical):"), error.message);
+                });
+            }
+    
+            // 6. Format user data for response
             const formattedUser = {
                 id: user.id,
                 email: user.email,
@@ -277,7 +306,7 @@ export class AuthService {
                 created_at: formatDate(user.createdAt),
             };
     
-            // 6. Prepare response data
+            // 7. Prepare response data
             const responseData = {
                 access_token: access_token,
                 refresh_token: null, // Placeholder for refresh token if implemented
