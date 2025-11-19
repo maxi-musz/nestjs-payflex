@@ -4,7 +4,7 @@ import { AuthDto, RequestEmailOTPDto, ResetPasswordDto, SignInDto, VerifyEmailOT
 import * as argon from "argon2"
 import { Gender } from "@prisma/client";
 import * as crypto from "crypto"
-import { sendOTPByEmail } from "src/common/mailer/send-email";
+import { EmailService } from "src/common/mailer/email.service";
 import * as colors from "colors"
 import { JwtService } from '@nestjs/jwt';
 import generateTokens from "src/utils/generate.token";
@@ -23,6 +23,7 @@ export class AuthService {
         private jwt: JwtService, 
         private config: ConfigService,
         private deviceTracker: DeviceTrackerService,
+        private emailService: EmailService,
     ) {}
 
     async requestEmailOTP(dto: RequestEmailOTPDto, context: 'signup' | 'resetPassword' = 'signup') {
@@ -52,7 +53,7 @@ export class AuthService {
             });
     
             // Send OTP by email
-            await sendOTPByEmail(dto.email, otp);
+            await this.emailService.sendOTPEmail(dto.email, otp);
             console.log(colors.magenta(`OTP code: ${otp} sent to user: ${dto.email}`));
     
             return {

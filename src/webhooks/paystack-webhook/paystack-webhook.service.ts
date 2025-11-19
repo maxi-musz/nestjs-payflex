@@ -1,7 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { sendDepositNotificationEmail } from 'src/common/mailer/send-email';
+import { EmailService } from 'src/common/mailer/email.service';
 import * as colors from 'colors/safe';
 import * as crypto from 'crypto';
 
@@ -10,6 +10,7 @@ export class PaystackWebhookService {
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -385,7 +386,7 @@ export class PaystackWebhookService {
           timeZone: 'Africa/Lagos'
         });
 
-        await sendDepositNotificationEmail(
+        await this.emailService.sendDepositNotificationEmail(
           user.email,
           user.first_name || 'Valued Customer',
           amountInNgn,

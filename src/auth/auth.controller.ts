@@ -2,9 +2,10 @@ import { Body, Controller, Get, Post, BadRequestException, Headers, Ip, Req, Use
 import { AuthService } from "./auth.service";
 import { AuthDto, RequestEmailOTPDto, ResetPasswordDto, SignInDto, VerifyEmailOTPDto, StartRegistrationDto } from "./dto";
 import { RegistrationService } from "./registration.service";
+import { LoginService } from "./login.service";
 import * as colors from "colors";
 import { Request } from 'express';
-import { DeviceMetadataDto, ResendOtpDto, VerifyOtpDto, SubmitIdInformationDto } from "./dto/registration.dto";
+import { DeviceMetadataDto, ResendOtpDto, VerifyOtpDto, SubmitIdInformationDto, CheckLoginStatusDto, VerifyPasswordDto } from "./dto/registration.dto";
 import { SecurityHeadersGuard } from "src/common/guards/security-headers.guard";
 import { RateLimitGuard, RateLimit } from "src/common/guards/rate-limit.guard";
 
@@ -13,6 +14,7 @@ export class AuthController{
     constructor(
         private authService: AuthService,
         private registrationService: RegistrationService,
+        private loginService: LoginService,
     ) {}
 
     /**
@@ -204,6 +206,42 @@ export class AuthController{
             );
         } catch (error) {
             console.error(colors.red("Error in submit ID information:"), error);
+            throw error;
+        }
+    }
+
+    @Post('check-login-status')
+    @UseGuards(SecurityHeadersGuard)
+    async checkLoginStatus(
+        @Body() dto: CheckLoginStatusDto,
+    ) {
+        try {
+            return await this.loginService.checkLoginStatus(dto);
+        } catch (error) {
+            console.error(colors.red("Error in check login status:"), error);
+            throw error;
+        }
+    }
+
+    @Post('verify-password')
+    @UseGuards(SecurityHeadersGuard)
+    async verifyPassword(
+        @Body() dto: VerifyPasswordDto,
+        @Headers() headers: any,
+        @Ip() ipAddress: string,
+        @Req() req: Request,
+    ) {
+        try {
+            const clientIp = req.ip || ipAddress || req.socket.remoteAddress || 'unknown';
+            const deviceMetadata = this.extractDeviceMetadata(headers, dto);
+            
+            return await this.loginService.verifyPassword(
+                dto,
+                deviceMetadata,
+                clientIp,
+            );
+        } catch (error) {
+            console.error(colors.red("Error in verify password:"), error);
             throw error;
         }
     }

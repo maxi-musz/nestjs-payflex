@@ -174,3 +174,31 @@ export class SubmitIdInformationDto {
   session_id?: string; // Optional: if provided, validates it matches phone_number
 }
 
+export class CheckLoginStatusDto {
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^\+234[0-9]{10}$/, {
+    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  })
+  phone_number: string;
+}
+
+export class VerifyPasswordDto {
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^\+234[0-9]{10}$/, {
+    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  })
+  phone_number: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(6)
+  password: string;
+
+  @ValidateNested()
+  @Type(() => DeviceMetadataDto)
+  @IsOptional()
+  device_metadata?: DeviceMetadataDto;
+}
+

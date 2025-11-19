@@ -6,7 +6,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { PurchaseCableDto } from './dto/purchase-cable.dto';
 import { VerifySmartcardDto } from './dto/verify-smartcard.dto';
 import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
-import { sendCablePurchaseSuccessEmail } from 'src/common/mailer/send-email';
+import { EmailService } from 'src/common/mailer/email.service';
 
 @Injectable()
 export class CableService {
@@ -21,6 +21,7 @@ export class CableService {
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly emailService: EmailService,
   ) {
     this.credentials = VtpassCredentialsHelper.getCredentials(configService);
     this.apiKey = this.credentials.apiKey;
@@ -286,7 +287,7 @@ export class CableService {
               timeStyle: 'short'
             });
             
-            await sendCablePurchaseSuccessEmail(
+            await this.emailService.sendCablePurchaseSuccessEmail(
               user.email,
               user.first_name || 'Valued Customer',
               serviceName,

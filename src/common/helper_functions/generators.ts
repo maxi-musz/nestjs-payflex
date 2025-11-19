@@ -84,3 +84,62 @@ export async function generateUniqueTransactionReference(
     // If repeated collisions (extremely unlikely), append timestamp to ensure uniqueness
     return `${prefix}-${uuidv4()}-${Date.now()}`;
 }
+
+/**
+ * Generate a unique support ticket number in the format: SMI-YYYY-NNNNNN
+ * Example: SMI-2025-001234
+ * 
+ * @param prismaClient - PrismaClient instance to check for uniqueness
+ * @param maxRetries - Maximum number of retry attempts if ticket number already exists (default: 10)
+ * @returns A unique ticket number
+ */
+export async function generateTicketNumber(
+    prismaClient: any,
+    maxRetries: number = 10
+): Promise<string> {
+    const year = new Date().getFullYear();
+    const prefix = 'SMI';
+    
+    // Get the last ticket number for this year to determine the next sequence
+    const lastTicket = await prismaClient.supportTicket.findFirst({
+        where: {
+            ticket_number: {
+                startsWith: `${prefix}-${year}-`
+            }
+        },
+        orderBy: {
+            ticket_number: 'desc'
+        }
+    });
+
+    let sequence = 1;
+    if (lastTicket) {
+        // Extract sequence number from last ticket (e.g., "SMI-2025-001234" -> 1234)
+        const match = lastTicket.ticket_number.match(/-(\d+)$/);
+        if (match) {
+            sequence = parseInt(match[1], 10) + 1;
+        }
+    }
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        // Format sequence as 6-digit number with leading zeros
+        const sequenceStr = sequence.toString().padStart(6, '0');
+        const ticketNumber = `${prefix}-${year}-${sequenceStr}`;
+
+        // Check if ticket number already exists
+        const existing = await prismaClient.supportTicket.findUnique({
+            where: { ticket_number: ticketNumber }
+        });
+
+        if (!existing) {
+            return ticketNumber;
+        }
+
+        // If exists, increment and try again
+        sequence++;
+    }
+
+    // If we've exhausted all retries, append timestamp to ensure uniqueness
+    const timestamp = Date.now().toString().slice(-4);
+    return `${prefix}-${year}-${sequence.toString().padStart(4, '0')}${timestamp}`;
+}

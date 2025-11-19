@@ -60,9 +60,11 @@ model User {
   deviceTokens   DeviceToken[]
 
   // Referral relationships
-  referrals_given    Referral[]   @relation("Referrer") // Referrals this user gave
-  referrals_received Referral[]   @relation("Referee") // Referrals this user received
-  userDevices        UserDevice[] @relation("UserDevices")
+  referrals_given    Referral[]       @relation("Referrer") // Referrals this user gave
+  referrals_received Referral[]       @relation("Referee") // Referrals this user received
+  userDevices        UserDevice[]     @relation("UserDevices")
+  supportTickets     SupportTicket[]  @relation("UserSupportTickets")
+  supportMessages    SupportMessage[] @relation("UserSupportMessages")
 }
 
 model ProfileImage {
@@ -553,4 +555,150 @@ model SecurityEvent {
   @@index([ip_address])
   @@index([is_resolved])
   @@index([createdAt])
+}
+
+// Customer Support Ticket System
+model SupportTicket {
+  id String @id @default(uuid())
+
+  // Ticket identification
+  ticket_number String @unique // Auto-generated unique ticket number (e.g., "SMI-2025-001234")
+
+  // User information
+  user_id      String? // User ID if ticket is from registered user
+  user         User?   @relation("UserSupportTickets", fields: [user_id], references: [id], onDelete: SetNull)
+  phone_number String? // Phone number for unregistered users or additional contact
+  email        String? // Email for contact and notifications
+
+  // Ticket content
+  subject     String // Brief summary of the issue
+  description String @db.Text // Detailed description of the issue
+
+  // Classification
+  support_type SupportType // Type of support request (REGISTRATION_ISSUE, etc.)
+  status       TicketStatus   @default(pending) // Current status of the ticket
+  priority     TicketPriority @default(medium) // Priority level
+
+  // Assignment & Resolution
+  assigned_to      String? // Admin user ID who is handling the ticket
+  resolved_at      DateTime?
+  resolved_by      String? // Admin user ID who resolved the ticket
+  resolution_notes String?   @db.Text // Notes on how the issue was resolved
+
+  // Related entities (for context)
+  related_transaction_id           String? // Link to TransactionHistory if related to a transaction
+  related_registration_progress_id String? // Link to RegistrationProgress if related to registration
+
+  // Context & Metadata
+  device_metadata Json? // Device information when ticket was created
+  ip_address      String? // IP address of the user
+  user_agent      String? // Browser/app user agent
+
+  // Additional information
+  tags           Json? // Array of tags for categorization (e.g., ["urgent", "payment", "bug"])
+  internal_notes String? @db.Text // Internal notes visible only to support team
+  attachments    Json? // Array of attachment URLs/metadata
+
+  // Response tracking
+  first_response_at     DateTime? // When support team first responded
+  last_response_at      DateTime? // When last response was made
+  response_time_seconds Int? // Calculated response time in seconds
+
+  // Feedback & Satisfaction
+  satisfaction_rating Int? // 1-5 rating from user
+  feedback            String? @db.Text // User feedback after resolution
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  messages SupportMessage[] // Conversation thread
+
+  @@index([ticket_number])
+  @@index([user_id])
+  @@index([phone_number])
+  @@index([email])
+  @@index([support_type])
+  @@index([status])
+  @@index([priority])
+  @@index([assigned_to])
+  @@index([related_transaction_id])
+  @@index([related_registration_progress_id])
+  @@index([createdAt])
+  @@index([resolved_at])
+}
+
+// Support Ticket Conversation Messages
+model SupportMessage {
+  id String @id @default(uuid())
+
+  // Ticket relation
+  ticket_id String
+  ticket    SupportTicket @relation(fields: [ticket_id], references: [id], onDelete: Cascade)
+
+  // Message content
+  message      String  @db.Text // The actual message content
+  is_internal  Boolean @default(false) // If true, only visible to support team (not user)
+  is_from_user Boolean @default(true) // true = from user, false = from support team
+
+  // Sender information
+  user_id      String? // User ID if message is from registered user
+  user         User?   @relation("UserSupportMessages", fields: [user_id], references: [id], onDelete: SetNull)
+  sender_name  String? // Name of sender (for unregistered users or support agents)
+  sender_email String? // Email of sender
+
+  // Attachments
+  attachments Json? // Array of attachment URLs/metadata
+
+  // Metadata
+  ip_address String? // IP address of sender
+  user_agent String? // User agent
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ticket_id])
+  @@index([user_id])
+  @@index([is_internal])
+  @@index([is_from_user])
+  @@index([createdAt])
+}
+
+// Support Type Enum
+enum SupportType {
+  REGISTRATION_ISSUE
+  LOGIN_ISSUE
+  TRANSACTION_ISSUE
+  PAYMENT_ISSUE
+  ACCOUNT_ISSUE
+  WALLET_ISSUE
+  CARD_ISSUE
+  KYC_VERIFICATION_ISSUE
+  SECURITY_ISSUE
+  FEATURE_REQUEST
+  BUG_REPORT
+  BILLING_ISSUE
+  REFUND_REQUEST
+  GENERAL_INQUIRY
+  OTHER
+}
+
+// Ticket Status Enum
+enum TicketStatus {
+  pending // Ticket created, awaiting support team response
+  in_progress // Support team is actively working on it
+  waiting_user // Waiting for user response/information
+  resolved // Issue has been resolved
+  closed // Ticket closed (resolved or cancelled)
+  escalated // Escalated to senior support or management
+}
+
+// Ticket Priority Enum
+enum TicketPriority {
+  low // Non-urgent, can be handled in normal queue
+  medium // Standard priority
+  high // Important, needs attention soon
+  urgent // Critical, needs immediate attention
 }

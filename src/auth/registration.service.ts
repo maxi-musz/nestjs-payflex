@@ -18,6 +18,7 @@ import { OtpService } from './helpers/otp.service';
 import { ReferralValidator } from './helpers/referral.validator';
 import { SecurityEventService } from './helpers/security-event.service';
 import { DeviceTrackerService } from './helpers/device-tracker.service';
+import { KycService } from './helpers/kyc.service';
 import { formatTimeDuration } from 'src/common/helper_functions/time-formatter';
 import * as colors from 'colors';
 import * as crypto from 'crypto';
@@ -34,6 +35,7 @@ export class RegistrationService {
     private referralValidator: ReferralValidator,
     private securityEventService: SecurityEventService,
     private deviceTracker: DeviceTrackerService,
+    private kycService: KycService,
   ) {}
 
   /**
@@ -262,129 +264,6 @@ export class RegistrationService {
       );
     }
   }
-
-  /**
-   * Validate security headers
-   */
-  private validateSecurityHeaders(headers: any): void {
-    try {
-      SecurityHeadersValidator.validateAllHeaders({
-        'x-timestamp': headers['x-timestamp'] || headers['X-Timestamp'],
-        'x-nonce': headers['x-nonce'] || headers['X-Nonce'],
-        'x-signature': headers['x-signature'] || headers['X-Signature'],
-        'x-request-id': headers['x-request-id'] || headers['X-Request-ID'],
-        'x-device-id': headers['x-device-id'] || headers['X-Device-ID'],
-        'x-device-fingerprint':
-          headers['x-device-fingerprint'] || headers['X-Device-Fingerprint'],
-      });
-    } catch (error) {
-      this.logger.error(colors.red(`Security header validation failed: ${error.message}`));
-      throw error;
-    }
-  }
-
-  /**
-   * Check if phone number already exists in User table
-   */
-  private async checkPhoneNumberExists(phoneNumber: string): Promise<void> {
-    const existingUser = await this.prisma.user.findFirst({
-      where: { phone_number: phoneNumber },
-      select: { id: true },
-    });
-
-    if (existingUser) {
-      throw new ConflictException(
-        'Phone number already registered. Please login instead.',
-      );
-    }
-  }
-
-  /**
-   * Check all rate limits (phone, IP, device)
-   */
-  private async checkRateLimits(
-    phoneNumber: string,
-    deviceId: string,
-    ipAddress: string,
-  ): Promise<void> {
-      // Check phone number rate limit
-      const phoneLimit = await this.rateLimiter.checkPhoneRateLimit(phoneNumber);
-      if (!phoneLimit.allowed) {
-        const retryAfter = Math.ceil((phoneLimit.resetAt - Date.now()) / 1000);
-        const formattedTime = formatTimeDuration(retryAfter);
-        this.logger.error(colors.red(`Phone number rate limit exceeded for ${phoneNumber}. Retry after ${formattedTime}.`));
-        
-        // Log security event
-        await this.securityEventService.logRateLimitExceeded({
-          phoneNumber,
-          limitType: 'phone',
-          retryAfter,
-        });
-        
-        throw new HttpException(
-          {
-            success: false,
-            message: `Too many registration attempts. Please try again in ${formattedTime}.`,
-            error: 'RATE_LIMIT_EXCEEDED',
-            retry_after: retryAfter,
-          },
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
-      }
-
-      // Check IP rate limit
-      const ipLimit = await this.rateLimiter.checkIPRateLimit(ipAddress);
-      this.logger.log(`Checking IP address rate limit for ${ipAddress}`);
-      if (!ipLimit.allowed) {
-        const retryAfter = Math.ceil((ipLimit.resetAt - Date.now()) / 1000);
-        const formattedTime = formatTimeDuration(retryAfter);
-        this.logger.error(colors.red(`IP address rate limit exceeded for ${ipAddress}. Retry after ${formattedTime}.`));
-        
-        // Log security event
-        await this.securityEventService.logRateLimitExceeded({
-          ipAddress,
-          limitType: 'ip',
-          retryAfter,
-        });
-        
-        throw new HttpException(
-          {
-            success: false,
-            message: `Too many registration attempts from this IP. Please try again in ${formattedTime}.`,
-            error: 'RATE_LIMIT_EXCEEDED',
-            retry_after: retryAfter,
-          },
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
-      }
-
-      // Check device rate limit
-      const deviceLimit = await this.rateLimiter.checkDeviceRateLimit(deviceId);
-      this.logger.log(`Checking device rate limit for ${deviceId}`);
-      if (!deviceLimit.allowed) {
-        const retryAfter = Math.ceil((deviceLimit.resetAt - Date.now()) / 1000);
-        const formattedTime = formatTimeDuration(retryAfter);
-        this.logger.error(colors.red(`Device rate limit exceeded for ${deviceId}. Retry after ${formattedTime}.`));
-        
-        // Log security event
-        await this.securityEventService.logRateLimitExceeded({
-          deviceId,
-          limitType: 'device',
-          retryAfter,
-        });
-        
-        throw new HttpException(
-          {
-            success: false,
-            message: `Too many registration attempts from this device. Please try again in ${formattedTime}.`,
-            error: 'RATE_LIMIT_EXCEEDED',
-            retry_after: retryAfter,
-          },
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
-      }
-  }
-
   /**
    * Validate device metadata
    */
@@ -586,103 +465,6 @@ export class RegistrationService {
   }
 
   /**
-   * Check rate limits for OTP resend (more lenient than initial registration)
-   */
-  private async checkResendRateLimits(
-    phoneNumber: string,
-    deviceId: string,
-    ipAddress: string,
-  ): Promise<void> {
-    // Check phone number rate limit (more lenient: 5 requests per hour for resend)
-    const phoneLimit = await this.rateLimiter.checkPhoneRateLimit(phoneNumber);
-    if (!phoneLimit.allowed) {
-      const retryAfter = Math.ceil((phoneLimit.resetAt - Date.now()) / 1000);
-      const formattedTime = formatTimeDuration(retryAfter);
-      this.logger.error(
-        colors.red(
-          `Phone number rate limit exceeded for OTP resend: ${phoneNumber}. Retry after ${formattedTime}.`,
-        ),
-      );
-
-      // Log security event
-      await this.securityEventService.logRateLimitExceeded({
-        phoneNumber,
-        limitType: 'phone',
-        retryAfter,
-      });
-
-      this.logger.error(colors.red(`Too many OTP resend attempts. Please try again in ${formattedTime}.`));
-      throw new HttpException(
-        {
-          success: false,
-          message: `Too many OTP resend attempts. Please try again in ${formattedTime}.`,
-          error: 'RATE_LIMIT_EXCEEDED',
-          retry_after: retryAfter,
-        },
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-
-    // Check IP rate limit (same as registration)
-    const ipLimit = await this.rateLimiter.checkIPRateLimit(ipAddress);
-    if (!ipLimit.allowed) {
-      const retryAfter = Math.ceil((ipLimit.resetAt - Date.now()) / 1000);
-      const formattedTime = formatTimeDuration(retryAfter);
-      this.logger.error(
-        colors.red(
-          `IP address rate limit exceeded for OTP resend: ${ipAddress}. Retry after ${formattedTime}.`,
-        ),
-      );
-
-      // Log security event
-      await this.securityEventService.logRateLimitExceeded({
-        ipAddress,
-        limitType: 'ip',
-        retryAfter,
-      });
-
-      throw new HttpException(
-        {
-          success: false,
-          message: `Too many OTP resend attempts from this IP. Please try again in ${formattedTime}.`,
-          error: 'RATE_LIMIT_EXCEEDED',
-          retry_after: retryAfter,
-        },
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-
-    // Check device rate limit (same as registration)
-    const deviceLimit = await this.rateLimiter.checkDeviceRateLimit(deviceId);
-    if (!deviceLimit.allowed) {
-      const retryAfter = Math.ceil((deviceLimit.resetAt - Date.now()) / 1000);
-      const formattedTime = formatTimeDuration(retryAfter);
-      this.logger.error(
-        colors.red(
-          `Device rate limit exceeded for OTP resend: ${deviceId}. Retry after ${formattedTime}.`,
-        ),
-      );
-
-      // Log security event
-      await this.securityEventService.logRateLimitExceeded({
-        deviceId,
-        limitType: 'device',
-        retryAfter,
-      });
-
-      throw new HttpException(
-        {
-          success: false,
-          message: `Too many OTP resend attempts from this device. Please try again in ${formattedTime}.`,
-          error: 'RATE_LIMIT_EXCEEDED',
-          retry_after: retryAfter,
-        },
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-  }
-
-  /**
    * Verify OTP for phone number (Step 2)
    * Validates OTP and marks phone as verified
    */
@@ -866,10 +648,9 @@ export class RegistrationService {
     try {
       // 1. Format and validate phone number
       const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
+      this.logger.log(colors.cyan(`Formatted phone number: ${formattedPhone}`));
       if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
-        throw new BadRequestException(
-          'Phone number must be in E.164 format (+234XXXXXXXXXX)',
-        );
+        return new ApiResponseDto(false, 'Phone number must be in E.164 format (+234XXXXXXXXXX)', null);
       }
 
       // Note: Security headers are now handled by SecurityHeadersGuard at controller level
@@ -880,29 +661,21 @@ export class RegistrationService {
       });
 
       if (!registrationProgress) {
-        throw new BadRequestException(
-          'No active registration found. Please start registration first.',
-        );
+        return new ApiResponseDto(false, 'No active registration found. Please start registration first.', null);
       }
 
       if (registrationProgress.is_complete) {
-        throw new BadRequestException(
-          'Registration already completed. Please login instead.',
-        );
+        return new ApiResponseDto(false, 'Registration already completed. Please login instead.', null);
       }
 
       // 3. Validate session_id if provided
       if (dto.session_id && dto.session_id !== registrationProgress.id) {
-        throw new BadRequestException(
-          'Session ID does not match phone number. Please use the correct session.',
-        );
+        return new ApiResponseDto(false, 'Session ID does not match phone number. Please use the correct session.', null);
       }
 
       // 4. Check if Step 2 (phone verification) is completed
       if (!registrationProgress.is_phone_verified || !registrationProgress.step_2_completed) {
-        throw new BadRequestException(
-          'Please verify your phone number first before submitting ID information.',
-        );
+        return new ApiResponseDto(false, 'Please verify your phone number first before submitting ID information.', null);
       }
 
       // 5. Normalize ID type (uppercase)
@@ -942,45 +715,99 @@ export class RegistrationService {
         });
       }
 
-      // 9. Update registration progress with ID information
+      // 9. Perform KYC verification using configured provider
+      let verificationResult;
+      let verificationStatus: 'pending' | 'verified' | 'failed' = 'pending';
+      let canProceed = false;
+
+      if (idType === 'NIN') {
+        verificationResult = await this.kycService.verifyNIN(formattedIdNumber);
+      } else if (idType === 'BVN') {
+        verificationResult = await this.kycService.verifyBVN(formattedIdNumber);
+      } else {
+        throw new BadRequestException(`Unsupported ID type: ${idType}. Only NIN and BVN are supported.`);
+      }
+
+      // Determine verification status
+      if (verificationResult.success && verificationResult.verified) {
+        verificationStatus = 'verified';
+        canProceed = true;
+        this.logger.log(
+          colors.green(
+            `${idType} verification successful for ${formattedPhone}. Provider: ${this.kycService.getProviderName()}`,
+          ),
+        );
+      } else if (verificationResult.success && !verificationResult.verified) {
+        // Provider returned success but verification is pending (e.g., "none" provider in test mode)
+        verificationStatus = 'pending';
+        canProceed = false;
+        this.logger.log(
+          colors.yellow(
+            `${idType} verification pending for ${formattedPhone}. Provider: ${this.kycService.getProviderName()}`,
+          ),
+        );
+      } else {
+        verificationStatus = 'failed';
+        canProceed = false;
+        this.logger.error(
+          colors.red(
+            `${idType} verification failed for ${formattedPhone}: ${verificationResult.error}`,
+          ),
+        );
+      }
+
+      // 10. Update registration progress with ID information and verification result
       const updatedRegistrationData = {
         ...existingRegistrationData,
         id_type: idType,
         id_number: formattedIdNumber,
         id_submitted_at: new Date().toISOString(),
+        verification_result: verificationResult,
+        verification_provider: this.kycService.getProviderName(),
       };
 
       await this.prisma.registrationProgress.update({
         where: { phone_number: formattedPhone },
         data: {
           step_3_completed: true,
+          step_3_verified: verificationStatus === 'verified',
           current_step: 3,
           registration_data: updatedRegistrationData,
-          id_verification_status: 'pending', // Will be updated when verification completes
+          id_verification_status: verificationStatus,
           updatedAt: new Date(),
         },
       });
 
       this.logger.log(
         colors.magenta(
-          `ID information submitted successfully for ${formattedPhone}. Type: ${idType}, Number: ${formattedIdNumber.substring(0, 3)}***${formattedIdNumber.substring(8)}`,
+          `ID information submitted successfully for ${formattedPhone}. Type: ${idType}, Number: ${formattedIdNumber.substring(0, 3)}***${formattedIdNumber.substring(8)}, Status: ${verificationStatus}`,
         ),
       );
 
-      // 10. TODO: Initiate verification with Flutterwave/Paystack
-      // For now, we just store it. Verification will be handled separately
-      // This allows the user to proceed, but verification must complete before final registration
+      // 11. Prepare response based on verification status
+      let message = '';
+      if (verificationStatus === 'verified') {
+        message = `${idType} verified successfully. You can proceed to face verification.`;
+      } else if (verificationStatus === 'pending') {
+        message = `${idType} submitted. Verification is in progress. You will be notified when verification is complete.`;
+      } else {
+        message = `${idType} verification failed: ${verificationResult.error || 'Unknown error'}. Please check your ${idType} and try again.`;
+      }
 
-      return new ApiResponseDto(true, 'ID information submitted successfully', {
-        session_id: registrationProgress.id,
-        step: 3,
-        next_step: 'FACE_VERIFICATION',
-        id_type: idType,
-        id_verification_status: 'pending',
-        can_proceed: false, // Cannot proceed until verification is complete
-        message:
-          'ID information submitted. Verification is in progress. You will be notified when verification is complete.',
-      });
+      return new ApiResponseDto(
+        verificationStatus !== 'failed',
+        message,
+        {
+          session_id: registrationProgress.id,
+          step: 3,
+          next_step: verificationStatus === 'verified' ? 'FACE_VERIFICATION' : 'ID_INFORMATION',
+          id_type: idType,
+          id_verification_status: verificationStatus,
+          can_proceed: canProceed,
+          verification_provider: this.kycService.getProviderName(),
+          verification_data: verificationResult.data || null,
+        },
+      );
     } catch (error) {
       this.logger.error(
         colors.red(`ID information submission error: ${error.message}`),
@@ -1143,5 +970,6 @@ export class RegistrationService {
       throw error;
     }
   }
+
 }
 
