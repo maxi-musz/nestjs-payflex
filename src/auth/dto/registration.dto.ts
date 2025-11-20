@@ -216,3 +216,52 @@ export class VerifyPasswordDto {
   device_metadata?: DeviceMetadataDto;
 }
 
+export class AddressDto {
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(5)
+  @MaxLength(200)
+  street_address: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(50)
+  state: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(50)
+  lga: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  area?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(50)
+  country: string;
+}
+
+export class SubmitResidentialAddressDto {
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^\+234[0-9]{10}$/, {
+    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  })
+  phone_number: string;
+
+  @ValidateNested()
+  @Type(() => AddressDto)
+  @IsNotEmpty()
+  address: AddressDto;
+
+  @IsString()
+  @IsOptional()
+  session_id?: string; // Optional: if provided, validates it matches phone_number
+}
+

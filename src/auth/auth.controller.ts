@@ -1,16 +1,18 @@
-import { Body, Controller, Get, Post, BadRequestException, Headers, Ip, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, BadRequestException, Headers, Ip, Req, UseGuards, Logger } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import { AuthDto, RequestEmailOTPDto, ResetPasswordDto, SignInDto, VerifyEmailOTPDto, StartRegistrationDto } from "./dto";
 import { RegistrationService } from "./registration.service";
 import { LoginService } from "./login.service";
 import * as colors from "colors";
 import { Request } from 'express';
-import { DeviceMetadataDto, ResendOtpDto, VerifyOtpDto, SubmitIdInformationDto, CheckLoginStatusDto, VerifyPasswordDto } from "./dto/registration.dto";
+import { DeviceMetadataDto, ResendOtpDto, VerifyOtpDto, SubmitIdInformationDto, CheckLoginStatusDto, VerifyPasswordDto, SubmitResidentialAddressDto } from "./dto/registration.dto";
 import { SecurityHeadersGuard } from "src/common/guards/security-headers.guard";
 import { RateLimitGuard, RateLimit } from "src/common/guards/rate-limit.guard";
 
 @Controller('auth')
 export class AuthController{
+    private readonly logger = new Logger(AuthController.name);
+
     constructor(
         private authService: AuthService,
         private registrationService: RegistrationService,
@@ -58,7 +60,7 @@ export class AuthController{
             
             return await this.authService.signup(dto, deviceMetadata, clientIp);
         } catch (error) {
-            console.error(colors.red("Error in signup:"), error);
+            this.logger.error(colors.red("Error in signup:"), error);
             throw error;
         }
     }
@@ -96,7 +98,7 @@ export class AuthController{
             
             return await this.authService.signin(dto, deviceMetadata, clientIp);
         } catch (error) {
-            console.error(colors.red("Error in signin:"), error);
+            this.logger.error(colors.red("Error in signin:"), error);
             throw error;
         }
     }
@@ -116,6 +118,7 @@ export class AuthController{
         return this.authService.resetPassword(dto)
     }
 
+    // new
     @Post('register/start')
     @UseGuards(SecurityHeadersGuard, RateLimitGuard)
     @RateLimit({ phoneLimit: 3, ipLimit: 10, deviceLimit: 5 })
@@ -135,11 +138,12 @@ export class AuthController{
                 clientIp,
             );
         } catch (error) {
-            console.error(colors.red("Error in registration:"), error);
+            this.logger.error(colors.red("Error in registration:"), error);
             throw error;
         }
     }
 
+    // new
     @Post('register/resend-otp')
     @UseGuards(SecurityHeadersGuard, RateLimitGuard)
     @RateLimit({ phoneLimit: 3, ipLimit: 10, deviceLimit: 5 })
@@ -159,11 +163,12 @@ export class AuthController{
                 clientIp,
             );
         } catch (error) {
-            console.error(colors.red("Error in resend OTP:"), error);
+            this.logger.error(colors.red("Error in resend OTP:"), error);
             throw error;
         }
     }
 
+    // new
     @Post('register/verify-otp')
     @UseGuards(SecurityHeadersGuard)
     async verifyOTP(
@@ -182,10 +187,12 @@ export class AuthController{
                 clientIp,
             );
         } catch (error) {
-            console.error(colors.red("Error in verify OTP:"), error);
+            this.logger.error(colors.red("Error in verify OTP:"), error);
             throw error;
         }
     }
+
+    // new
 
     @Post('register/step-3/submit-id')
     @UseGuards(SecurityHeadersGuard)
@@ -205,11 +212,36 @@ export class AuthController{
                 clientIp,
             );
         } catch (error) {
-            console.error(colors.red("Error in submit ID information:"), error);
+            this.logger.error(colors.red("Error in submit ID information:"), error);
             throw error;
         }
     }
 
+    // new
+    @Post('register/step-5/submit-address')
+    @UseGuards(SecurityHeadersGuard)
+    async submitResidentialAddress(
+        @Body() dto: SubmitResidentialAddressDto,
+        @Headers() headers: any,
+        @Ip() ipAddress: string,
+        @Req() req: Request,
+    ) {
+        try {
+            // Get IP address from request (handles proxies)
+            const clientIp = req.ip || ipAddress || req.socket.remoteAddress || 'unknown';
+            
+            return await this.registrationService.submitResidentialAddress(
+                dto,
+                headers,
+                clientIp,
+            );
+        } catch (error) {
+            this.logger.error(colors.red("Error in submit residential address:"), error);
+            throw error;
+        }
+    }
+
+    // new
     @Post('check-login-status')
     @UseGuards(SecurityHeadersGuard)
     async checkLoginStatus(
@@ -218,7 +250,7 @@ export class AuthController{
         try {
             return await this.loginService.checkLoginStatus(dto);
         } catch (error) {
-            console.error(colors.red("Error in check login status:"), error);
+            this.logger.error(colors.red("Error in check login status:"), error);
             throw error;
         }
     }
@@ -241,7 +273,7 @@ export class AuthController{
                 clientIp,
             );
         } catch (error) {
-            console.error(colors.red("Error in verify password:"), error);
+            this.logger.error(colors.red("Error in verify password:"), error);
             throw error;
         }
     }

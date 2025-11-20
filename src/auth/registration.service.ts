@@ -9,7 +9,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
-import { StartRegistrationDto, ResendOtpDto, VerifyOtpDto, SubmitIdInformationDto } from './dto/registration.dto';
+import { StartRegistrationDto, ResendOtpDto, VerifyOtpDto, SubmitIdInformationDto, SubmitResidentialAddressDto } from './dto/registration.dto';
 import { PhoneValidator } from './helpers/phone.validator';
 import { IdValidator } from './helpers/id-validator';
 import { RegistrationRateLimiter } from './helpers/rate-limiter';
@@ -19,6 +19,7 @@ import { ReferralValidator } from './helpers/referral.validator';
 import { SecurityEventService } from './helpers/security-event.service';
 import { DeviceTrackerService } from './helpers/device-tracker.service';
 import { KycService } from './helpers/kyc.service';
+import { RegistrationStepsHelper } from './helpers/registration-steps.config';
 import { formatTimeDuration } from 'src/common/helper_functions/time-formatter';
 import * as colors from 'colors';
 import * as crypto from 'crypto';
@@ -426,6 +427,21 @@ export class RegistrationService {
       // 9. Generate and send new OTP
       await this.otpService.generateAndSendOTP(formattedPhone);
 
+      // Fetch updated registration progress to get latest step statuses
+      const updatedRegistrationProgress = await this.prisma.registrationProgress.findUnique({
+        where: { phone_number: formattedPhone },
+      });
+
+      if (!updatedRegistrationProgress) {
+        throw new BadRequestException('Registration progress not found after OTP resend');
+      }
+
+      // Build steps object with status
+      const steps = RegistrationStepsHelper.buildStepsObject(
+        updatedRegistrationProgress,
+        updatedRegistrationProgress.registration_data as any,
+      );
+
       // 10. Prepare response
       const otpExpiresIn = this.otpService.getOTPExpirySeconds();
 
@@ -442,6 +458,7 @@ export class RegistrationService {
         otp_sent: true,
         otp_expires_in: otpExpiresIn,
         device_changed: deviceChanged,
+        steps: steps,
       });
     } catch (error) {
       this.logger.error(
@@ -597,6 +614,21 @@ export class RegistrationService {
         },
       });
 
+      // Fetch updated registration progress to get latest step statuses
+      const updatedRegistrationProgress = await this.prisma.registrationProgress.findUnique({
+        where: { phone_number: formattedPhone },
+      });
+
+      if (!updatedRegistrationProgress) {
+        throw new BadRequestException('Registration progress not found after OTP verification');
+      }
+
+      // Build steps object with status
+      const steps = RegistrationStepsHelper.buildStepsObject(
+        updatedRegistrationProgress,
+        updatedRegistrationProgress.registration_data as any,
+      );
+
       this.logger.log(
         colors.magenta(
           `OTP verified successfully for ${formattedPhone}. Phone number is now verified.`,
@@ -609,6 +641,7 @@ export class RegistrationService {
         next_step: 'ID_INFORMATION',
         is_phone_verified: true,
         can_proceed: true,
+        steps: steps,
       });
     } catch (error) {
       this.logger.error(
@@ -631,6 +664,188 @@ export class RegistrationService {
   }
 
    /**
+   * Validate that all previous steps are completed before allowing current step
+   * @param currentStepNumber - The step number being submitted (1-9)
+   * @param registrationProgress - The registration progress object
+   * @returns Error message if validation fails, null if validation passes
+   */
+  private validatePreviousSteps(
+    currentStepNumber: number,
+    registrationProgress: any,
+  ): string | null {
+    // Step 1: No previous steps to check
+    if (currentStepNumber === 1) {
+      return null;
+    }
+
+    // Step 2: Check step 1 is completed
+    if (currentStepNumber === 2) {
+      if (registrationProgress.step_1_status !== 'completed') {
+        return 'Please complete phone registration first.';
+      }
+      return null;
+    }
+
+    // Step 3: Check steps 1 and 2 are completed
+    if (currentStepNumber === 3) {
+      if (registrationProgress.step_1_status !== 'completed') {
+        return 'Please complete phone registration first.';
+      }
+      if (!registrationProgress.is_phone_verified || registrationProgress.step_2_status !== 'completed') {
+        return 'Please verify your phone number first.';
+      }
+      return null;
+    }
+
+    // Step 4: Check steps 1, 2, and 3 are completed and verified
+    if (currentStepNumber === 4) {
+      if (registrationProgress.step_1_status !== 'completed') {
+        return 'Please complete phone registration first.';
+      }
+      if (!registrationProgress.is_phone_verified || registrationProgress.step_2_status !== 'completed') {
+        return 'Please verify your phone number first.';
+      }
+      if (registrationProgress.step_3_status !== 'completed' || registrationProgress.id_verification_status !== 'verified') {
+        return 'Please complete ID verification first.';
+      }
+      return null;
+    }
+
+    // Step 5: Check steps 1, 2, 3, and 4 are completed and verified
+    if (currentStepNumber === 5) {
+      if (registrationProgress.step_1_status !== 'completed') {
+        return 'Please complete phone registration first.';
+      }
+      if (!registrationProgress.is_phone_verified || registrationProgress.step_2_status !== 'completed') {
+        return 'Please verify your phone number first.';
+      }
+      if (registrationProgress.step_3_status !== 'completed' || registrationProgress.id_verification_status !== 'verified') {
+        return 'Please complete ID verification first.';
+      }
+      if (registrationProgress.step_4_status && registrationProgress.step_4_status !== 'completed') {
+        return 'Please complete face verification first.';
+      }
+      if (registrationProgress.face_verification_status && registrationProgress.face_verification_status !== 'verified') {
+        return 'Face verification is pending. Please wait for verification to complete.';
+      }
+      return null;
+    }
+
+    // Step 6: Check steps 1-5 are completed
+    if (currentStepNumber === 6) {
+      if (registrationProgress.step_1_status !== 'completed') {
+        return 'Please complete phone registration first.';
+      }
+      if (!registrationProgress.is_phone_verified || registrationProgress.step_2_status !== 'completed') {
+        return 'Please verify your phone number first.';
+      }
+      if (registrationProgress.step_3_status !== 'completed' || registrationProgress.id_verification_status !== 'verified') {
+        return 'Please complete ID verification first.';
+      }
+      if (registrationProgress.step_4_status && registrationProgress.step_4_status !== 'completed') {
+        return 'Please complete face verification first.';
+      }
+      if (registrationProgress.face_verification_status && registrationProgress.face_verification_status !== 'verified') {
+        return 'Face verification is pending. Please wait for verification to complete.';
+      }
+      if (registrationProgress.step_5_status !== 'completed') {
+        return 'Please complete residential address first.';
+      }
+      return null;
+    }
+
+    // Step 7: Check steps 1-6 are completed
+    if (currentStepNumber === 7) {
+      if (registrationProgress.step_1_status !== 'completed') {
+        return 'Please complete phone registration first.';
+      }
+      if (!registrationProgress.is_phone_verified || registrationProgress.step_2_status !== 'completed') {
+        return 'Please verify your phone number first.';
+      }
+      if (registrationProgress.step_3_status !== 'completed' || registrationProgress.id_verification_status !== 'verified') {
+        return 'Please complete ID verification first.';
+      }
+      if (registrationProgress.step_4_status && registrationProgress.step_4_status !== 'completed') {
+        return 'Please complete face verification first.';
+      }
+      if (registrationProgress.face_verification_status && registrationProgress.face_verification_status !== 'verified') {
+        return 'Face verification is pending. Please wait for verification to complete.';
+      }
+      if (registrationProgress.step_5_status !== 'completed') {
+        return 'Please complete residential address first.';
+      }
+      if (registrationProgress.step_6_status !== 'completed') {
+        return 'Please complete PEP declaration first.';
+      }
+      return null;
+    }
+
+    // Step 8: Check steps 1-7 are completed
+    if (currentStepNumber === 8) {
+      if (registrationProgress.step_1_status !== 'completed') {
+        return 'Please complete phone registration first.';
+      }
+      if (!registrationProgress.is_phone_verified || registrationProgress.step_2_status !== 'completed') {
+        return 'Please verify your phone number first.';
+      }
+      if (registrationProgress.step_3_status !== 'completed' || registrationProgress.id_verification_status !== 'verified') {
+        return 'Please complete ID verification first.';
+      }
+      if (registrationProgress.step_4_status && registrationProgress.step_4_status !== 'completed') {
+        return 'Please complete face verification first.';
+      }
+      if (registrationProgress.face_verification_status && registrationProgress.face_verification_status !== 'verified') {
+        return 'Face verification is pending. Please wait for verification to complete.';
+      }
+      if (registrationProgress.step_5_status !== 'completed') {
+        return 'Please complete residential address first.';
+      }
+      if (registrationProgress.step_6_status !== 'completed') {
+        return 'Please complete PEP declaration first.';
+      }
+      if (registrationProgress.step_7_status !== 'completed') {
+        return 'Please complete income declaration first.';
+      }
+      return null;
+    }
+
+    // Step 9: Check steps 1-8 are completed
+    if (currentStepNumber === 9) {
+      if (registrationProgress.step_1_status !== 'completed') {
+        return 'Please complete phone registration first.';
+      }
+      if (!registrationProgress.is_phone_verified || registrationProgress.step_2_status !== 'completed') {
+        return 'Please verify your phone number first.';
+      }
+      if (registrationProgress.step_3_status !== 'completed' || registrationProgress.id_verification_status !== 'verified') {
+        return 'Please complete ID verification first.';
+      }
+      if (registrationProgress.step_4_status && registrationProgress.step_4_status !== 'completed') {
+        return 'Please complete face verification first.';
+      }
+      if (registrationProgress.face_verification_status && registrationProgress.face_verification_status !== 'verified') {
+        return 'Face verification is pending. Please wait for verification to complete.';
+      }
+      if (registrationProgress.step_5_status !== 'completed') {
+        return 'Please complete residential address first.';
+      }
+      if (registrationProgress.step_6_status !== 'completed') {
+        return 'Please complete PEP declaration first.';
+      }
+      if (registrationProgress.step_7_status !== 'completed') {
+        return 'Please complete income declaration first.';
+      }
+      if (registrationProgress.step_8_status !== 'completed') {
+        return 'Please complete password setup first.';
+      }
+      return null;
+    }
+
+    // Unknown step number
+    return `Invalid step number: ${currentStepNumber}`;
+  }
+
+  /**
    * Check if BVN or NIN already exists in the database
    */
    private async checkIdNumberExists(
@@ -816,9 +1031,10 @@ export class RegistrationService {
         return new ApiResponseDto(false, 'Session ID does not match phone number. Please use the correct session.', null);
       }
 
-      // 4. Check if Step 2 (phone verification) is completed
-      if (!registrationProgress.is_phone_verified || registrationProgress.step_2_status !== 'completed') {
-        return new ApiResponseDto(false, 'Please verify your phone number first before submitting ID information.', null);
+      // 4. Validate previous steps are completed
+      const previousStepsError = this.validatePreviousSteps(3, registrationProgress);
+      if (previousStepsError) {
+        return new ApiResponseDto(false, previousStepsError, null);
       }
 
       // 5. Normalize ID type (uppercase)
@@ -926,6 +1142,21 @@ export class RegistrationService {
         },
       });
 
+      // Fetch updated registration progress to get latest step statuses
+      const updatedRegistrationProgress = await this.prisma.registrationProgress.findUnique({
+        where: { phone_number: formattedPhone },
+      });
+
+      if (!updatedRegistrationProgress) {
+        throw new BadRequestException('Registration progress not found after ID submission');
+      }
+
+      // Build steps object with status
+      const steps = RegistrationStepsHelper.buildStepsObject(
+        updatedRegistrationProgress,
+        updatedRegistrationData,
+      );
+
       this.logger.log(
         colors.magenta(
           `ID information submitted successfully for ${formattedPhone}. Type: ${idType}, Number: ${formattedIdNumber.substring(0, 3)}***${formattedIdNumber.substring(8)}, Status: ${verificationStatus}`,
@@ -954,6 +1185,7 @@ export class RegistrationService {
           can_proceed: canProceed,
           verification_provider: this.kycService.getProviderName(),
           verification_data: verificationResult.data || null,
+          steps: steps,
         },
       );
     } catch (error) {
@@ -971,6 +1203,143 @@ export class RegistrationService {
 
       throw new HttpException(
         error.message || 'Failed to submit ID information',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Submit Residential Address (Step 5)
+   * User submits their residential address details
+   */
+  async submitResidentialAddress(
+    dto: SubmitResidentialAddressDto,
+    headers: any,
+    ipAddress: string,
+  ): Promise<ApiResponseDto<any>> {
+    this.logger.log(
+      colors.cyan(
+        `Submitting residential address for ${dto.phone_number}`,
+      ),
+    );
+
+    try {
+      // 1. Format and validate phone number
+      const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
+      this.logger.log(colors.cyan(`Formatted phone number: ${formattedPhone}`));
+      if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
+        return new ApiResponseDto(false, 'Phone number must be in E.164 format (+234XXXXXXXXXX)', null);
+      }
+
+      // 2. Find registration progress
+      const registrationProgress = await this.prisma.registrationProgress.findUnique({
+        where: { phone_number: formattedPhone },
+      });
+
+      if (!registrationProgress) {
+        this.logger.error(colors.red(`No active registration found. Please start registration first.`));
+        return new ApiResponseDto(false, 'No active registration found. Please start registration first.', null);
+      }
+
+      if (registrationProgress.is_complete) {
+        this.logger.error(colors.red(`Registration already completed. Please login instead.`));
+        return new ApiResponseDto(false, 'Registration already completed. Please login instead.', null);
+      }
+
+      // 3. Validate session_id if provided
+      if (dto.session_id && dto.session_id !== registrationProgress.id) {
+        this.logger.error(colors.red(`Session ID does not match phone number. Please use the correct session.`));
+        return new ApiResponseDto(false, 'Session ID does not match phone number. Please use the correct session.', null);
+      }
+
+      // 4. Validate previous steps are completed
+      const previousStepsError = this.validatePreviousSteps(5, registrationProgress);
+      if (previousStepsError) {
+        this.logger.error(colors.red(previousStepsError));
+        return new ApiResponseDto(false, previousStepsError, null);
+      }
+
+      // 5. Validate address data
+      if (!dto.address.street_address || !dto.address.state || !dto.address.lga || !dto.address.country) {
+        return new ApiResponseDto(false, 'Please provide all required address fields: street_address, state, lga, and country.', null);
+      }
+
+      // 6. Get existing registration data
+      const existingRegistrationData = registrationProgress.registration_data as any;
+
+      // 7. Update registration progress with address information
+      const updatedRegistrationData = {
+        ...existingRegistrationData,
+        address: {
+          street_address: dto.address.street_address.trim(),
+          state: dto.address.state.trim(),
+          lga: dto.address.lga.trim(),
+          area: dto.address.area?.trim() || null,
+          country: dto.address.country.trim(),
+          submitted_at: new Date().toISOString(),
+        },
+      };
+
+      await this.prisma.registrationProgress.update({
+        where: { phone_number: formattedPhone },
+        data: {
+          step_5_status: 'completed',
+          current_step: 5,
+          registration_data: updatedRegistrationData,
+          updatedAt: new Date(),
+        },
+      });
+
+      // Fetch updated registration progress to get latest step statuses
+      const updatedRegistrationProgress = await this.prisma.registrationProgress.findUnique({
+        where: { phone_number: formattedPhone },
+      });
+
+      if (!updatedRegistrationProgress) {
+        throw new BadRequestException('Registration progress not found after address submission');
+      }
+
+      // Build steps object with status
+      const steps = RegistrationStepsHelper.buildStepsObject(
+        updatedRegistrationProgress,
+        updatedRegistrationData,
+      );
+
+      this.logger.log(
+        colors.magenta(
+          `Residential address submitted successfully for ${formattedPhone}. State: ${dto.address.state}, LGA: ${dto.address.lga}`,
+        ),
+      );
+
+      return new ApiResponseDto(true, 'Residential address submitted successfully', {
+        session_id: registrationProgress.id,
+        step: 5,
+        next_step: 'PEP_DECLARATION',
+        can_proceed: true,
+        address: {
+          street_address: dto.address.street_address,
+          state: dto.address.state,
+          lga: dto.address.lga,
+          area: dto.address.area || null,
+          country: dto.address.country,
+        },
+        steps: steps,
+      });
+    } catch (error) {
+      this.logger.error(
+        colors.red(`Residential address submission error: ${error.message}`),
+        error.stack,
+      );
+
+      if (
+        error instanceof BadRequestException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+
+      throw new HttpException(
+        error.message || 'Failed to submit residential address',
         error.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
