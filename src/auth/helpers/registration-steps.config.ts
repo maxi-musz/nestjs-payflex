@@ -353,5 +353,79 @@ export class RegistrationStepsHelper {
 
     return step.getStatusMessage(verificationStatus);
   }
+
+  /**
+   * Check if a step is pending verification
+   * A step is pending if:
+   * - It requires verification
+   * - It is completed (submitted)
+   * - But it is not yet verified
+   * - And verification status is 'pending'
+   */
+  static isStepPending(
+    stepNumber: number,
+    registrationProgress: any,
+  ): boolean {
+    const step = this.getStepByNumber(stepNumber);
+    if (!step || !step.requiresVerification) {
+      return false; // Steps without verification cannot be pending
+    }
+
+    const isCompleted = this.isStepCompleted(stepNumber, registrationProgress);
+    const isVerified = this.isStepVerified(stepNumber, registrationProgress);
+    const verificationStatus = this.getVerificationStatus(
+      stepNumber,
+      registrationProgress,
+    );
+
+    // Step is pending if: completed but not verified, and status is 'pending'
+    return (
+      isCompleted && !isVerified && verificationStatus === 'pending'
+    );
+  }
+
+  /**
+   * Build comprehensive step pending status object
+   * Returns an object with flags for each step indicating if it's pending
+   * Example: { is_step_1_pending: false, is_step_2_pending: true, ... }
+   */
+  static buildStepPendingStatus(registrationProgress: any): {
+    [key: string]: boolean;
+  } {
+    const pendingStatus: { [key: string]: boolean } = {};
+
+    for (const step of REGISTRATION_STEPS) {
+      const pendingKey = `is_step_${step.stepNumber}_pending`;
+      pendingStatus[pendingKey] = this.isStepPending(
+        step.stepNumber,
+        registrationProgress,
+      );
+    }
+
+    return pendingStatus;
+  }
+
+  /**
+   * Get verification status for all steps that require verification
+   * Returns an object with verification status for each step
+   * Example: { step_2_verification_status: 'verified', step_3_verification_status: 'pending', ... }
+   */
+  static buildStepVerificationStatus(registrationProgress: any): {
+    [key: string]: string | null;
+  } {
+    const verificationStatus: { [key: string]: string | null } = {};
+
+    for (const step of REGISTRATION_STEPS) {
+      if (step.requiresVerification) {
+        const statusKey = `step_${step.stepNumber}_verification_status`;
+        verificationStatus[statusKey] = this.getVerificationStatus(
+          step.stepNumber,
+          registrationProgress,
+        );
+      }
+    }
+
+    return verificationStatus;
+  }
 }
 

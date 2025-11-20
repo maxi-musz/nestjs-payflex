@@ -9,6 +9,8 @@ import {
   Matches,
   MinLength,
   MaxLength,
+  IsEmail,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -175,21 +177,33 @@ export class SubmitIdInformationDto {
 }
 
 export class CheckLoginStatusDto {
+  @IsEmail()
+  @IsOptional()
+  @ValidateIf((o) => !o.phone_number)
+  email?: string;
+
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
+  @ValidateIf((o) => !o.email)
   @Matches(/^\+234[0-9]{10}$/, {
     message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
   })
-  phone_number: string;
+  phone_number?: string;
 }
 
 export class VerifyPasswordDto {
+  @IsEmail()
+  @IsOptional()
+  @ValidateIf((o) => !o.phone_number)
+  email?: string;
+
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
+  @ValidateIf((o) => !o.email)
   @Matches(/^\+234[0-9]{10}$/, {
     message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
   })
-  phone_number: string;
+  phone_number?: string;
 
   @IsString()
   @IsNotEmpty()

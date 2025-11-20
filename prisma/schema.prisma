@@ -50,6 +50,9 @@ model User {
   wallet                 Wallet?
   refreshToken           RefreshToken?
   paystack_customer_code String?          @unique
+  account_status         AccountStatus?   @default(active)
+  password_attempts      Int              @default(0)
+  password_attempts_started_at DateTime?
   createdAt              DateTime         @default(now())
   updatedAt              DateTime         @updatedAt
 
@@ -127,6 +130,11 @@ enum Role {
 enum Gender {
   male
   female
+}
+
+enum AccountStatus {
+  active
+  suspended
 }
 
 enum KycIdStatus {

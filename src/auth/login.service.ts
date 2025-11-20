@@ -37,24 +37,97 @@ export class LoginService {
   /**
    * Check login/registration status
    * Returns detailed information about user's registration progress
-   * Used by app to determine which page to show when user enters phone number
+   * Used by app to determine which page to show when user enters email or phone number
    * 
    * Flow:
-   * 1. Check RegistrationProgress for phone number
-   * 2. If is_complete is false: delegate to registration service (returns registration progress)
-   * 3. If is_complete is true: return success (no token) to prompt password entry
-   * 4. If no registration found: return message to start registration
+   * - If email: Check User table directly (skip RegistrationProgress)
+   * - If phone: Check RegistrationProgress first
+   *   - If is_complete is false: return registration progress
+   *   - If is_complete is true: return success (no token) to prompt password entry
+   *   - If no registration found: return message to start registration
    */
   async checkLoginStatus(
     dto: CheckLoginStatusDto,
   ): Promise<ApiResponseDto<any>> {
+    // Validate that at least one identifier is provided
+    if (!dto.email && !dto.phone_number) {
+      throw new BadRequestException(
+        'Either email or phone_number must be provided',
+      );
+    }
+
+    const identifier = dto.email || dto.phone_number;
     this.logger.log(
-      colors.cyan(`Checking login status for ${dto.phone_number}...`),
+      colors.cyan(`Checking login status for ${identifier}...`),
     );
 
     try {
+      // If email is provided, check User table directly (skip RegistrationProgress)
+      if (dto.email) {
+        const user = await this.prisma.user.findUnique({
+          where: { email: dto.email },
+        select: {
+          id: true,
+          email: true,
+          first_name: true,
+          last_name: true,
+          is_email_verified: true,
+            account_status: true,
+        },
+      });
+
+        if (!user) {
+          this.logger.log(
+            colors.yellow(`No user found with email: ${dto.email}`),
+          );
+          return new ApiResponseDto(true, 'No account found. Please start registration.', {
+            registration_completed: false,
+            has_registration_progress: false,
+            current_step: 0,
+            next_step: 'START_REGISTRATION',
+            can_login: false,
+            message: 'Please start registration to create an account.',
+          });
+        }
+
+        // Check if account is suspended
+        if (user.account_status === 'suspended') {
+          this.logger.warn(
+            colors.yellow(`Suspended account attempted login: ${dto.email}`),
+          );
+          return new ApiResponseDto(
+            true,
+            'Your account has been suspended. Please contact support for assistance.',
+            {
+              registration_completed: true,
+              can_login: false,
+              account_suspended: true,
+              requires_password: false,
+              message: 'Your account has been suspended. Please contact support.',
+            },
+          );
+        }
+
+        // User exists and account is active - prompt for password
+        this.logger.log(
+          colors.green(`User found with email: ${dto.email}. User should enter password.`),
+        );
+
+        return new ApiResponseDto(true, 'Account found. Please enter your password.', {
+          registration_completed: true,
+          can_login: true,
+          requires_password: true,
+          user_id: user.id,
+          email: user.email,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          message: 'Please enter your password to continue.',
+        });
+      }
+
+      // Phone number flow (existing logic)
       // 1. Format and validate phone number
-      const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
+      const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number!);
       if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
         throw new BadRequestException(
           'Phone number must be in E.164 format (+234XXXXXXXXXX)',
@@ -94,18 +167,18 @@ export class LoginService {
         );
 
         // Return registration progress status (same format as registration service)
-        const regData = registrationProgress.registration_data as any;
+      const regData = registrationProgress.registration_data as any;
 
-        // Use centralized step helper to find current step
-        const currentStepInfo = RegistrationStepsHelper.findCurrentStep(
-          registrationProgress,
-        );
+      // Use centralized step helper to find current step
+      const currentStepInfo = RegistrationStepsHelper.findCurrentStep(
+        registrationProgress,
+      );
 
-        // Build steps object using helper
-        const steps = RegistrationStepsHelper.buildStepsObject(
-          registrationProgress,
-          regData,
-        );
+      // Build steps object using helper
+      const steps = RegistrationStepsHelper.buildStepsObject(
+        registrationProgress,
+        regData,
+      );
 
         // Get status message using helper
         const statusMessage = RegistrationStepsHelper.getStatusMessage(
@@ -113,15 +186,54 @@ export class LoginService {
           registrationProgress,
         );
 
+        // Build comprehensive step pending status (is_step_1_pending, is_step_2_pending, etc.)
+        const stepPendingStatus = RegistrationStepsHelper.buildStepPendingStatus(
+          registrationProgress,
+        );
+
+        // Build verification status for all steps (step_2_verification_status, step_3_verification_status, etc.)
+        const stepVerificationStatus =
+          RegistrationStepsHelper.buildStepVerificationStatus(
+            registrationProgress,
+          );
+
+        // Check if current step is waiting for verification (for backward compatibility)
+        const currentStepVerificationStatus =
+          RegistrationStepsHelper.getVerificationStatus(
+            currentStepInfo.stepNumber,
+            registrationProgress,
+          );
+        const isWaitingForVerification =
+          RegistrationStepsHelper.isStepPending(
+            currentStepInfo.stepNumber,
+            registrationProgress,
+          );
+
+        // If waiting for verification, adjust next_step to indicate pending state
+        // This helps the app distinguish between "enter ID" vs "ID verification pending"
+        let displayNextStep = currentStepInfo.nextStep;
+        if (isWaitingForVerification) {
+          // When verification is pending, next_step should indicate pending state
+          // The app should check step pending flags to show pending screen
+          displayNextStep = currentStepInfo.stepKey; // Keep on same step
+        }
+
         // Build response with all status information
         const responseData = {
           registration_completed: false,
           has_registration_progress: true,
           session_id: registrationProgress.id,
           current_step: currentStepInfo.stepNumber,
-          next_step: currentStepInfo.nextStep,
+          next_step: displayNextStep,
           can_login: false,
           can_proceed: currentStepInfo.canProceed,
+          // Comprehensive step pending status flags
+          ...stepPendingStatus,
+          // Comprehensive step verification status
+          ...stepVerificationStatus,
+          // Backward compatibility fields (deprecated - use step pending flags instead)
+          is_waiting_for_verification: isWaitingForVerification,
+          verification_status: currentStepVerificationStatus,
           steps: steps,
           registration_data: {
             phone_number: formattedPhone,
@@ -132,13 +244,13 @@ export class LoginService {
           message: statusMessage,
         };
 
-        this.logger.log(
-          colors.magenta(
-            `Registration status retrieved for ${formattedPhone}. Step: ${currentStepInfo.stepNumber}, Next: ${currentStepInfo.nextStep}`,
-          ),
-        );
+      this.logger.log(
+        colors.magenta(
+          `Registration status retrieved for ${formattedPhone}. Step: ${currentStepInfo.stepNumber}, Next: ${currentStepInfo.nextStep}`,
+        ),
+      );
 
-        return new ApiResponseDto(true, 'Registration in progress', responseData);
+      return new ApiResponseDto(true, 'Registration in progress', responseData);
       }
 
       // 4. Registration is complete - return success (no token) to prompt password entry
@@ -203,52 +315,222 @@ export class LoginService {
    * Verify password and return access token
    * Called after checkLoginStatus returns requires_password: true
    * Verifies password and returns access token to direct user to dashboard
+   * 
+   * Supports login by email or phone number
+   * 
+   * Implements password attempt tracking:
+   * - Tracks failed password attempts
+   * - Suspends account after max_password_trial failed attempts
+   * - Clears attempts on successful login
+   * - Resets attempts after a period (15 minutes)
    */
   async verifyPassword(
     dto: VerifyPasswordDto,
     deviceMetadata?: any,
     ipAddress?: string,
   ): Promise<ApiResponseDto<any>> {
+    // Validate that at least one identifier is provided
+    if (!dto.email && !dto.phone_number) {
+      throw new BadRequestException(
+        'Either email or phone_number must be provided',
+      );
+    }
+
+    const identifier = dto.email || dto.phone_number;
     this.logger.log(
-      colors.cyan(`Verifying password for ${dto.phone_number}...`),
+      colors.cyan(`Verifying password for ${identifier}...`),
     );
 
     try {
-      // 1. Format and validate phone number
-      const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
-      if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
-        throw new BadRequestException(
-          'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+      // 1. Get max password trial from config (default: 3)
+      const maxPasswordTrial = parseInt(
+        this.config.get('MAX_PASSWORD_TRIAL') || '3',
+        10,
+      );
+      const passwordAttemptWindow = parseInt(
+        this.config.get('PASSWORD_ATTEMPT_WINDOW_MINUTES') || '15',
+        10,
+      ); // 15 minutes window
+
+      // 2. Find user by email or phone number
+      let user;
+      if (dto.email) {
+        // Find by email
+        user = await this.prisma.user.findUnique({
+          where: { email: dto.email },
+          include: {
+            profile_image: true,
+            kyc_verification: true,
+          },
+        });
+      } else {
+        // Find by phone number
+        const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number!);
+        if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
+          throw new BadRequestException(
+            'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+          );
+        }
+
+        user = await this.prisma.user.findFirst({
+          where: { phone_number: formattedPhone },
+          include: {
+            profile_image: true,
+            kyc_verification: true,
+          },
+        });
+      }
+
+      if (!user) {
+        this.logger.error(
+          colors.red(`User not found for ${identifier}`),
+        );
+        return new ApiResponseDto(false, 'invalid credentials', {
+          attempts_remaining: null,
+        });
+      }
+
+      // 3. Check if account is suspended
+      if (user.account_status === 'suspended') {
+        this.logger.warn(
+          colors.yellow(
+            `Suspended account attempted login: ${identifier}`,
+          ),
+        );
+        return new ApiResponseDto(
+          false,
+          'Your account has been suspended due to multiple failed login attempts. Please contact support for assistance.',
+          {
+            account_suspended: true,
+            attempts_remaining: 0,
+          },
         );
       }
 
-      // 2. Find user by phone number
-      const user = await this.prisma.user.findFirst({
-        where: { phone_number: formattedPhone },
-        include: {
-          profile_image: true,
-          kyc_verification: true,
-        },
-      });
+      // 4. Check if password attempts period has expired (reset attempts)
+      const now = new Date();
+      let passwordAttempts = user.password_attempts || 0;
+      let attemptsStartedAt = user.password_attempts_started_at;
 
-      if (!user) {
-        throw new UnauthorizedException('Invalid credentials');
+      if (attemptsStartedAt) {
+        const windowExpiry = new Date(attemptsStartedAt);
+        windowExpiry.setMinutes(
+          windowExpiry.getMinutes() + passwordAttemptWindow,
+        );
+
+        if (now > windowExpiry) {
+          // Reset attempts - window expired
+          passwordAttempts = 0;
+          attemptsStartedAt = null;
+          this.logger.log(
+            colors.blue(
+              `Password attempt window expired for ${identifier}. Resetting attempts.`,
+            ),
+          );
+        }
       }
 
-      // 3. Verify password
+      // 5. Verify password
       if (!user.password) {
-        throw new UnauthorizedException('Password not set. Please reset your password.');
+        this.logger.error(
+          colors.red(`Password not set for ${identifier}`),
+        );
+        return new ApiResponseDto(false, 'password not set. Please reset your password.', {
+          attempts_remaining: maxPasswordTrial - passwordAttempts,
+        });
       }
 
       const isPasswordValid = await argon.verify(user.password, dto.password);
+
       if (!isPasswordValid) {
-        throw new UnauthorizedException('Invalid credentials');
+        // Wrong password - increment attempts
+        passwordAttempts += 1;
+        const attemptsRemaining = maxPasswordTrial - passwordAttempts;
+
+        // If this is the first failed attempt, set the start time
+        if (!attemptsStartedAt) {
+          attemptsStartedAt = now;
+        }
+
+        // Check if max attempts reached
+        if (passwordAttempts >= maxPasswordTrial) {
+          // Suspend account
+          await this.prisma.user.update({
+            where: { id: user.id },
+            data: {
+              account_status: 'suspended',
+              password_attempts: passwordAttempts,
+              password_attempts_started_at: attemptsStartedAt,
+              updatedAt: now,
+            },
+          });
+
+          this.logger.error(
+            colors.red(
+              `Account suspended due to ${passwordAttempts} failed password attempts: ${identifier}`,
+            ),
+          );
+
+          return new ApiResponseDto(
+            false,
+            `Your account has been suspended due to ${maxPasswordTrial} failed login attempts. Please contact support for assistance.`,
+            {
+              account_suspended: true,
+              attempts_remaining: 0,
+              max_attempts: maxPasswordTrial,
+            },
+          );
+        }
+
+        // Update attempts count
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            password_attempts: passwordAttempts,
+            password_attempts_started_at: attemptsStartedAt,
+            updatedAt: now,
+          },
+        });
+
+        this.logger.warn(
+          colors.yellow(
+            `Failed password attempt ${passwordAttempts}/${maxPasswordTrial} for ${identifier}`,
+          ),
+        );
+
+        return new ApiResponseDto(
+          false,
+          'invalid credentials',
+          {
+            attempts_remaining: attemptsRemaining,
+            max_attempts: maxPasswordTrial,
+            message: `Invalid password. ${attemptsRemaining} attempt${attemptsRemaining !== 1 ? 's' : ''} remaining before account suspension.`,
+          },
+        );
       }
 
-      // 4. Generate access token
+      // 7. Password is correct - clear attempts and proceed with login
+      if (passwordAttempts > 0 || attemptsStartedAt) {
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            password_attempts: 0,
+            password_attempts_started_at: null,
+            updatedAt: now,
+          },
+        });
+
+        this.logger.log(
+          colors.green(
+            `Password verified successfully. Cleared ${passwordAttempts} previous failed attempts for ${identifier}`,
+          ),
+        );
+      }
+
+      // 8. Generate access token
       const access_token = await this.signToken(user.id, user.email);
 
-      // 5. Track device (if device metadata is provided)
+      // 9. Track device (if device metadata is provided)
       if (deviceMetadata && deviceMetadata.device_id) {
         // Don't await - let it run in background to not slow down login
         this.deviceTracker.registerOrUpdateDevice(
@@ -262,7 +544,7 @@ export class LoginService {
         });
       }
 
-      // 6. Format user data for response
+      // 10. Format user data for response
       const formattedUser = {
         id: user.id,
         email: user.email,
@@ -280,7 +562,7 @@ export class LoginService {
         created_at: formatDate(user.createdAt),
       };
 
-      // 7. Prepare response data
+      // 11. Prepare response data
       const responseData = {
         access_token: access_token,
         refresh_token: null, // Placeholder for refresh token if implemented
@@ -288,7 +570,7 @@ export class LoginService {
       };
 
       this.logger.log(
-        colors.magenta(`Password verified successfully for ${formattedPhone}`),
+        colors.magenta(`Password verified successfully for ${identifier}`),
       );
 
       return new ApiResponseDto(true, 'Welcome back', responseData);
