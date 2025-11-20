@@ -9,7 +9,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
-import { StartRegistrationDto, ResendOtpDto, VerifyOtpDto, SubmitIdInformationDto, SubmitResidentialAddressDto } from './dto/registration.dto';
+import { StartRegistrationDto, ResendOtpDto, VerifyOtpDto, SubmitIdInformationDto, SubmitResidentialAddressDto, SubmitPepDeclarationDto, SubmitIncomeDeclarationDto, SubmitPasswordSetupDto } from './dto/registration.dto';
 import { PhoneValidator } from './helpers/phone.validator';
 import { IdValidator } from './helpers/id-validator';
 import { RegistrationRateLimiter } from './helpers/rate-limiter';
@@ -21,6 +21,8 @@ import { DeviceTrackerService } from './helpers/device-tracker.service';
 import { KycService } from './helpers/kyc.service';
 import { RegistrationStepsHelper } from './helpers/registration-steps.config';
 import { formatTimeDuration } from 'src/common/helper_functions/time-formatter';
+import { generateSmipayTag } from 'src/common/helper_functions/generators';
+import * as argon from 'argon2';
 import * as colors from 'colors';
 import * as crypto from 'crypto';
 
@@ -754,6 +756,29 @@ export class RegistrationService {
       return null;
     }
 
+    // Step 6: Check steps 1-5 are completed
+    if (currentStepNumber === 6) {
+      if (registrationProgress.step_1_status !== 'completed') {
+        return 'Please complete phone registration first.';
+      }
+      if (!registrationProgress.is_phone_verified || registrationProgress.step_2_status !== 'completed') {
+        return 'Please verify your phone number first.';
+      }
+      if (registrationProgress.step_3_status !== 'completed' || registrationProgress.id_verification_status !== 'verified') {
+        return 'Please complete ID verification first.';
+      }
+      if (registrationProgress.step_4_status && registrationProgress.step_4_status !== 'completed') {
+        return 'Please complete face verification first.';
+      }
+      if (registrationProgress.face_verification_status && registrationProgress.face_verification_status !== 'verified') {
+        return 'Face verification is pending. Please wait for verification to complete.';
+      }
+      if (registrationProgress.step_5_status !== 'completed') {
+        return 'Please complete residential address first.';
+      }
+      return null;
+    }
+
     // Step 7: Check steps 1-6 are completed
     if (currentStepNumber === 7) {
       if (registrationProgress.step_1_status !== 'completed') {
@@ -1313,6 +1338,7 @@ export class RegistrationService {
 
       return new ApiResponseDto(true, 'Residential address submitted successfully', {
         session_id: registrationProgress.id,
+        current_step: 5,
         step: 5,
         next_step: 'PEP_DECLARATION',
         can_proceed: true,
@@ -1345,7 +1371,578 @@ export class RegistrationService {
     }
   }
 
-  
+  /**
+   * Submit PEP Declaration (Step 6)
+   * User declares if they are a Politically Exposed Person
+   */
+  async submitPepDeclaration(
+    dto: SubmitPepDeclarationDto,
+    headers: any,
+    ipAddress: string,
+  ): Promise<ApiResponseDto<any>> {
+    this.logger.log(
+      colors.cyan(
+        `Submitting PEP declaration for ${dto.phone_number}. Is PEP: ${dto.is_pep}`,
+      ),
+    );
+
+    try {
+      // 1. Format and validate phone number
+      const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
+      this.logger.log(colors.cyan(`Formatted phone number: ${formattedPhone}`));
+      if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
+        return new ApiResponseDto(false, 'Phone number must be in E.164 format (+234XXXXXXXXXX)', null);
+      }
+
+      // 2. Find registration progress
+      const registrationProgress = await this.prisma.registrationProgress.findUnique({
+        where: { phone_number: formattedPhone },
+      });
+
+      if (!registrationProgress) {
+        this.logger.error(colors.red(`No active registration found. Please start registration first.`));
+        return new ApiResponseDto(false, 'No active registration found. Please start registration first.', null);
+      }
+
+      if (registrationProgress.is_complete) {
+        this.logger.error(colors.red(`Registration already completed. Please login instead.`));
+        return new ApiResponseDto(false, 'Registration already completed. Please login instead.', null);
+      }
+
+      // 3. Validate session_id if provided
+      if (dto.session_id && dto.session_id !== registrationProgress.id) {
+        this.logger.error(colors.red(`Session ID does not match phone number. Please use the correct session.`));
+        return new ApiResponseDto(false, 'Session ID does not match phone number. Please use the correct session.', null);
+      }
+
+      // 4. Validate previous steps are completed
+      const previousStepsError = this.validatePreviousSteps(6, registrationProgress);
+      if (previousStepsError) {
+        this.logger.error(colors.red(previousStepsError));
+        return new ApiResponseDto(false, previousStepsError, null);
+      }
+
+      // 5. Validate PEP declaration data
+      if (dto.is_pep === true) {
+        if (!dto.pep_details) {
+          return new ApiResponseDto(false, 'pep_details is required when is_pep is true.', null);
+        }
+
+        // Parse and validate PEP details JSON
+        let pepDetailsObj: any;
+        try {
+          pepDetailsObj = JSON.parse(dto.pep_details);
+        } catch (parseError) {
+          return new ApiResponseDto(false, 'pep_details must be a valid JSON string.', null);
+        }
+
+        // Validate required fields
+        if (!pepDetailsObj.relationship || !pepDetailsObj.name || !pepDetailsObj.position || !pepDetailsObj.country) {
+          return new ApiResponseDto(false, 'pep_details must include relationship, name, position, and country.', null);
+        }
+
+        // Validate relationship value
+        const validRelationships = ['self', 'spouse', 'parent', 'sibling', 'child', 'other'];
+        if (!validRelationships.includes(pepDetailsObj.relationship)) {
+          return new ApiResponseDto(false, `relationship must be one of: ${validRelationships.join(', ')}.`, null);
+        }
+
+        // Validate date formats if provided
+        if (pepDetailsObj.start_date && !/^\d{4}-\d{2}-\d{2}$/.test(pepDetailsObj.start_date)) {
+          return new ApiResponseDto(false, 'start_date must be in YYYY-MM-DD format.', null);
+        }
+
+        if (pepDetailsObj.end_date && !/^\d{4}-\d{2}-\d{2}$/.test(pepDetailsObj.end_date)) {
+          return new ApiResponseDto(false, 'end_date must be in YYYY-MM-DD format.', null);
+        }
+      } else {
+        // If is_pep is false, pep_details should be null
+        if (dto.pep_details !== null && dto.pep_details !== undefined) {
+          return new ApiResponseDto(false, 'pep_details must be null when is_pep is false.', null);
+        }
+      }
+
+      // 6. Get existing registration data
+      const existingRegistrationData = (registrationProgress.registration_data as any) || {};
+
+      // 7. Prepare PEP declaration data
+      const pepDeclarationData = {
+        is_pep: dto.is_pep,
+        pep_details: dto.is_pep && dto.pep_details ? JSON.parse(dto.pep_details) : null,
+        submitted_at: new Date().toISOString(),
+      };
+
+      // 8. Update registration data
+      const updatedRegistrationData = {
+        ...existingRegistrationData,
+        pep_declaration: pepDeclarationData,
+      };
+
+      // 9. Update registration progress
+      await this.prisma.registrationProgress.update({
+        where: { phone_number: formattedPhone },
+        data: {
+          step_6_status: 'completed',
+          current_step: 6,
+          registration_data: updatedRegistrationData,
+          updatedAt: new Date(),
+        },
+      });
+
+      // Fetch updated registration progress to get latest step statuses
+      const updatedRegistrationProgress = await this.prisma.registrationProgress.findUnique({
+        where: { phone_number: formattedPhone },
+      });
+
+      if (!updatedRegistrationProgress) {
+        throw new BadRequestException('Registration progress not found after PEP declaration submission');
+      }
+
+      // Build steps object with status
+      const steps = RegistrationStepsHelper.buildStepsObject(
+        updatedRegistrationProgress,
+        updatedRegistrationData,
+      );
+
+      this.logger.log(
+        colors.magenta(
+          `PEP declaration submitted successfully for ${formattedPhone}. Is PEP: ${dto.is_pep}`,
+        ),
+      );
+
+      return new ApiResponseDto(true, 'PEP declaration submitted successfully', {
+        session_id: registrationProgress.id,
+        current_step: 6,
+        step: 6,
+        next_step: 'INCOME_DECLARATION',
+        can_proceed: true,
+        pep_declaration: {
+          is_pep: dto.is_pep,
+          pep_details: pepDeclarationData.pep_details,
+        },
+        steps: steps,
+      });
+    } catch (error) {
+      this.logger.error(
+        colors.red(`PEP declaration submission error: ${error.message}`),
+        error.stack,
+      );
+
+      if (
+        error instanceof BadRequestException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+
+      throw new HttpException(
+        error.message || 'Failed to submit PEP declaration',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Submit Income Declaration (Step 7)
+   * User declares their income range and occupation
+   */
+  async submitIncomeDeclaration(
+    dto: SubmitIncomeDeclarationDto,
+    headers: any,
+    ipAddress: string,
+  ): Promise<ApiResponseDto<any>> {
+    this.logger.log(
+      colors.cyan(
+        `Submitting income declaration for ${dto.phone_number}. Occupation: ${dto.occupation}, Annual Income: ${dto.annual_income}`,
+      ),
+    );
+
+    try {
+      // 1. Format and validate phone number
+      const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
+      this.logger.log(colors.cyan(`Formatted phone number: ${formattedPhone}`));
+      if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
+        return new ApiResponseDto(false, 'Phone number must be in E.164 format (+234XXXXXXXXXX)', null);
+      }
+
+      // 2. Find registration progress
+      const registrationProgress = await this.prisma.registrationProgress.findUnique({
+        where: { phone_number: formattedPhone },
+      });
+
+      if (!registrationProgress) {
+        this.logger.error(colors.red(`No active registration found. Please start registration first.`));
+        return new ApiResponseDto(false, 'No active registration found. Please start registration first.', null);
+      }
+
+      if (registrationProgress.is_complete) {
+        this.logger.error(colors.red(`Registration already completed. Please login instead.`));
+        return new ApiResponseDto(false, 'Registration already completed. Please login instead.', null);
+      }
+
+      // 3. Validate session_id if provided
+      if (dto.session_id && dto.session_id !== registrationProgress.id) {
+        this.logger.error(colors.red(`Session ID does not match phone number. Please use the correct session.`));
+        return new ApiResponseDto(false, 'Session ID does not match phone number. Please use the correct session.', null);
+      }
+
+      // 4. Validate previous steps are completed
+      const previousStepsError = this.validatePreviousSteps(7, registrationProgress);
+      if (previousStepsError) {
+        this.logger.error(colors.red(previousStepsError));
+        return new ApiResponseDto(false, previousStepsError, null);
+      }
+
+      // 5. Validate income declaration data
+      if (dto.has_other_income === true) {
+        if (!dto.other_income_source || !dto.expected_annual_income) {
+          return new ApiResponseDto(false, 'other_income_source and expected_annual_income are required when has_other_income is true.', null);
+        }
+      } else {
+        // If has_other_income is false, other fields should be null
+        if (dto.other_income_source !== null && dto.other_income_source !== undefined) {
+          return new ApiResponseDto(false, 'other_income_source must be null when has_other_income is false.', null);
+        }
+        if (dto.expected_annual_income !== null && dto.expected_annual_income !== undefined) {
+          return new ApiResponseDto(false, 'expected_annual_income must be null when has_other_income is false.', null);
+        }
+      }
+
+      // 6. Get existing registration data
+      const existingRegistrationData = (registrationProgress.registration_data as any) || {};
+
+      // 7. Prepare income declaration data
+      const incomeDeclarationData = {
+        occupation: dto.occupation.trim(),
+        annual_income: dto.annual_income.trim(),
+        has_other_income: dto.has_other_income,
+        other_income_source: dto.has_other_income ? dto.other_income_source?.trim() || null : null,
+        expected_annual_income: dto.has_other_income ? dto.expected_annual_income?.trim() || null : null,
+        submitted_at: new Date().toISOString(),
+      };
+
+      // 8. Update registration data
+      const updatedRegistrationData = {
+        ...existingRegistrationData,
+        income_declaration: incomeDeclarationData,
+      };
+
+      // 9. Update registration progress
+      await this.prisma.registrationProgress.update({
+        where: { phone_number: formattedPhone },
+        data: {
+          step_7_status: 'completed',
+          current_step: 7,
+          registration_data: updatedRegistrationData,
+          updatedAt: new Date(),
+        },
+      });
+
+      // Fetch updated registration progress to get latest step statuses
+      const updatedRegistrationProgress = await this.prisma.registrationProgress.findUnique({
+        where: { phone_number: formattedPhone },
+      });
+
+      if (!updatedRegistrationProgress) {
+        throw new BadRequestException('Registration progress not found after income declaration submission');
+      }
+
+      // Build steps object with status
+      const steps = RegistrationStepsHelper.buildStepsObject(
+        updatedRegistrationProgress,
+        updatedRegistrationData,
+      );
+
+      this.logger.log(
+        colors.magenta(
+          `Income declaration submitted successfully for ${formattedPhone}. Occupation: ${dto.occupation}, Annual Income: ${dto.annual_income}`,
+        ),
+      );
+
+      return new ApiResponseDto(true, 'Income declaration submitted successfully', {
+        session_id: registrationProgress.id,
+        current_step: 7,
+        step: 7,
+        next_step: 'PASSWORD_SETUP',
+        can_proceed: true,
+        income_declaration: incomeDeclarationData,
+        steps: steps,
+      });
+    } catch (error) {
+      this.logger.error(
+        colors.red(`Income declaration submission error: ${error.message}`),
+        error.stack,
+      );
+
+      if (
+        error instanceof BadRequestException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+
+      throw new HttpException(
+        error.message || 'Failed to submit income declaration',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Submit Password Setup (Step 8) - FINAL STEP
+   * Creates the User account and completes registration
+   */
+  async submitPasswordSetup(
+    dto: SubmitPasswordSetupDto,
+    headers: any,
+    ipAddress: string,
+  ): Promise<ApiResponseDto<any>> {
+    this.logger.log(
+      colors.cyan(
+        `Setting up password and completing registration for ${dto.phone_number}`,
+      ),
+    );
+
+    try {
+      // 1. Format and validate phone number
+      const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
+      this.logger.log(colors.cyan(`Formatted phone number: ${formattedPhone}`));
+      if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
+        return new ApiResponseDto(false, 'Phone number must be in E.164 format (+234XXXXXXXXXX)', null);
+      }
+
+      // 2. Find registration progress
+      const registrationProgress = await this.prisma.registrationProgress.findUnique({
+        where: { phone_number: formattedPhone },
+      });
+
+      if (!registrationProgress) {
+        this.logger.error(colors.red(`No active registration found. Please start registration first.`));
+        return new ApiResponseDto(false, 'No active registration found. Please start registration first.', null);
+      }
+
+      if (registrationProgress.is_complete) {
+        this.logger.error(colors.red(`Registration already completed. Please login instead.`));
+        return new ApiResponseDto(false, 'Registration already completed. Please login instead.', null);
+      }
+
+      // 3. Validate session_id if provided
+      if (dto.session_id && dto.session_id !== registrationProgress.id) {
+        this.logger.error(colors.red(`Session ID does not match phone number. Please use the correct session.`));
+        return new ApiResponseDto(false, 'Session ID does not match phone number. Please use the correct session.', null);
+      }
+
+      // 4. Validate previous steps are completed (steps 1-7)
+      const previousStepsError = this.validatePreviousSteps(8, registrationProgress);
+      if (previousStepsError) {
+        this.logger.error(colors.red(previousStepsError));
+        return new ApiResponseDto(false, previousStepsError, null);
+      }
+
+      // 5. Check if user already exists (shouldn't happen, but safety check)
+      const existingUser = await this.prisma.user.findFirst({
+        where: { phone_number: formattedPhone },
+        select: { id: true },
+      });
+
+      if (existingUser) {
+        this.logger.error(colors.red(`User already exists with phone number ${formattedPhone}`));
+        return new ApiResponseDto(false, 'User already exists. Please login instead.', null);
+      }
+
+      // 6. Hash password
+      const passwordHash = await argon.hash(dto.password);
+      this.logger.log(colors.green('Password hashed successfully'));
+
+      // 7. Extract registration data
+      const registrationData = (registrationProgress.registration_data as any) || {};
+      const verificationResult = registrationData.verification_result || {};
+      const verificationData = verificationResult.data || {};
+      const addressData = registrationData.address || {};
+
+      // 8. Extract user information from verification result
+      const firstName = verificationData.first_name || null;
+      const lastName = verificationData.last_name || null;
+      const middleName = verificationData.middle_name || null;
+      const dateOfBirth = verificationData.date_of_birth 
+        ? new Date(verificationData.date_of_birth) 
+        : null;
+      const gender = verificationData.gender 
+        ? (verificationData.gender.toLowerCase() === 'male' ? 'male' : 'female')
+        : null;
+      const email = verificationData.email || null;
+
+      // 9. Generate unique Smipay tag
+      const smipayTag = await generateSmipayTag(this.prisma);
+      this.logger.log(colors.green(`Smipay tag generated: ${smipayTag}`));
+
+      // 10. Create User account
+      const newUser = await this.prisma.user.create({
+        data: {
+          phone_number: formattedPhone,
+          email: email || `${formattedPhone.replace('+', '')}@smipay.temp`, // Temporary email if not provided
+          password: passwordHash,
+          hash: passwordHash,
+          smipay_tag: smipayTag,
+          first_name: firstName,
+          last_name: lastName,
+          middle_name: middleName,
+          gender: gender as any,
+          date_of_birth: dateOfBirth,
+          referral_code: registrationProgress.referral_code || null,
+          is_phone_verified: registrationProgress.is_phone_verified,
+          agree_to_terms: true, // Implied by completing registration
+          updates_opt_in: false, // Default
+          account_status: 'active',
+        },
+      });
+
+      this.logger.log(colors.green(`User created successfully: ${newUser.id}`));
+
+      // 11. Create Wallet
+      try {
+        await this.prisma.wallet.create({
+          data: {
+            user_id: newUser.id,
+            current_balance: 0,
+            all_time_fuunding: 0,
+            all_time_withdrawn: 0,
+            isActive: true,
+          },
+        });
+        this.logger.log(colors.green('Wallet created successfully'));
+      } catch (walletError) {
+        this.logger.error(colors.red(`Error creating wallet: ${walletError.message}`));
+        // Don't fail registration if wallet creation fails - can be retried
+      }
+
+      // 12. Create KYC Verification record if ID information exists
+      if (registrationData.id_type && registrationData.id_number && registrationProgress.id_verification_status === 'verified') {
+        try {
+          // Map registration id_type to Prisma KycIdType enum
+          let kycIdType: 'NIGERIAN_BVN_VERIFICATION' | 'NIGERIAN_NIN' | null = null;
+          if (registrationData.id_type === 'BVN') {
+            kycIdType = 'NIGERIAN_BVN_VERIFICATION';
+          } else if (registrationData.id_type === 'NIN') {
+            kycIdType = 'NIGERIAN_NIN';
+          }
+
+          if (!kycIdType) {
+            this.logger.warn(colors.yellow(`Unknown id_type: ${registrationData.id_type}. Skipping KYC record creation.`));
+          } else {
+            await this.prisma.kycVerification.create({
+              data: {
+                userId: newUser.id,
+                id_type: kycIdType,
+                id_no: registrationData.id_number,
+                first_name: firstName,
+                last_name: lastName,
+                middle_name: middleName,
+                phone: formattedPhone,
+                email: email,
+                date_of_birth: dateOfBirth,
+                gender: gender,
+                nin: registrationData.id_type === 'NIN' ? registrationData.id_number : null,
+                bvn: registrationData.id_type === 'BVN' ? registrationData.id_number : null,
+                bvn_verified: registrationData.id_type === 'BVN' && registrationProgress.id_verification_status === 'verified',
+                state_of_residence: addressData.state || null,
+                lga_of_residence: addressData.lga || null,
+                is_verified: registrationProgress.id_verification_status === 'verified',
+                status: registrationProgress.id_verification_status === 'verified' ? 'approved' : 'pending',
+              },
+            });
+            this.logger.log(colors.green('KYC verification record created successfully'));
+          }
+        } catch (kycError) {
+          this.logger.error(colors.red(`Error creating KYC verification: ${kycError.message}`));
+          // Don't fail registration if KYC record creation fails
+        }
+      }
+
+      // 13. Create Address record if address information exists
+      if (addressData.street_address || addressData.state || addressData.country) {
+        try {
+          await this.prisma.address.create({
+            data: {
+              userId: newUser.id,
+              home_address: addressData.street_address || null,
+              state: addressData.state || null,
+              country: addressData.country || null,
+              city: addressData.area || addressData.lga || null,
+              postal_code: null, // Not collected in registration
+            },
+          });
+          this.logger.log(colors.green('Address record created successfully'));
+        } catch (addressError) {
+          this.logger.error(colors.red(`Error creating address: ${addressError.message}`));
+          // Don't fail registration if address creation fails
+        }
+      }
+
+      // 14. Mark registration as complete
+      await this.prisma.registrationProgress.update({
+        where: { phone_number: formattedPhone },
+        data: {
+          step_8_status: 'completed',
+          step_9_status: 'completed', // Step 9 is just viewing tier info, mark as completed
+          current_step: 9,
+          is_complete: true,
+          registration_data: {
+            ...registrationData,
+            password_hash: passwordHash, // Store hashed password in registration data
+            user_id: newUser.id, // Link to created user
+            completed_at: new Date().toISOString(),
+          },
+          updatedAt: new Date(),
+        },
+      });
+
+      this.logger.log(
+        colors.magenta(
+          `✅ Registration completed successfully for ${formattedPhone}. User ID: ${newUser.id}`,
+        ),
+      );
+
+      // 17. Return success response
+      return new ApiResponseDto(true, 'Password set successfully. Registration completed!', {
+        registration_completed: true,
+        user_id: newUser.id,
+        session_id: registrationProgress.id,
+        current_step: 9,
+        step: 8,
+        next_step: 'ACCOUNT_TIER_INFO', // Guide app to account tier information page
+        can_proceed: true,
+        can_login: true,
+        user: {
+          id: newUser.id,
+          phone_number: newUser.phone_number,
+          email: newUser.email,
+          smipay_tag: newUser.smipay_tag,
+          first_name: newUser.first_name,
+          last_name: newUser.last_name,
+          is_phone_verified: newUser.is_phone_verified,
+        },
+        message: 'Registration completed successfully. Please proceed to view your account tier information.',
+      });
+    } catch (error) {
+      this.logger.error(
+        colors.red(`Password setup error: ${error.message}`),
+        error.stack,
+      );
+
+      if (
+        error instanceof BadRequestException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+
+      throw new HttpException(
+        error.message || 'Failed to set password and complete registration',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 
 }
 

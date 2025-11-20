@@ -11,6 +11,7 @@ import {
   MaxLength,
   IsEmail,
   ValidateIf,
+  IsIn,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -259,6 +260,134 @@ export class SubmitResidentialAddressDto {
   @Type(() => AddressDto)
   @IsNotEmpty()
   address: AddressDto;
+
+  @IsString()
+  @IsOptional()
+  session_id?: string; // Optional: if provided, validates it matches phone_number
+}
+
+export class PepDetailsDto {
+  @IsString()
+  @IsNotEmpty()
+  @IsIn(['self', 'spouse', 'parent', 'sibling', 'child', 'other'])
+  relationship: 'self' | 'spouse' | 'parent' | 'sibling' | 'child' | 'other';
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(200)
+  name: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(200)
+  position: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(100)
+  country: string;
+
+  @IsString()
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'start_date must be in YYYY-MM-DD format',
+  })
+  start_date?: string | null;
+
+  @IsString()
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'end_date must be in YYYY-MM-DD format',
+  })
+  end_date?: string | null;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(1000)
+  additional_notes?: string | null;
+}
+
+export class SubmitPepDeclarationDto {
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^\+234[0-9]{10}$/, {
+    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  })
+  phone_number: string;
+
+  @IsBoolean()
+  @IsNotEmpty()
+  is_pep: boolean;
+
+  @IsString()
+  @IsOptional()
+  @ValidateIf((o) => o.is_pep === true)
+  @IsNotEmpty({ message: 'pep_details is required when is_pep is true' })
+  pep_details?: string | null; // JSON string when is_pep is true, null when false
+
+  @IsString()
+  @IsOptional()
+  session_id?: string; // Optional: if provided, validates it matches phone_number
+}
+
+export class SubmitIncomeDeclarationDto {
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^\+234[0-9]{10}$/, {
+    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  })
+  phone_number: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(200)
+  occupation: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  annual_income: string; // Income range string (e.g., "N1 million - N5 million")
+
+  @IsBoolean()
+  @IsNotEmpty()
+  has_other_income: boolean;
+
+  @IsString()
+  @IsOptional()
+  @ValidateIf((o) => o.has_other_income === true)
+  @IsNotEmpty({ message: 'other_income_source is required when has_other_income is true' })
+  @MaxLength(200)
+  other_income_source?: string | null;
+
+  @IsString()
+  @IsOptional()
+  @ValidateIf((o) => o.has_other_income === true)
+  @IsNotEmpty({ message: 'expected_annual_income is required when has_other_income is true' })
+  @MaxLength(100)
+  expected_annual_income?: string | null;
+
+  @IsString()
+  @IsOptional()
+  session_id?: string; // Optional: if provided, validates it matches phone_number
+}
+
+export class SubmitPasswordSetupDto {
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^\+234[0-9]{10}$/, {
+    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  })
+  phone_number: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(6, { message: 'Password must be at least 6 characters long' })
+  @MaxLength(6, { message: 'Password must not exceed 6 characters' })
+  password: string;
 
   @IsString()
   @IsOptional()

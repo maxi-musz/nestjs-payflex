@@ -5,7 +5,7 @@ import { RegistrationService } from "./registration.service";
 import { LoginService } from "./login.service";
 import * as colors from "colors";
 import { Request } from 'express';
-import { DeviceMetadataDto, ResendOtpDto, VerifyOtpDto, SubmitIdInformationDto, CheckLoginStatusDto, VerifyPasswordDto, SubmitResidentialAddressDto } from "./dto/registration.dto";
+import { DeviceMetadataDto, ResendOtpDto, VerifyOtpDto, SubmitIdInformationDto, CheckLoginStatusDto, VerifyPasswordDto, SubmitResidentialAddressDto, SubmitPepDeclarationDto, SubmitIncomeDeclarationDto, SubmitPasswordSetupDto } from "./dto/registration.dto";
 import { SecurityHeadersGuard } from "src/common/guards/security-headers.guard";
 import { RateLimitGuard, RateLimit } from "src/common/guards/rate-limit.guard";
 
@@ -237,6 +237,69 @@ export class AuthController{
             );
         } catch (error) {
             this.logger.error(colors.red("Error in submit residential address:"), error);
+            throw error;
+        }
+    }
+
+    @Post('register/step-6/submit-pep')
+    @UseGuards(SecurityHeadersGuard)
+    async submitPepDeclaration(
+        @Body() dto: SubmitPepDeclarationDto,
+        @Headers() headers: any,
+        @Ip() ipAddress: string,
+        @Req() req: Request,
+    ) {
+        try {
+            const clientIp = req.ip || ipAddress || req.socket.remoteAddress || 'unknown';
+            return await this.registrationService.submitPepDeclaration(
+                dto,
+                headers,
+                clientIp,
+            );
+        } catch (error) {
+            this.logger.error(colors.red("Error in submit PEP declaration:"), error);
+            throw error;
+        }
+    }
+
+    @Post('register/step-7/submit-income')
+    @UseGuards(SecurityHeadersGuard)
+    async submitIncomeDeclaration(
+        @Body() dto: SubmitIncomeDeclarationDto,
+        @Headers() headers: any,
+        @Ip() ipAddress: string,
+        @Req() req: Request,
+    ) {
+        try {
+            const clientIp = req.ip || ipAddress || req.socket.remoteAddress || 'unknown';
+            return await this.registrationService.submitIncomeDeclaration(
+                dto,
+                headers,
+                clientIp,
+            );
+        } catch (error) {
+            this.logger.error(colors.red("Error in submit income declaration:"), error);
+            throw error;
+        }
+    }
+
+    @Post('register/step-8/setup-password')
+    @UseGuards(SecurityHeadersGuard)
+    async submitPasswordSetup(
+        @Body() dto: SubmitPasswordSetupDto,
+        @Headers() headers: any,
+        @Ip() ipAddress: string,
+        @Req() req: Request,
+    ) {
+        try {
+            const clientIp = req.ip || ipAddress || req.socket.remoteAddress || 'unknown';
+            return await this.registrationService.submitPasswordSetup(
+                dto,
+                headers,
+                clientIp,
+            );
+        } catch (error) {
+            this.logger.error(colors.red("Error in submit password setup:"), error);
             throw error;
         }
     }
