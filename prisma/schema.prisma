@@ -22,39 +22,39 @@ model Bookmark {
 model User {
   id String @id @default(uuid())
 
-  first_name             String?
-  last_name              String?
-  cardholder_id          String?
-  email                  String           @unique
-  smipay_tag             String?          @unique
-  fourDigitPin           String?
-  transactionPinHash     String?
-  hash                   String?
-  phone_number           String?
-  middle_name            String?
-  is_friendly            Boolean          @default(false)
-  referral_code          String?
-  password               String?
-  otp                    String?
-  otp_expires_at         DateTime?
-  role                   Role?            @default(user)
-  gender                 Gender?
-  date_of_birth          DateTime?
-  profile_image          ProfileImage?
-  address                Address?
-  is_email_verified      Boolean          @default(false)
-  agree_to_terms         Boolean          @default(false)
-  updates_opt_in         Boolean          @default(false)
-  is_phone_verified      Boolean          @default(false)
-  kyc_verification       KycVerification?
-  wallet                 Wallet?
-  refreshToken           RefreshToken?
-  paystack_customer_code String?          @unique
-  account_status         AccountStatus?   @default(active)
-  password_attempts      Int              @default(0)
+  first_name                   String?
+  last_name                    String?
+  cardholder_id                String?
+  email                        String           @unique
+  smipay_tag                   String?          @unique
+  fourDigitPin                 String?
+  transactionPinHash           String?
+  hash                         String?
+  phone_number                 String?
+  middle_name                  String?
+  is_friendly                  Boolean          @default(false)
+  referral_code                String?
+  password                     String?
+  otp                          String?
+  otp_expires_at               DateTime?
+  role                         Role?            @default(user)
+  gender                       Gender?
+  date_of_birth                DateTime?
+  profile_image                ProfileImage?
+  address                      Address?
+  is_email_verified            Boolean          @default(false)
+  agree_to_terms               Boolean          @default(false)
+  updates_opt_in               Boolean          @default(false)
+  is_phone_verified            Boolean          @default(false)
+  kyc_verification             KycVerification?
+  wallet                       Wallet?
+  refreshToken                 RefreshToken?
+  paystack_customer_code       String?          @unique
+  account_status               AccountStatus?   @default(active)
+  password_attempts            Int              @default(0)
   password_attempts_started_at DateTime?
-  createdAt              DateTime         @default(now())
-  updatedAt              DateTime         @updatedAt
+  createdAt                    DateTime         @default(now())
+  updatedAt                    DateTime         @updatedAt
 
   accounts Account[] @relation("UserAccounts")
   cards    Card[]
@@ -149,6 +149,19 @@ enum KycIdType {
   NIGERIAN_INTERNATIONAL_PASSPORT
   NIGERIAN_PVC
   NIGERIAN_DRIVERS_LICENSE
+}
+
+enum VerificationStatus {
+  pending
+  verified
+  failed
+  rejected
+}
+
+enum StepStatus {
+  not_started
+  pending
+  completed
 }
 
 model RefreshToken {
@@ -443,17 +456,16 @@ model RegistrationProgress {
   current_step Int    @default(1)
   total_steps  Int    @default(9)
 
-  // Step completion flags
-  step_1_completed Boolean @default(false)
-  step_2_completed Boolean @default(false)
-  step_3_completed Boolean @default(false)
-  step_3_verified  Boolean @default(false)
-  step_4_completed Boolean @default(false)
-  step_5_completed Boolean @default(false)
-  step_6_completed Boolean @default(false)
-  step_7_completed Boolean @default(false)
-  step_8_completed Boolean @default(false)
-  step_9_completed Boolean @default(false)
+  // Step statuses (replaces boolean completed flags)
+  step_1_status StepStatus @default(not_started)
+  step_2_status StepStatus @default(not_started)
+  step_3_status StepStatus @default(not_started)
+  step_4_status StepStatus @default(not_started)
+  step_5_status StepStatus @default(not_started)
+  step_6_status StepStatus @default(not_started)
+  step_7_status StepStatus @default(not_started)
+  step_8_status StepStatus @default(not_started)
+  step_9_status StepStatus @default(not_started)
 
   // Registration data (JSON for flexibility)
   registration_data Json @default("{}")
@@ -462,9 +474,9 @@ model RegistrationProgress {
   referral_code String?
 
   // Verification statuses
-  is_phone_verified        Boolean @default(false)
-  id_verification_status   String?
-  face_verification_status String?
+  is_phone_verified        Boolean             @default(false)
+  id_verification_status   VerificationStatus?
+  face_verification_status VerificationStatus?
 
   // OTP for phone verification
   otp            String?

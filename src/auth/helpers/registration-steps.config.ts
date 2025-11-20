@@ -27,7 +27,7 @@ export interface StepConfig {
   nextStep: RegistrationStepKey;
   requiresVerification?: boolean;
   verificationField?: string; // e.g., 'id_verification_status', 'face_verification_status'
-  hasVerifiedFlag?: boolean; // e.g., step_3_verified
+  // Note: hasVerifiedFlag is deprecated - use step status and verification status instead
   isOptional?: boolean;
   canSkip?: boolean;
   getStatusMessage?: (verificationStatus?: string | null) => string;
@@ -39,7 +39,7 @@ export interface StepConfig {
  * To add a new step:
  * 1. Add the step key to RegistrationStepKey enum above
  * 2. Add the step config below in the correct order
- * 3. Update the database schema to add step_X_completed field
+ * 3. Update the database schema to add step_X_status field (StepStatus enum)
  * 4. That's it! All other code will automatically work.
  */
 export const REGISTRATION_STEPS: StepConfig[] = [
@@ -66,7 +66,6 @@ export const REGISTRATION_STEPS: StepConfig[] = [
     nextStep: RegistrationStepKey.FACE_VERIFICATION,
     requiresVerification: true,
     verificationField: 'id_verification_status',
-    hasVerifiedFlag: true, // step_3_verified
     getStatusMessage: (verificationStatus?: string | null) => {
       if (verificationStatus === 'verified') {
         return 'ID verified successfully. You can proceed to face verification.';
@@ -174,8 +173,9 @@ export class RegistrationStepsHelper {
     stepNumber: number,
     registrationProgress: any,
   ): boolean {
-    const stepField = `step_${stepNumber}_completed`;
-    return registrationProgress[stepField] || false;
+    const stepField = `step_${stepNumber}_status`;
+    const status = registrationProgress[stepField];
+    return status === 'completed';
   }
 
   /**
@@ -188,16 +188,12 @@ export class RegistrationStepsHelper {
     const step = this.getStepByNumber(stepNumber);
     if (!step) return false;
 
-    // Check if step has a verified flag (e.g., step_3_verified)
-    if (step.hasVerifiedFlag) {
-      const verifiedField = `step_${stepNumber}_verified`;
-      return registrationProgress[verifiedField] || false;
-    }
-
-    // Check verification field (e.g., id_verification_status)
+    // Check verification field (e.g., id_verification_status, face_verification_status)
     if (step.verificationField) {
       const verificationStatus = registrationProgress[step.verificationField];
-      return verificationStatus === 'verified';
+      // Step is verified if both status is completed and verification is verified
+      const stepStatus = registrationProgress[`step_${stepNumber}_status`];
+      return stepStatus === 'completed' && verificationStatus === 'verified';
     }
 
     // For steps without verification, completed = verified
@@ -206,6 +202,7 @@ export class RegistrationStepsHelper {
 
   /**
    * Get verification status for a step
+   * Returns: 'verified', 'pending', 'failed', or null
    */
   static getVerificationStatus(
     stepNumber: number,
@@ -214,7 +211,19 @@ export class RegistrationStepsHelper {
     const step = this.getStepByNumber(stepNumber);
     if (!step || !step.verificationField) return null;
 
-    return registrationProgress[step.verificationField] || null;
+    const fieldValue = registrationProgress[step.verificationField];
+    
+    // Handle boolean fields (e.g., is_phone_verified)
+    if (typeof fieldValue === 'boolean') {
+      return fieldValue ? 'verified' : 'pending';
+    }
+    
+    // Handle string enum fields (e.g., id_verification_status, face_verification_status)
+    if (typeof fieldValue === 'string') {
+      return fieldValue; // 'verified', 'pending', 'failed'
+    }
+    
+    return null;
   }
 
   /**
@@ -302,8 +311,11 @@ export class RegistrationStepsHelper {
         registrationProgress,
       );
 
+      const stepStatus = registrationProgress[`step_${step.stepNumber}_status`] || 'not_started';
+      
       const stepData: any = {
         name: step.name,
+        status: stepStatus, // 'not_started', 'pending', or 'completed'
         completed: isCompleted,
         verified: isVerified,
       };
@@ -357,15 +369,21 @@ export class RegistrationStepsHelper {
   /**
    * Check if a step is pending verification
    * A step is pending if:
-   * - It requires verification
-   * - It is completed (submitted)
-   * - But it is not yet verified
-   * - And verification status is 'pending'
+   * - step_X_status === 'pending'
+   * OR
+   * - It requires verification, is completed, but verification status is 'pending'
    */
   static isStepPending(
     stepNumber: number,
     registrationProgress: any,
   ): boolean {
+    const stepStatus = registrationProgress[`step_${stepNumber}_status`];
+    
+    // If step status is explicitly 'pending', it's pending
+    if (stepStatus === 'pending') {
+      return true;
+    }
+
     const step = this.getStepByNumber(stepNumber);
     if (!step || !step.requiresVerification) {
       return false; // Steps without verification cannot be pending
@@ -378,7 +396,7 @@ export class RegistrationStepsHelper {
       registrationProgress,
     );
 
-    // Step is pending if: completed but not verified, and status is 'pending'
+    // Step is pending if: completed but not verified, and verification status is 'pending'
     return (
       isCompleted && !isVerified && verificationStatus === 'pending'
     );

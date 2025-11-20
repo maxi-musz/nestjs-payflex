@@ -111,17 +111,20 @@ All responses follow the `ApiResponseDto` format:
     "step_4_verification_status": null,
     "steps": {
       "step_1": {
+        "status": "completed",
         "completed": true,
         "verified": true,
         "name": "Phone Registration"
       },
       "step_2": {
+        "status": "completed",
         "completed": true,
         "verified": true,
         "name": "OTP Verification",
         "is_phone_verified": true
       },
       "step_3": {
+        "status": "pending",
         "completed": true,
         "verified": false,
         "name": "ID Information",
@@ -131,12 +134,19 @@ All responses follow the `ApiResponseDto` format:
         "verification_provider": "dojah"
       },
       "step_4": {
+        "status": "not_started",
         "completed": false,
         "verified": false,
         "name": "Face Verification",
         "verification_status": null
+      },
+      "step_5": {
+        "status": "not_started",
+        "completed": false,
+        "verified": false,
+        "name": "Residential Address"
       }
-      // ... other steps
+      // ... other steps follow same pattern
     },
     "registration_data": {
       "phone_number": "+2341234567890",
@@ -144,34 +154,108 @@ All responses follow the `ApiResponseDto` format:
       "created_at": "2025-01-15T10:30:00.000Z",
       "updated_at": "2025-01-15T10:30:00.000Z"
     },
-    "message": "ID verification is pending. Please wait for verification to complete."
+    "message": "ID verification is pending. Please wait for verification to complete.",
+    // OTP fields (only present when current_step === 2)
+    "otp_sent": true,
+    "otp_expires_in": 300
   }
 }
 ```
 
-**Key Fields for App Decision Making:**
-- `is_step_X_pending`: Boolean flag for each step (1-9) indicating if that step is pending verification
-- `step_X_verification_status`: Verification status for steps that require verification (2, 3, 4)
-- `can_proceed`: Whether user can proceed to next step
-- `current_step`: Current step number
-- `next_step`: Next step key
+**Note:** When `current_step === 2` (OTP Verification), the backend automatically sends an OTP if:
+- No OTP exists, OR
+- Existing OTP has expired
 
-**App Logic:**
+The response will include `otp_sent: true` and `otp_expires_in` (seconds remaining) so the app can display the countdown timer immediately.
+```
+
+**Key Fields for App Decision Making:**
+- `has_registration_progress`: **CRITICAL** - If `true`, user has existing registration - DO NOT redirect to step 1
+- `current_step`: Current step number (1-9) - Use this to determine which screen to show
+- `next_step`: Next step key - Where user should navigate after completing current step
+- `can_proceed`: Whether user can proceed to next step
+- `is_step_X_pending`: Boolean flag for each step (1-9) indicating if that step is pending verification
+- `step_X_verification_status`: Verification status for steps that require verification (2, 3, 4) - Values: `"verified"`, `"pending"`, `"failed"`, or `null`
+- `registration_completed`: If `false`, registration is still in progress - DO NOT treat as "no registration"
+
+**Step Status Values (NEW):**
+Each step in the `steps` object now includes a `status` field with one of three values:
+- `"not_started"`: Step has not been started yet (default state)
+- `"pending"`: Step has been submitted but is waiting for verification (e.g., ID verification pending)
+- `"completed"`: Step has been completed and verified (if verification is required)
+
+**Step Status Logic:**
+- Use `status` field to determine the visual state of each step in the UI
+- `status: "pending"` means show a "pending verification" screen
+- `status: "completed"` means step is done, user can proceed
+- `status: "not_started"` means step hasn't been started yet
+
+**⚠️ IMPORTANT App Logic:**
 ```typescript
-// Check if current step is pending
-if (response.data[`is_step_${response.data.current_step}_pending`]) {
-  // Show verification pending screen for current step
-  showVerificationPendingScreen(response.data.current_step);
-} else if (!response.data.can_proceed) {
-  // Show entry form for current step
-  showStepEntryForm(response.data.current_step);
+// CRITICAL: Check has_registration_progress FIRST
+if (response.data.has_registration_progress && !response.data.registration_completed) {
+  // User has existing registration in progress
+  const currentStep = response.data.current_step;
+  const stepData = response.data.steps[`step_${currentStep}`];
+  const stepStatus = stepData?.status; // 'not_started', 'pending', or 'completed'
+  const isPending = response.data[`is_step_${currentStep}_pending`];
+  
+  // Use step status to determine what to show
+  if (stepStatus === 'pending' || isPending) {
+    // Show verification pending screen for current step
+    showVerificationPendingScreen(currentStep);
+  } else if (stepStatus === 'not_started' || !response.data.can_proceed) {
+    // Show entry form for current step
+    showStepEntryForm(currentStep);
+  } else if (stepStatus === 'completed' && response.data.can_proceed) {
+    // Step completed, can proceed to next step
+    navigateToStep(response.data.next_step);
+  } else {
+    // Fallback: show entry form for current step
+    showStepEntryForm(currentStep);
+  }
+} else if (!response.data.has_registration_progress) {
+  // No registration found - start from step 1
+  navigateToStep('START_REGISTRATION');
 } else {
-  // Can proceed to next step
-  showStepEntryForm(response.data.next_step);
+  // Registration completed - show password screen
+  showPasswordScreen();
 }
 ```
 
+**Step Status Decision Tree:**
+```
+Check step status:
+├─ "not_started" → Show entry form for this step
+├─ "pending" → Show verification pending screen
+└─ "completed" → 
+    ├─ can_proceed: true → Navigate to next_step
+    └─ can_proceed: false → Show entry form (shouldn't happen, but handle gracefully)
+```
+
+**Common App Mistakes to Avoid:**
+1. ❌ **DON'T** redirect to step 1 just because `registration_completed: false`
+2. ❌ **DON'T** ignore `has_registration_progress: true`
+3. ❌ **DON'T** use only `completed` boolean - use `status` field instead
+4. ✅ **DO** check `has_registration_progress` first
+5. ✅ **DO** use `current_step` to determine which screen to show
+6. ✅ **DO** check `status` field in `steps.step_X` object for step state
+7. ✅ **DO** check `is_step_X_pending` as a fallback for pending detection
+8. ✅ **DO** use `status: "pending"` to show verification pending screens
+9. ✅ **DO** use `status: "completed"` + `can_proceed` to navigate to next step
+
 **App Action:** Show the appropriate registration step screen based on `current_step` and `next_step`
+
+**Auto-OTP Feature:**
+When `current_step === 2` (OTP Verification), the backend automatically:
+- Checks if OTP exists and is valid
+- If no OTP or expired, automatically generates and sends a new OTP
+- Returns `otp_sent: true` and `otp_expires_in` in the response
+
+**App should:**
+- Display the OTP countdown timer immediately using `otp_expires_in`
+- No need to call "resend OTP" endpoint - OTP is already sent
+- User can still manually resend if needed (respects rate limiting)
 
 ---
 
@@ -570,6 +654,70 @@ Both endpoints require the following security headers (enforced by `SecurityHead
 - `x-request-id`: Unique request identifier
 - `x-timestamp`: Request timestamp
 - `x-signature`: Request signature (if applicable)
+
+---
+
+## Step Status System
+
+### Understanding Step Status
+
+Each registration step now has a `status` field that indicates its current state:
+
+| Status | Meaning | App Action |
+|--------|---------|------------|
+| `"not_started"` | Step hasn't been started yet | Show entry form for this step |
+| `"pending"` | Step submitted, waiting for verification | Show "verification pending" screen |
+| `"completed"` | Step completed and verified (if required) | User can proceed to next step |
+
+### Step Status Examples
+
+**Example 1: Step 3 (ID Information) - Pending Verification**
+```json
+{
+  "step_3": {
+    "status": "pending",
+    "completed": true,
+    "verified": false,
+    "name": "ID Information",
+    "verification_status": "pending"
+  }
+}
+```
+**App should:** Show "ID verification pending" screen with message to wait
+
+**Example 2: Step 3 (ID Information) - Completed**
+```json
+{
+  "step_3": {
+    "status": "completed",
+    "completed": true,
+    "verified": true,
+    "name": "ID Information",
+    "verification_status": "verified"
+  }
+}
+```
+**App should:** Allow user to proceed to step 4 (Face Verification)
+
+**Example 3: Step 4 (Face Verification) - Not Started**
+```json
+{
+  "step_4": {
+    "status": "not_started",
+    "completed": false,
+    "verified": false,
+    "name": "Face Verification"
+  }
+}
+```
+**App should:** Show face verification entry form
+
+### Migration from Old System
+
+If you were using the old boolean `completed` field:
+- ✅ **Use `status` field instead** - it's more descriptive
+- ✅ **Keep `completed` boolean for backward compatibility** - but prefer `status`
+- ✅ **Use `status: "pending"`** instead of checking `completed: true && verified: false`
 
 ---
 

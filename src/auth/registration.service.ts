@@ -130,11 +130,11 @@ export class RegistrationService {
           let nextStep = 'OTP_VERIFICATION';
           let message = 'Please continue your registration.';
 
-          if (existingRegistration.current_step === 2 && existingRegistration.step_2_completed) {
+          if (existingRegistration.current_step === 2 && existingRegistration.step_2_status === 'completed') {
             // Step 2 (OTP) completed, proceed to Step 3 (ID Information)
             nextStep = 'ID_INFORMATION';
             message = 'Please provide your ID information (BVN or NIN) to continue.';
-          } else if (existingRegistration.current_step === 3 && existingRegistration.step_3_completed) {
+          } else if (existingRegistration.current_step === 3 && existingRegistration.step_3_status === 'completed') {
             // Step 3 completed, proceed to Step 4
             nextStep = 'PERSONAL_INFORMATION';
             message = 'Please provide your personal information to continue.';
@@ -304,7 +304,7 @@ export class RegistrationService {
     const registrationProgress = await this.prisma.registrationProgress.upsert({
       where: { phone_number: phoneNumber },
       update: {
-        step_1_completed: true,
+        step_1_status: 'completed',
         current_step: 1,
         referral_code: referralCode || null,
         device_metadata: deviceMetadata,
@@ -316,7 +316,7 @@ export class RegistrationService {
         phone_number: phoneNumber,
         current_step: 1,
         total_steps: 9,
-        step_1_completed: true,
+        step_1_status: 'completed',
         referral_code: referralCode || null,
         device_metadata: deviceMetadata,
         registration_data: registrationData,
@@ -588,7 +588,7 @@ export class RegistrationService {
         where: { phone_number: formattedPhone },
         data: {
           is_phone_verified: true,
-          step_2_completed: true,
+          step_2_status: 'completed',
           current_step: 2,
           otp: null, // Clear OTP after successful verification
           otp_expires_at: null,
@@ -630,208 +630,10 @@ export class RegistrationService {
     }
   }
 
-  /**
-   * Submit ID Information (Step 3)
-   * User submits BVN or NIN for verification
-   */
-  async submitIdInformation(
-    dto: SubmitIdInformationDto,
-    headers: any,
-    ipAddress: string,
-  ): Promise<ApiResponseDto<any>> {
-    this.logger.log(
-      colors.cyan(
-        `Submitting ID information for ${dto.phone_number}. Type: ${dto.id_type}`,
-      ),
-    );
-
-    try {
-      // 1. Format and validate phone number
-      const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
-      this.logger.log(colors.cyan(`Formatted phone number: ${formattedPhone}`));
-      if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
-        return new ApiResponseDto(false, 'Phone number must be in E.164 format (+234XXXXXXXXXX)', null);
-      }
-
-      // Note: Security headers are now handled by SecurityHeadersGuard at controller level
-
-      // 2. Find registration progress
-      const registrationProgress = await this.prisma.registrationProgress.findUnique({
-        where: { phone_number: formattedPhone },
-      });
-
-      if (!registrationProgress) {
-        return new ApiResponseDto(false, 'No active registration found. Please start registration first.', null);
-      }
-
-      if (registrationProgress.is_complete) {
-        return new ApiResponseDto(false, 'Registration already completed. Please login instead.', null);
-      }
-
-      // 3. Validate session_id if provided
-      if (dto.session_id && dto.session_id !== registrationProgress.id) {
-        return new ApiResponseDto(false, 'Session ID does not match phone number. Please use the correct session.', null);
-      }
-
-      // 4. Check if Step 2 (phone verification) is completed
-      if (!registrationProgress.is_phone_verified || !registrationProgress.step_2_completed) {
-        return new ApiResponseDto(false, 'Please verify your phone number first before submitting ID information.', null);
-      }
-
-      // 5. Normalize ID type (uppercase)
-      const idType = dto.id_type.toUpperCase() as 'BVN' | 'NIN';
-
-      // 6. Format and validate ID number
-      const formattedIdNumber = IdValidator.formatIdNumber(dto.id_number);
-      IdValidator.validateIdNumber(idType, formattedIdNumber);
-
-      // 7. Check if this BVN/NIN already exists in the database
-      await this.checkIdNumberExists(idType, formattedIdNumber, formattedPhone);
-
-      // 8. Check if user already submitted ID information in this registration
-      const existingRegistrationData = registrationProgress.registration_data as any;
-      if (
-        existingRegistrationData?.id_type &&
-        existingRegistrationData?.id_number &&
-        existingRegistrationData.id_number === formattedIdNumber
-      ) {
-        // Same ID already submitted - return success (idempotent)
-        this.logger.log(
-          colors.yellow(
-            `ID information already submitted for ${formattedPhone}. Returning existing data.`,
-          ),
-        );
-
-        return new ApiResponseDto(true, 'ID information already submitted', {
-          session_id: registrationProgress.id,
-          step: 3,
-          next_step: 'FACE_VERIFICATION',
-          id_type: existingRegistrationData.id_type,
-          id_verification_status: registrationProgress.id_verification_status || 'pending',
-          can_proceed: registrationProgress.step_3_verified || false,
-          message: registrationProgress.step_3_verified
-            ? 'ID verification completed. You can proceed to face verification.'
-            : 'ID verification is pending. Please wait for verification to complete.',
-        });
-      }
-
-      // 9. Perform KYC verification using configured provider
-      let verificationResult;
-      let verificationStatus: 'pending' | 'verified' | 'failed' = 'pending';
-      let canProceed = false;
-
-      if (idType === 'NIN') {
-        verificationResult = await this.kycService.verifyNIN(formattedIdNumber);
-      } else if (idType === 'BVN') {
-        verificationResult = await this.kycService.verifyBVN(formattedIdNumber);
-      } else {
-        throw new BadRequestException(`Unsupported ID type: ${idType}. Only NIN and BVN are supported.`);
-      }
-
-      // Determine verification status
-      if (verificationResult.success && verificationResult.verified) {
-        verificationStatus = 'verified';
-        canProceed = true;
-        this.logger.log(
-          colors.green(
-            `${idType} verification successful for ${formattedPhone}. Provider: ${this.kycService.getProviderName()}`,
-          ),
-        );
-      } else if (verificationResult.success && !verificationResult.verified) {
-        // Provider returned success but verification is pending (e.g., "none" provider in test mode)
-        verificationStatus = 'pending';
-        canProceed = false;
-        this.logger.log(
-          colors.yellow(
-            `${idType} verification pending for ${formattedPhone}. Provider: ${this.kycService.getProviderName()}`,
-          ),
-        );
-      } else {
-        verificationStatus = 'failed';
-        canProceed = false;
-        this.logger.error(
-          colors.red(
-            `${idType} verification failed for ${formattedPhone}: ${verificationResult.error}`,
-          ),
-        );
-      }
-
-      // 10. Update registration progress with ID information and verification result
-      const updatedRegistrationData = {
-        ...existingRegistrationData,
-        id_type: idType,
-        id_number: formattedIdNumber,
-        id_submitted_at: new Date().toISOString(),
-        verification_result: verificationResult,
-        verification_provider: this.kycService.getProviderName(),
-      };
-
-      await this.prisma.registrationProgress.update({
-        where: { phone_number: formattedPhone },
-        data: {
-          step_3_completed: true,
-          step_3_verified: verificationStatus === 'verified',
-          current_step: 3,
-          registration_data: updatedRegistrationData,
-          id_verification_status: verificationStatus,
-          updatedAt: new Date(),
-        },
-      });
-
-      this.logger.log(
-        colors.magenta(
-          `ID information submitted successfully for ${formattedPhone}. Type: ${idType}, Number: ${formattedIdNumber.substring(0, 3)}***${formattedIdNumber.substring(8)}, Status: ${verificationStatus}`,
-        ),
-      );
-
-      // 11. Prepare response based on verification status
-      let message = '';
-      if (verificationStatus === 'verified') {
-        message = `${idType} verified successfully. You can proceed to face verification.`;
-      } else if (verificationStatus === 'pending') {
-        message = `${idType} submitted. Verification is in progress. You will be notified when verification is complete.`;
-      } else {
-        message = `${idType} verification failed: ${verificationResult.error || 'Unknown error'}. Please check your ${idType} and try again.`;
-      }
-
-      return new ApiResponseDto(
-        verificationStatus !== 'failed',
-        message,
-        {
-          session_id: registrationProgress.id,
-          step: 3,
-          next_step: verificationStatus === 'verified' ? 'FACE_VERIFICATION' : 'ID_INFORMATION',
-          id_type: idType,
-          id_verification_status: verificationStatus,
-          can_proceed: canProceed,
-          verification_provider: this.kycService.getProviderName(),
-          verification_data: verificationResult.data || null,
-        },
-      );
-    } catch (error) {
-      this.logger.error(
-        colors.red(`ID information submission error: ${error.message}`),
-        error.stack,
-      );
-
-      if (
-        error instanceof BadRequestException ||
-        error instanceof ConflictException
-      ) {
-        throw error;
-      }
-
-      throw new HttpException(
-        error.message || 'Failed to submit ID information',
-        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  /**
+   /**
    * Check if BVN or NIN already exists in the database
    */
-  private async checkIdNumberExists(
+   private async checkIdNumberExists(
     idType: 'BVN' | 'NIN',
     idNumber: string,
     currentPhoneNumber: string,
@@ -970,6 +772,211 @@ export class RegistrationService {
       throw error;
     }
   }
+
+  /**
+   * Submit ID Information (Step 3)
+   * User submits BVN or NIN for verification
+   */
+  async submitIdInformation(
+    dto: SubmitIdInformationDto,
+    headers: any,
+    ipAddress: string,
+  ): Promise<ApiResponseDto<any>> {
+    this.logger.log(
+      colors.cyan(
+        `Submitting ID information for ${dto.phone_number}. Type: ${dto.id_type}`,
+      ),
+    );
+
+    try {
+      // 1. Format and validate phone number
+      const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
+      this.logger.log(colors.cyan(`Formatted phone number: ${formattedPhone}`));
+      if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
+        return new ApiResponseDto(false, 'Phone number must be in E.164 format (+234XXXXXXXXXX)', null);
+      }
+
+      // Note: Security headers are now handled by SecurityHeadersGuard at controller level
+
+      // 2. Find registration progress
+      const registrationProgress = await this.prisma.registrationProgress.findUnique({
+        where: { phone_number: formattedPhone },
+      });
+
+      if (!registrationProgress) {
+        return new ApiResponseDto(false, 'No active registration found. Please start registration first.', null);
+      }
+
+      if (registrationProgress.is_complete) {
+        return new ApiResponseDto(false, 'Registration already completed. Please login instead.', null);
+      }
+
+      // 3. Validate session_id if provided
+      if (dto.session_id && dto.session_id !== registrationProgress.id) {
+        return new ApiResponseDto(false, 'Session ID does not match phone number. Please use the correct session.', null);
+      }
+
+      // 4. Check if Step 2 (phone verification) is completed
+      if (!registrationProgress.is_phone_verified || registrationProgress.step_2_status !== 'completed') {
+        return new ApiResponseDto(false, 'Please verify your phone number first before submitting ID information.', null);
+      }
+
+      // 5. Normalize ID type (uppercase)
+      const idType = dto.id_type.toUpperCase() as 'BVN' | 'NIN';
+
+      // 6. Format and validate ID number
+      const formattedIdNumber = IdValidator.formatIdNumber(dto.id_number);
+      IdValidator.validateIdNumber(idType, formattedIdNumber);
+
+      // 7. Check if this BVN/NIN already exists in the database
+      await this.checkIdNumberExists(idType, formattedIdNumber, formattedPhone);
+
+      // 8. Check if user already submitted ID information in this registration
+      const existingRegistrationData = registrationProgress.registration_data as any;
+      if (
+        existingRegistrationData?.id_type &&
+        existingRegistrationData?.id_number &&
+        existingRegistrationData.id_number === formattedIdNumber
+      ) {
+        // Same ID already submitted - return success (idempotent)
+        this.logger.log(
+          colors.yellow(
+            `ID information already submitted for ${formattedPhone}. Returning existing data.`,
+          ),
+        );
+
+        return new ApiResponseDto(true, 'ID information already submitted', {
+          session_id: registrationProgress.id,
+          step: 3,
+          next_step: 'FACE_VERIFICATION',
+          id_type: existingRegistrationData.id_type,
+          id_verification_status: registrationProgress.id_verification_status || 'pending',
+          can_proceed: registrationProgress.step_3_status === 'completed' && registrationProgress.id_verification_status === 'verified',
+          message: registrationProgress.step_3_status === 'completed' && registrationProgress.id_verification_status === 'verified'
+            ? 'ID verification completed. You can proceed to face verification.'
+            : 'ID verification is pending. Please wait for verification to complete.',
+        });
+      }
+
+      // 9. Perform KYC verification using configured provider
+      let verificationResult;
+      let verificationStatus: 'pending' | 'verified' | 'failed' = 'pending';
+      let canProceed = false;
+
+      if (idType === 'NIN') {
+        verificationResult = await this.kycService.verifyNIN(formattedIdNumber);
+      } else if (idType === 'BVN') {
+        verificationResult = await this.kycService.verifyBVN(formattedIdNumber);
+      } else {
+        throw new BadRequestException(`Unsupported ID type: ${idType}. Only NIN and BVN are supported.`);
+      }
+
+      // Determine verification status
+      if (verificationResult.success && verificationResult.verified) {
+        verificationStatus = 'verified';
+        canProceed = true;
+        this.logger.log(
+          colors.green(
+            `${idType} verification successful for ${formattedPhone}. Provider: ${this.kycService.getProviderName()}`,
+          ),
+        );
+      } else if (verificationResult.success && !verificationResult.verified) {
+        // Provider returned success but verification is pending (e.g., "none" provider in test mode)
+        verificationStatus = 'pending';
+        canProceed = false;
+        this.logger.log(
+          colors.yellow(
+            `${idType} verification pending for ${formattedPhone}. Provider: ${this.kycService.getProviderName()}`,
+          ),
+        );
+      } else {
+        verificationStatus = 'failed';
+        canProceed = false;
+        this.logger.error(
+          colors.red(
+            `${idType} verification failed for ${formattedPhone}: ${verificationResult.error}`,
+          ),
+        );
+      }
+
+      // 10. Update registration progress with ID information and verification result
+      const updatedRegistrationData = {
+        ...existingRegistrationData,
+        id_type: idType,
+        id_number: formattedIdNumber,
+        id_submitted_at: new Date().toISOString(),
+        verification_result: verificationResult,
+        verification_provider: this.kycService.getProviderName(),
+      };
+
+      // Determine step 3 status based on verification result
+      let step3Status: 'completed' | 'pending' = 'completed';
+      if (verificationStatus === 'pending') {
+        step3Status = 'pending';
+      }
+
+      await this.prisma.registrationProgress.update({
+        where: { phone_number: formattedPhone },
+        data: {
+          step_3_status: step3Status,
+          current_step: 3,
+          registration_data: updatedRegistrationData,
+          id_verification_status: verificationStatus,
+          updatedAt: new Date(),
+        },
+      });
+
+      this.logger.log(
+        colors.magenta(
+          `ID information submitted successfully for ${formattedPhone}. Type: ${idType}, Number: ${formattedIdNumber.substring(0, 3)}***${formattedIdNumber.substring(8)}, Status: ${verificationStatus}`,
+        ),
+      );
+
+      // 11. Prepare response based on verification status
+      let message = '';
+      if (verificationStatus === 'verified') {
+        message = `${idType} verified successfully. You can proceed to face verification.`;
+      } else if (verificationStatus === 'pending') {
+        message = `${idType} submitted. Verification is in progress. You will be notified when verification is complete.`;
+      } else {
+        message = `${idType} verification failed: ${verificationResult.error || 'Unknown error'}. Please check your ${idType} and try again.`;
+      }
+
+      return new ApiResponseDto(
+        verificationStatus !== 'failed',
+        message,
+        {
+          session_id: registrationProgress.id,
+          step: 3,
+          next_step: verificationStatus === 'verified' ? 'FACE_VERIFICATION' : 'ID_INFORMATION',
+          id_type: idType,
+          id_verification_status: verificationStatus,
+          can_proceed: canProceed,
+          verification_provider: this.kycService.getProviderName(),
+          verification_data: verificationResult.data || null,
+        },
+      );
+    } catch (error) {
+      this.logger.error(
+        colors.red(`ID information submission error: ${error.message}`),
+        error.stack,
+      );
+
+      if (
+        error instanceof BadRequestException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+
+      throw new HttpException(
+        error.message || 'Failed to submit ID information',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  
 
 }
 

@@ -14,6 +14,7 @@ import { RegistrationStepsHelper } from './helpers/registration-steps.config';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { DeviceTrackerService } from './helpers/device-tracker.service';
+import { OtpService } from './helpers/otp.service';
 import * as argon from 'argon2';
 import * as colors from 'colors';
 import { formatDate } from 'src/common/helper_functions/formatter';
@@ -32,6 +33,7 @@ export class LoginService {
     private jwt: JwtService,
     private config: ConfigService,
     private deviceTracker: DeviceTrackerService,
+    private otpService: OtpService,
   ) {}
 
   /**
@@ -135,7 +137,7 @@ export class LoginService {
       }
 
       // 2. Check RegistrationProgress first (this is the source of truth)
-      const registrationProgress = await this.prisma.registrationProgress.findUnique({
+      let registrationProgress = await this.prisma.registrationProgress.findUnique({
         where: { phone_number: formattedPhone },
       });
 
@@ -166,13 +168,84 @@ export class LoginService {
           ),
         );
 
+        // Use centralized step helper to find current step
+        const currentStepInfo = RegistrationStepsHelper.findCurrentStep(
+          registrationProgress,
+        );
+
+        // Auto-send OTP if:
+        // 1. User is on step 2 (OTP verification), OR
+        // 2. User is on step 1 and next step is OTP_VERIFICATION (ready to verify)
+        // And phone is not verified yet
+        // Check step status to see if step 2 is not_started (needs OTP)
+        // Handle both old schema (step_2_completed) and new schema (step_2_status)
+        const step2Status = registrationProgress.step_2_status;
+        const step2Completed = (registrationProgress as any).step_2_completed;
+        const isStep2Done = step2Status === 'completed' || step2Completed === true;
+        
+        const isOnStep1ReadyForOTP = currentStepInfo.stepNumber === 1 && 
+          (currentStepInfo.nextStep === 'OTP_VERIFICATION' || currentStepInfo.stepKey === 'OTP_VERIFICATION');
+        const isOnStep2 = currentStepInfo.stepNumber === 2;
+        
+        // Auto-send OTP logic:
+        // 1. If on step 1 and next is OTP_VERIFICATION: send OTP if step 2 is not completed
+        //    (Step status is source of truth, ignore is_phone_verified flag)
+        // 2. If on step 2: send OTP if phone not verified and step 2 not completed
+        // The step status system takes precedence over is_phone_verified flag
+        const shouldAutoSendOTP = 
+          (isOnStep1ReadyForOTP && !isStep2Done) || // Step 1 → OTP: send if step 2 not done (ignore is_phone_verified)
+          (isOnStep2 && !registrationProgress.is_phone_verified && !isStep2Done); // Step 2: send if not verified and not done
+        
+        this.logger.log(
+          colors.cyan(
+            `OTP auto-send check: step=${currentStepInfo.stepNumber}, nextStep=${currentStepInfo.nextStep}, stepKey=${currentStepInfo.stepKey}, is_phone_verified=${registrationProgress.is_phone_verified}, step2Status=${step2Status}, step2Completed=${step2Completed}, isStep2Done=${isStep2Done}, isOnStep1ReadyForOTP=${isOnStep1ReadyForOTP}, shouldAutoSend=${shouldAutoSendOTP}`,
+          ),
+        );
+        
+        if (shouldAutoSendOTP) {
+          const hasValidOTP = registrationProgress.otp && 
+            registrationProgress.otp_expires_at && 
+            new Date(registrationProgress.otp_expires_at) > new Date();
+          
+          if (!hasValidOTP) {
+            this.logger.log(
+              colors.cyan(
+                `Auto-sending OTP for ${formattedPhone} (user on step ${currentStepInfo.stepNumber}, next: ${currentStepInfo.nextStep}, OTP missing or expired)`,
+              ),
+            );
+            try {
+              // Automatically generate and send OTP
+              await this.otpService.generateAndSendOTP(formattedPhone);
+              this.logger.log(
+                colors.green(`OTP auto-sent successfully for ${formattedPhone}`),
+              );
+              
+              // Refresh registration progress to get updated OTP expiry
+              const updatedProgress = await this.prisma.registrationProgress.findUnique({
+                where: { phone_number: formattedPhone },
+              });
+              if (updatedProgress) {
+                registrationProgress = updatedProgress;
+              }
+            } catch (error) {
+              // Log error but don't fail the request - user can still resend OTP manually
+              this.logger.error(
+                colors.yellow(
+                  `Failed to auto-send OTP for ${formattedPhone}: ${error.message}`,
+                ),
+              );
+            }
+          } else {
+            this.logger.log(
+              colors.blue(
+                `Valid OTP already exists for ${formattedPhone}, skipping auto-send`,
+              ),
+            );
+          }
+        }
+
         // Return registration progress status (same format as registration service)
       const regData = registrationProgress.registration_data as any;
-
-      // Use centralized step helper to find current step
-      const currentStepInfo = RegistrationStepsHelper.findCurrentStep(
-        registrationProgress,
-      );
 
       // Build steps object using helper
       const steps = RegistrationStepsHelper.buildStepsObject(
@@ -242,6 +315,14 @@ export class LoginService {
             updated_at: registrationProgress.updatedAt,
           },
           message: statusMessage,
+          // Include OTP info if on step 1 (next is OTP) or step 2 (OTP verification)
+          ...((currentStepInfo.stepNumber === 1 && currentStepInfo.nextStep === 'OTP_VERIFICATION') || 
+              currentStepInfo.stepNumber === 2) && {
+            otp_sent: !!registrationProgress.otp,
+            otp_expires_in: registrationProgress.otp_expires_at
+              ? Math.max(0, Math.floor((new Date(registrationProgress.otp_expires_at).getTime() - Date.now()) / 1000))
+              : this.otpService.getOTPExpirySeconds(),
+          },
         };
 
       this.logger.log(
