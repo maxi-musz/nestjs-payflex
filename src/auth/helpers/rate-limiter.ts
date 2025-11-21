@@ -13,16 +13,26 @@ export class RegistrationRateLimiter {
   constructor(private prisma: PrismaService) {}
 
   /**
-   * Get rate limit configuration from environment
+   * Get global rate limit configuration from environment
+   * Simple: X requests per Y seconds globally
+   * 
+   * Environment variables:
+   * - GLOBAL_RATE_LIMIT_REQUESTS: Max requests allowed (default: 10)
+   * - GLOBAL_RATE_LIMIT_WINDOW_SECONDS: Time window in seconds (default: 60 = 1 minute)
+   * 
+   * Example: GLOBAL_RATE_LIMIT_REQUESTS=10, GLOBAL_RATE_LIMIT_WINDOW_SECONDS=60
+   * Means: 10 requests per 60 seconds (10 requests per minute)
    */
   private getRateLimitConfig() {
-    const windowMs = process.env.REGISTRATION_RATE_LIMIT_WINDOW_MS
-      ? parseInt(process.env.REGISTRATION_RATE_LIMIT_WINDOW_MS, 10)
-      : 60 * 60 * 1000; // Default: 1 hour
+    const maxRequests = process.env.GLOBAL_RATE_LIMIT_REQUESTS
+      ? parseInt(process.env.GLOBAL_RATE_LIMIT_REQUESTS, 10)
+      : 10; // Default: 10 requests
 
-    const maxRequests = process.env.REGISTRATION_MAX_REQUESTS_PER_HOUR
-      ? parseInt(process.env.REGISTRATION_MAX_REQUESTS_PER_HOUR, 10)
-      : 3; // Default: 3 requests per hour
+    const windowSeconds = process.env.GLOBAL_RATE_LIMIT_WINDOW_SECONDS
+      ? parseInt(process.env.GLOBAL_RATE_LIMIT_WINDOW_SECONDS, 10)
+      : 60; // Default: 60 seconds (1 minute)
+
+    const windowMs = windowSeconds * 1000;
 
     return { windowMs, maxRequests };
   }
@@ -77,15 +87,14 @@ export class RegistrationRateLimiter {
 
   /**
    * Check if IP address has exceeded rate limit
+   * Uses global rate limit configuration
    */
   async checkIPRateLimit(ipAddress: string): Promise<{
     allowed: boolean;
     remaining: number;
     resetAt: number;
   }> {
-    
-    const windowMs = 60 * 60 * 1000; // 1 hour
-    const maxRequests = 10; // 10 requests per hour per IP
+    const { windowMs, maxRequests } = this.getRateLimitConfig();
     const key = `ip:${ipAddress}`;
     const now = Date.now();
     const entry = this.rateLimitStore.get(key);
@@ -125,6 +134,7 @@ export class RegistrationRateLimiter {
 
   /**
    * Check if device has exceeded rate limit
+   * Uses global rate limit configuration
    */
   async checkDeviceRateLimit(deviceId: string): Promise<{
     allowed: boolean;
@@ -132,8 +142,7 @@ export class RegistrationRateLimiter {
     resetAt: number;
   }> {
     this.logger.log(`Checking device rate limit for ${deviceId}`);
-    const windowMs = 60 * 60 * 1000; // 1 hour
-    const maxRequests = 5; // 5 requests per hour per device
+    const { windowMs, maxRequests } = this.getRateLimitConfig();
     const key = `device:${deviceId}`;
     const now = Date.now();
     const entry = this.rateLimitStore.get(key);

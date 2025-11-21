@@ -192,5 +192,124 @@ export class DeviceTrackerService {
       );
     }
   }
+
+  /**
+   * List all devices (sessions) for a user
+   * Returns all devices with their status, location, and last login time
+   */
+  async getUserDevices(userId: string): Promise<any[]> {
+    try {
+      this.logger.log(`Fetching devices for user ${userId}`);
+
+      const devices = await this.prisma.userDevice.findMany({
+        where: { user_id: userId },
+        orderBy: { last_seen_at: 'desc' }, // Most recently used first
+        select: {
+          id: true,
+          device_id: true,
+          device_name: true,
+          device_model: true,
+          platform: true,
+          os_name: true,
+          os_version: true,
+          app_version: true,
+          is_active: true,
+          is_restricted: true,
+          is_current_device: true,
+          last_ip_address: true,
+          last_location: true,
+          first_seen_at: true,
+          last_seen_at: true,
+          restricted_at: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      this.logger.log(`Found ${devices.length} device(s) for user ${userId}`);
+
+      return devices;
+    } catch (error) {
+      this.logger.error(
+        `Error fetching devices for user ${userId}: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Delete/restrict a device (session) for a user
+   * Sets is_active = false and is_restricted = true
+   * Optionally can be used to completely delete the device record
+   */
+  async deleteUserDevice(
+    userId: string,
+    deviceId: string,
+    hardDelete: boolean = false,
+  ): Promise<void> {
+    try {
+      this.logger.log(
+        `Deleting device ${deviceId} for user ${userId}. Hard delete: ${hardDelete}`,
+      );
+
+      // First, verify the device belongs to the user
+      const device = await this.prisma.userDevice.findUnique({
+        where: {
+          user_id_device_id: {
+            user_id: userId,
+            device_id: deviceId,
+          },
+        },
+      });
+
+      if (!device) {
+        throw new Error(`Device ${deviceId} not found for user ${userId}`);
+      }
+
+      if (hardDelete) {
+        // Permanently delete the device record
+        await this.prisma.userDevice.delete({
+          where: {
+            user_id_device_id: {
+              user_id: userId,
+              device_id: deviceId,
+            },
+          },
+        });
+
+        this.logger.log(
+          `Device ${deviceId} permanently deleted for user ${userId}`,
+        );
+      } else {
+        // Soft delete: Mark as inactive and restricted
+        await this.prisma.userDevice.update({
+          where: {
+            user_id_device_id: {
+              user_id: userId,
+              device_id: deviceId,
+            },
+          },
+          data: {
+            is_active: false,
+            is_restricted: true,
+            is_current_device: false,
+            restricted_at: new Date(),
+            updatedAt: new Date(),
+          },
+        });
+
+        this.logger.log(
+          `Device ${deviceId} deactivated and restricted for user ${userId}`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error deleting device ${deviceId} for user ${userId}: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
 }
 

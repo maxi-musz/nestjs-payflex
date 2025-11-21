@@ -217,6 +217,31 @@ export class VerifyPasswordDto {
   device_metadata?: DeviceMetadataDto;
 }
 
+export class VerifyLoginPasswordDto {
+  @IsEmail()
+  @IsOptional()
+  @ValidateIf((o) => !o.phone_number)
+  email?: string;
+
+  @IsString()
+  @IsOptional()
+  @ValidateIf((o) => !o.email)
+  @Matches(/^\+234[0-9]{10}$/, {
+    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  })
+  phone_number?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(6)
+  password: string;
+
+  @ValidateNested()
+  @Type(() => DeviceMetadataDto)
+  @IsOptional()
+  device_metadata?: DeviceMetadataDto;
+}
+
 export class AddressDto {
   @IsString()
   @IsNotEmpty()

@@ -5,9 +5,9 @@ import { RegistrationService } from "./registration.service";
 import { LoginService } from "./login.service";
 import * as colors from "colors";
 import { Request } from 'express';
-import { DeviceMetadataDto, ResendOtpDto, VerifyOtpDto, SubmitIdInformationDto, CheckLoginStatusDto, VerifyPasswordDto, SubmitResidentialAddressDto, SubmitPepDeclarationDto, SubmitIncomeDeclarationDto, SubmitPasswordSetupDto } from "./dto/registration.dto";
+import { DeviceMetadataDto, ResendOtpDto, VerifyOtpDto, SubmitIdInformationDto, CheckLoginStatusDto, VerifyPasswordDto, VerifyLoginPasswordDto, SubmitResidentialAddressDto, SubmitPepDeclarationDto, SubmitIncomeDeclarationDto, SubmitPasswordSetupDto } from "./dto/registration.dto";
 import { SecurityHeadersGuard } from "src/common/guards/security-headers.guard";
-import { RateLimitGuard, RateLimit } from "src/common/guards/rate-limit.guard";
+import { RateLimitGuard } from "src/common/guards/rate-limit.guard";
 
 @Controller('auth')
 export class AuthController{
@@ -121,7 +121,6 @@ export class AuthController{
     // new
     @Post('register/start')
     @UseGuards(SecurityHeadersGuard, RateLimitGuard)
-    @RateLimit({ phoneLimit: 3, ipLimit: 10, deviceLimit: 5 })
     async startRegistration(
         @Body() dto: StartRegistrationDto,
         @Headers() headers: any,
@@ -146,7 +145,6 @@ export class AuthController{
     // new
     @Post('register/resend-otp')
     @UseGuards(SecurityHeadersGuard, RateLimitGuard)
-    @RateLimit({ phoneLimit: 3, ipLimit: 10, deviceLimit: 5 })
     async resendOTP(
         @Body() dto: ResendOtpDto,
         @Headers() headers: any,
@@ -306,7 +304,7 @@ export class AuthController{
 
     // new
     @Post('check-login-status')
-    @UseGuards(SecurityHeadersGuard)
+    @UseGuards(SecurityHeadersGuard, RateLimitGuard)
     async checkLoginStatus(
         @Body() dto: CheckLoginStatusDto,
     ) {
@@ -337,6 +335,29 @@ export class AuthController{
             );
         } catch (error) {
             this.logger.error(colors.red("Error in verify password:"), error);
+            throw error;
+        }
+    }
+
+    @Post('verify-login-password')
+    @UseGuards(SecurityHeadersGuard, RateLimitGuard)
+    async verifyLoginPassword(
+        @Body() dto: VerifyLoginPasswordDto,
+        @Headers() headers: any,
+        @Ip() ipAddress: string,
+        @Req() req: Request,
+    ) {
+        try {
+            const clientIp = req.ip || ipAddress || req.socket.remoteAddress || 'unknown';
+            const deviceMetadata = this.extractDeviceMetadata(headers, dto);
+            
+            return await this.loginService.verifyLoginPassword(
+                dto,
+                deviceMetadata,
+                clientIp,
+            );
+        } catch (error) {
+            this.logger.error(colors.red("Error in verify login password:"), error);
             throw error;
         }
     }

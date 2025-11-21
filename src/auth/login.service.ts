@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
-import { CheckLoginStatusDto, VerifyPasswordDto } from './dto/registration.dto';
+import { CheckLoginStatusDto, VerifyPasswordDto, VerifyLoginPasswordDto } from './dto/registration.dto';
 import { PhoneValidator } from './helpers/phone.validator';
 import { RegistrationStepsHelper } from './helpers/registration-steps.config';
 import { JwtService } from '@nestjs/jwt';
@@ -670,6 +670,279 @@ export class LoginService {
 
       throw new HttpException(
         error.message || 'Failed to verify password',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Verify Password for Login
+   * Similar to signin in auth.service.ts but accepts phone_number OR email
+   * Used after user enters phone/email and needs to verify password to complete login
+   */
+  async verifyLoginPassword(
+    dto: VerifyLoginPasswordDto,
+    deviceMetadata?: any,
+    ipAddress?: string,
+  ): Promise<ApiResponseDto<any>> {
+    // Validate that at least one identifier is provided
+    if (!dto.email && !dto.phone_number) {
+      throw new BadRequestException(
+        'Either email or phone_number must be provided',
+      );
+    }
+
+    const identifier = dto.email || dto.phone_number;
+    this.logger.log(
+      colors.cyan(`Verifying login password for ${identifier}...`),
+    );
+
+    try {
+      // 1. Get max password trial from config (default: 3)
+      const maxPasswordTrial = parseInt(
+        this.config.get('MAX_PASSWORD_TRIAL') || '3',
+        10,
+      );
+      const passwordAttemptWindow = parseInt(
+        this.config.get('PASSWORD_ATTEMPT_WINDOW_MINUTES') || '15',
+        10,
+      ); // 15 minutes window
+
+      // 2. Find user by email or phone number
+      let user;
+      if (dto.email) {
+        // Find by email
+        user = await this.prisma.user.findUnique({
+          where: { email: dto.email },
+          include: {
+            profile_image: true,
+            kyc_verification: true,
+          },
+        });
+      } else {
+        // Find by phone number
+        const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number!);
+        if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
+          throw new BadRequestException(
+            'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+          );
+        }
+
+        user = await this.prisma.user.findFirst({
+          where: { phone_number: formattedPhone },
+          include: {
+            profile_image: true,
+            kyc_verification: true,
+          },
+        });
+      }
+
+      if (!user) {
+        this.logger.error(
+          colors.red(`User not found for ${identifier}`),
+        );
+        throw new UnauthorizedException('Invalid credentials');
+      }
+
+      // 3. Check if account is suspended
+      if (user.account_status === 'suspended') {
+        this.logger.warn(
+          colors.yellow(
+            `Suspended account attempted login: ${identifier}`,
+          ),
+        );
+        return new ApiResponseDto(
+          false,
+          'Your account has been suspended due to multiple failed login attempts. Please contact support for assistance.',
+          {
+            account_suspended: true,
+            attempts_remaining: 0,
+          },
+        );
+      }
+
+      // 4. Check if password attempts period has expired (reset attempts)
+      const now = new Date();
+      let passwordAttempts = user.password_attempts || 0;
+      let attemptsStartedAt = user.password_attempts_started_at;
+
+      if (attemptsStartedAt) {
+        const windowExpiry = new Date(attemptsStartedAt);
+        windowExpiry.setMinutes(
+          windowExpiry.getMinutes() + passwordAttemptWindow,
+        );
+
+        if (now > windowExpiry) {
+          // Reset attempts - window expired
+          passwordAttempts = 0;
+          attemptsStartedAt = null;
+          this.logger.log(
+            colors.blue(
+              `Password attempt window expired for ${identifier}. Resetting attempts.`,
+            ),
+          );
+        }
+      }
+
+      // 5. Verify password
+      if (!user.password) {
+        this.logger.error(
+          colors.red(`Password not set for ${identifier}`),
+        );
+        return new ApiResponseDto(false, 'Password not set. Please reset your password.', {
+          attempts_remaining: maxPasswordTrial - passwordAttempts,
+        });
+      }
+
+      const isPasswordValid = await argon.verify(user.password, dto.password);
+
+      if (!isPasswordValid) {
+        // Wrong password - increment attempts
+        passwordAttempts += 1;
+        const attemptsRemaining = maxPasswordTrial - passwordAttempts;
+
+        // If this is the first failed attempt, set the start time
+        if (!attemptsStartedAt) {
+          attemptsStartedAt = now;
+        }
+
+        // Check if max attempts reached
+        if (passwordAttempts >= maxPasswordTrial) {
+          // Suspend account
+          await this.prisma.user.update({
+            where: { id: user.id },
+            data: {
+              account_status: 'suspended',
+              password_attempts: passwordAttempts,
+              password_attempts_started_at: attemptsStartedAt,
+              updatedAt: now,
+            },
+          });
+
+          this.logger.error(
+            colors.red(
+              `Account suspended due to ${passwordAttempts} failed password attempts: ${identifier}`,
+            ),
+          );
+
+          return new ApiResponseDto(
+            false,
+            `Your account has been suspended due to ${maxPasswordTrial} failed login attempts. Please contact support for assistance.`,
+            {
+              account_suspended: true,
+              attempts_remaining: 0,
+              max_attempts: maxPasswordTrial,
+            },
+          );
+        }
+
+        // Update attempts count
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            password_attempts: passwordAttempts,
+            password_attempts_started_at: attemptsStartedAt,
+            updatedAt: now,
+          },
+        });
+
+        this.logger.warn(
+          colors.yellow(
+            `Failed password attempt ${passwordAttempts}/${maxPasswordTrial} for ${identifier}`,
+          ),
+        );
+
+        return new ApiResponseDto(
+          false,
+          'Invalid credentials',
+          {
+            attempts_remaining: attemptsRemaining,
+            max_attempts: maxPasswordTrial,
+            message: `Invalid password. You have ${attemptsRemaining} attempt${attemptsRemaining !== 1 ? 's' : ''} remaining before your account gets locked out.`,
+          },
+        );
+      }
+
+      // 6. Password is correct - clear attempts and proceed with login
+      if (passwordAttempts > 0 || attemptsStartedAt) {
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            password_attempts: 0,
+            password_attempts_started_at: null,
+            updatedAt: now,
+          },
+        });
+
+        this.logger.log(
+          colors.green(
+            `Password verified successfully. Cleared ${passwordAttempts} previous failed attempts for ${identifier}`,
+          ),
+        );
+      }
+
+      // 7. Generate access token
+      const access_token = await this.signToken(user.id, user.email);
+
+      // 8. Track device (if device metadata is provided)
+      if (deviceMetadata && deviceMetadata.device_id) {
+        // Don't await - let it run in background to not slow down login
+        this.deviceTracker.registerOrUpdateDevice(
+          user.id,
+          deviceMetadata,
+          ipAddress,
+        ).catch((error) => {
+          this.logger.warn(
+            colors.yellow(`Device tracking failed (non-critical): ${error.message}`),
+          );
+        });
+      }
+
+      // 9. Format user data for response (same format as signin in auth.service.ts)
+      const formattedUser = {
+        id: user.id,
+        email: user.email,
+        name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || null,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        phone_number: user.phone_number || null,
+        is_email_verified: user.is_email_verified,
+        role: user.role || null,
+        gender: user.gender || null,
+        date_of_birth: user.date_of_birth || null,
+        profile_image: user.profile_image?.secure_url || null,
+        kyc_verified: user.kyc_verification?.is_verified || false,
+        isTransactionPinSetup: !!user.transactionPinHash,
+        created_at: formatDate(user.createdAt),
+      };
+
+      // 10. Prepare response data (same format as signin)
+      const responseData = {
+        access_token: access_token,
+        refresh_token: null, // Placeholder for refresh token if implemented
+        user: formattedUser,
+      };
+
+      this.logger.log(
+        colors.magenta(`Login password verified successfully for ${identifier}`),
+      );
+
+      return new ApiResponseDto(true, 'Welcome back', responseData);
+    } catch (error: any) {
+      this.logger.error(
+        colors.red(`Login password verification error: ${error.message}`),
+        error.stack,
+      );
+
+      if (
+        error instanceof BadRequestException ||
+        error instanceof UnauthorizedException
+      ) {
+        throw error;
+      }
+
+      throw new HttpException(
+        error.message || 'Failed to verify login password',
         error.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }

@@ -10,6 +10,7 @@ import { RegistrationRateLimiter } from 'src/auth/helpers/rate-limiter';
 import { SecurityEventService } from 'src/auth/helpers/security-event.service';
 import { Reflector } from '@nestjs/core';
 import { formatTimeDuration } from 'src/common/helper_functions/time-formatter';
+import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 
 /**
  * Rate Limit Configuration Interface
@@ -57,15 +58,24 @@ export class RateLimitGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const handler = context.getHandler();
 
-    // Get rate limit configuration from decorator or use defaults
-    const config = this.reflector.get<RateLimitConfig>(
-      RATE_LIMIT_CONFIG_KEY,
-      handler,
-    ) || {
-      phoneLimit: 3, // Default: 3 requests per hour
-      ipLimit: 10, // Default: 10 requests per hour
-      deviceLimit: 5, // Default: 5 requests per hour
-      windowMs: 60 * 60 * 1000, // Default: 1 hour
+    // Get global rate limit configuration (simple: X requests per Y seconds)
+    // Uses environment variables: GLOBAL_RATE_LIMIT_REQUESTS and GLOBAL_RATE_LIMIT_WINDOW_SECONDS
+    const maxRequests = process.env.GLOBAL_RATE_LIMIT_REQUESTS
+      ? parseInt(process.env.GLOBAL_RATE_LIMIT_REQUESTS, 10)
+      : 10; // Default: 10 requests
+
+    const windowSeconds = process.env.GLOBAL_RATE_LIMIT_WINDOW_SECONDS
+      ? parseInt(process.env.GLOBAL_RATE_LIMIT_WINDOW_SECONDS, 10)
+      : 60; // Default: 60 seconds (1 minute)
+
+    const windowMs = windowSeconds * 1000;
+
+    // Use same limit for phone, IP, and device (global rate limit)
+    const config: RateLimitConfig = {
+      phoneLimit: maxRequests,
+      ipLimit: maxRequests,
+      deviceLimit: maxRequests,
+      windowMs: windowMs,
     };
 
     // Extract identifiers from request
@@ -163,16 +173,25 @@ export class RateLimitGuard implements CanActivate {
 
   /**
    * Create rate limit error response
+   * Returns error in ApiResponseDto format for consistency
    */
   private createRateLimitError(message: string, retryAfter: number) {
     const formattedTime = formatTimeDuration(retryAfter);
+    const errorMessage = `${message}. Please try again in ${formattedTime}.`;
 
+    // Create ApiResponseDto format for consistency with other endpoints
+    const responseData = {
+      error: 'RATE_LIMIT_EXCEEDED',
+      retry_after: retryAfter,
+      retry_after_formatted: formattedTime,
+    };
+
+    // Return as HttpException with ApiResponseDto format
     return new HttpException(
       {
         success: false,
-        message: `${message}. Please try again in ${formattedTime}.`,
-        error: 'RATE_LIMIT_EXCEEDED',
-        retry_after: retryAfter,
+        message: errorMessage,
+        data: responseData,
       },
       HttpStatus.TOO_MANY_REQUESTS,
     );
