@@ -53,6 +53,8 @@ model User {
   account_status               AccountStatus?   @default(active)
   password_attempts            Int              @default(0)
   password_attempts_started_at DateTime?
+  tier_id                      String?
+  tier                         Tier?            @relation("UserTier", fields: [tier_id], references: [id], onDelete: SetNull)
   createdAt                    DateTime         @default(now())
   updatedAt                    DateTime         @updatedAt
 
@@ -721,4 +723,34 @@ enum TicketPriority {
   medium // Standard priority
   high // Important, needs attention soon
   urgent // Critical, needs immediate attention
+}
+
+// Account Tier Model
+model Tier {
+  id          String  @id @default(uuid())
+  tier        String  @unique // e.g., "UNVERIFIED", "VERIFIED", "PREMIUM"
+  name        String // e.g., "Basic Tier", "Verified Tier"
+  description String?
+  is_active   Boolean @default(true)
+
+  // Requirements (stored as JSON array)
+  requirements Json @default("[]")
+
+  // Transaction limits
+  single_transaction_limit Float @default(0)
+  daily_limit              Float @default(0)
+  monthly_limit            Float @default(0)
+  airtime_daily_limit      Float @default(0)
+
+  // Metadata
+  metadata Json? @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  users User[] @relation("UserTier")
+
+  @@index([tier])
+  @@index([is_active])
 }

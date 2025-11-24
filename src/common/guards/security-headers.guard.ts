@@ -3,6 +3,7 @@ import {
   CanActivate,
   ExecutionContext,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { SecurityHeadersValidator } from 'src/auth/helpers/security-headers.validator';
 
@@ -10,13 +11,28 @@ import { SecurityHeadersValidator } from 'src/auth/helpers/security-headers.vali
  * Security Headers Guard
  * Validates required security headers for protected endpoints
  * 
+ * Can be bypassed in development mode or when BYPASS_SECURITY_HEADERS=true
+ * 
  * Usage:
  * @UseGuards(SecurityHeadersGuard)
  * @Post('endpoint')
  */
 @Injectable()
 export class SecurityHeadersGuard implements CanActivate {
+  private readonly logger = new Logger(SecurityHeadersGuard.name);
+
   canActivate(context: ExecutionContext): boolean {
+    // Check if security headers should be bypassed (for development/testing)
+    const bypassSecurityHeaders = 
+      process.env.BYPASS_SECURITY_HEADERS === 'true';
+
+    if (bypassSecurityHeaders) {
+      this.logger.warn(
+        'Security headers validation bypassed (development mode or BYPASS_SECURITY_HEADERS=true)',
+      );
+      return true;
+    }
+
     const request = context.switchToHttp().getRequest();
     const headers = request.headers;
 

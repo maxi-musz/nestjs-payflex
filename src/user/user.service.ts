@@ -14,6 +14,100 @@ function maskAccountNumber(accountNumber: string): string {
     return '*'.repeat(maskedLength) + accountNumber.slice(-visibleDigits);
 }
 
+ // Account Tier Configuration
+ interface TierInfo {
+    tier: string;
+    name: string;
+    description: string;
+    requirements: string[];
+    limits: {
+        singleTransaction: number;
+        daily: number;
+        monthly: number;
+        airtimeDaily: number;
+    };
+}
+
+const ACCOUNT_TIERS: Record<string, TierInfo> = {
+    UNVERIFIED: {
+        tier: "UNVERIFIED",
+        name: "Basic Tier",
+        description: "Phone verified account with basic transaction limits",
+        requirements: [
+            "Phone number verification",
+            "Email verification (optional)"
+        ],
+        limits: {
+            singleTransaction: 50000,    // ₦50,000
+            daily: 200000,                // ₦200,000
+            monthly: 1000000,            // ₦1,000,000
+            airtimeDaily: 20000           // ₦20,000
+        }
+    },
+    VERIFIED: {
+        tier: "VERIFIED",
+        name: "Verified Tier",
+        description: "KYC verified account with increased transaction limits",
+        requirements: [
+            "Phone number verification",
+            "Email verification",
+            "KYC verification (BVN/NIN)",
+            "Face verification",
+            "Address verification"
+        ],
+        limits: {
+            singleTransaction: 100000,    // ₦100,000
+            daily: 500000,                // ₦500,000
+            monthly: 5000000,             // ₦5,000,000
+            airtimeDaily: 50000           // ₦50,000
+        }
+    },
+    PREMIUM: {
+        tier: "PREMIUM",
+        name: "Premium Tier",
+        description: "Fully verified account with maximum transaction limits",
+        requirements: [
+            "Phone number verification",
+            "Email verification",
+            "KYC verification (BVN/NIN)",
+            "Face verification",
+            "Address verification",
+            "BVN verification",
+            "Additional documentation (if required)"
+        ],
+        limits: {
+            singleTransaction: 500000,    // ₦500,000
+            daily: 2000000,               // ₦2,000,000
+            monthly: 10000000,            // ₦10,000,000
+            airtimeDaily: 100000         // ₦100,000
+        }
+    }
+};
+
+/**
+ * Determines user's current account tier based on verification status
+ */
+function getUserTier(user: any): TierInfo {
+    const kycVerified = user?.kyc_verification?.is_verified === true;
+    const bvnVerified = user?.kyc_verification?.bvn_verified === true;
+    const phoneVerified = user?.is_phone_verified === true;
+    const emailVerified = user?.is_email_verified === true;
+    const hasAddress = !!user?.address;
+
+    // Premium tier: All verifications complete including BVN
+    if (kycVerified && bvnVerified && phoneVerified && emailVerified && hasAddress) {
+        return ACCOUNT_TIERS.PREMIUM;
+    }
+
+    // Verified tier: KYC verified but may not have BVN
+    if (kycVerified && phoneVerified && emailVerified && hasAddress) {
+        return ACCOUNT_TIERS.VERIFIED;
+    }
+
+    // Unverified tier: Only phone or email verified
+    return ACCOUNT_TIERS.UNVERIFIED;
+}
+
  @Injectable()
  export class UserService {
     private readonly logger = new Logger(UserService.name);
@@ -349,35 +443,64 @@ function maskAccountNumber(accountNumber: string): string {
             const formattedUserProfile = {
                 id: fullUserDetails?.id || "",
                 first_name: fullUserDetails?.first_name || "",
+                middle_name: fullUserDetails?.middle_name || "",
                 last_name: fullUserDetails?.last_name || "",
                 email: fullUserDetails?.email || "",
                 phone_number: fullUserDetails?.phone_number || "",
+                smipay_tag: fullUserDetails?.smipay_tag || "",
                 gender: fullUserDetails?.gender || "",
                 role: fullUserDetails?.role || "",
                 date_of_birth: fullUserDetails?.date_of_birth || "",
                 email_verification: fullUserDetails?.is_email_verified || false,
+                phone_verification: fullUserDetails?.is_phone_verified || false,
+                is_friendly: fullUserDetails?.is_friendly || false,
+                referral_code: fullUserDetails?.referral_code || "",
+                account_status: fullUserDetails?.account_status || "",
+                agree_to_terms: fullUserDetails?.agree_to_terms || false,
+                updates_opt_in: fullUserDetails?.updates_opt_in || false,
+                profile_image: fullUserDetails?.profile_image?.secure_url || "",
                 joined: fullUserDetails?.createdAt ? formatDate(fullUserDetails.createdAt) : "N/A",
+                updated_at: fullUserDetails?.updatedAt ? formatDate(fullUserDetails.updatedAt) : "N/A",
             }
             // console.log("Formatted user profile: ", formattedUserProfile)
 
             const address = {
-                id: fullUserDetails?.address?.id,
-                house_no: fullUserDetails?.address?.house_number,
-                city: fullUserDetails?.address?.city,
-                state: fullUserDetails?.address?.state,
-                country: fullUserDetails?.address?.country,
-                house_address: fullUserDetails?.address?.home_address,
-                postal_code: fullUserDetails?.address?.postal_code
+                id: fullUserDetails?.address?.id || null,
+                house_no: fullUserDetails?.address?.house_number || null,
+                city: fullUserDetails?.address?.city || null,
+                state: fullUserDetails?.address?.state || null,
+                country: fullUserDetails?.address?.country || null,
+                house_address: fullUserDetails?.address?.home_address || null,
+                postal_code: fullUserDetails?.address?.postal_code || null
             }
 
             const user_kyc = {
                 id: fullUserDetails?.kyc_verification?.id || "",
                 user_id: fullUserDetails?.kyc_verification?.userId || "",
-                is_active: fullUserDetails?.kyc_verification?.is_verified || "",
+                is_verified: fullUserDetails?.kyc_verification?.is_verified || false,
                 status: fullUserDetails?.kyc_verification?.status || "",
                 id_type: fullUserDetails?.kyc_verification?.id_type || "",
                 id_number: fullUserDetails?.kyc_verification?.id_no || "",
+                bvn: fullUserDetails?.kyc_verification?.bvn || "",
+                bvn_verified: fullUserDetails?.kyc_verification?.bvn_verified || false,
+                watchlisted: fullUserDetails?.kyc_verification?.watchlisted || false,
+                initiated_at: fullUserDetails?.kyc_verification?.initiated_at ? formatDate(fullUserDetails.kyc_verification.initiated_at) : "",
+                approved_at: fullUserDetails?.kyc_verification?.approved_at ? formatDate(fullUserDetails.kyc_verification.approved_at) : "",
+                failure_reason: fullUserDetails?.kyc_verification?.failure_reason || "",
             }
+
+            // Get user's current tier
+            const currentTier = getUserTier(fullUserDetails);
+
+            // Format all available tiers for response
+            const availableTiers = Object.values(ACCOUNT_TIERS).map(tier => ({
+                tier: tier.tier,
+                name: tier.name,
+                description: tier.description,
+                requirements: tier.requirements,
+                limits: tier.limits,
+                is_current: tier.tier === currentTier.tier
+            }));
 
             return new ApiResponseDto(
                 true,
@@ -385,13 +508,27 @@ function maskAccountNumber(accountNumber: string): string {
                 {
                     profile_data: formattedUserProfile,
                     address: address,
-                    user_kyc_data: user_kyc
+                    user_kyc_data: user_kyc,
+                    account_tier: {
+                        current_tier: {
+                            tier: currentTier.tier,
+                            name: currentTier.name,
+                            description: currentTier.description,
+                            requirements: currentTier.requirements,
+                            limits: currentTier.limits
+                        },
+                        available_tiers: availableTiers
+                    }
                 }
             )
             
         } catch (error) {
             console.log(colors.red(`Error fetching user details: ${error}`))
-            throw new HttpException("Error fetching user details", HttpStatus.SERVICE_UNAVAILABLE, {cause: new Error()})   
+            return new ApiResponseDto(
+                false,
+                "Error fetching user details",
+                { error: error.message }
+            )
         }
     }
 
