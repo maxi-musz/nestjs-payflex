@@ -252,7 +252,7 @@ export class SupportService {
       }
 
       // 3. Check if user exists (optional - for registered users, only if phone number provided)
-      let existingUser: { id: string; email: string; first_name: string | null; last_name: string | null } | null = null;
+      let existingUser: { id: string; email: string | null; first_name: string | null; last_name: string | null } | null = null;
       if (formattedPhone) {
         existingUser = await this.prisma.user.findFirst({
           where: { phone_number: formattedPhone },

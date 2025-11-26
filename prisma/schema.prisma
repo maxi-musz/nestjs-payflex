@@ -25,12 +25,12 @@ model User {
   first_name                   String?
   last_name                    String?
   cardholder_id                String?
-  email                        String           @unique
+  email                        String?           @unique
   smipay_tag                   String?          @unique
   fourDigitPin                 String?
   transactionPinHash           String?
   hash                         String?
-  phone_number                 String?
+  phone_number                 String
   middle_name                  String?
   is_friendly                  Boolean          @default(false)
   referral_code                String?

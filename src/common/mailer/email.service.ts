@@ -63,8 +63,14 @@ export class EmailService {
       await this.emailProvider.sendEmail(email, subject, htmlContent);
       
       this.logger.log(`OTP email sent successfully to ${email}`);
-    } catch (error) {
-      this.logger.error(`Error sending OTP email to ${email}: ${error.message}`, error.stack);
+    } catch (error: any) {
+      // Log detailed error server-side only (includes stack trace and full error details)
+      this.logger.error(
+        `Error sending OTP email to ${email}: ${error.message || error}`,
+        error.stack,
+      );
+      // Re-throw error so calling service can handle it appropriately
+      // The calling service should catch this and return a user-friendly message
       throw error;
     }
   }

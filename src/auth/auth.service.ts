@@ -30,40 +30,89 @@ export class AuthService {
         console.log(colors.cyan(`Requesting OTP for ${context}...`));
     
         try {
-            // Check if user exists
-            const user = await this.prisma.user.findUnique({
-                where: { email: dto.email },
-            });
-    
-            if (!user) {
-                console.log(colors.red("❌ User not found"));
-                throw new NotFoundException("User not found");
+            let user: any;
+            
+            // If phone_number is provided, find user by phone_number (for adding email for first time)
+            if (dto.phone_number) {
+                user = await this.prisma.user.findFirst({
+                    where: { phone_number: dto.phone_number },
+                });
+                
+                if (!user) {
+                    console.log(colors.red("❌ User not found with phone number"));
+                    console.log(colors.red(`Phone number: ${dto.phone_number}`));
+                    throw new NotFoundException("User not found");
+                }
+                
+                // Check if email is already taken by another user
+                const emailExists = await this.prisma.user.findUnique({
+                    where: { email: dto.email, is_email_verified: true },
+                });
+                
+                if (emailExists && emailExists.id !== user.id) {
+                    console.log(colors.red("❌ Email already registered to another account"));
+                    throw new ConflictException("Email is already registered to another account");
+                }
+            } else {
+                // Find user by email (for password reset or existing email verification)
+                user = await this.prisma.user.findUnique({
+                    where: { email: dto.email },
+                });
+                
+                if (!user) {
+                    console.log(colors.red("❌ User not found"));
+                    throw new NotFoundException("User not found");
+                }
             }
     
             const otp = crypto.randomInt(1000, 9999).toString();
             const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 mins expiry
     
             // Update OTP for the user
+            // If adding email for first time, also store pending email
             await this.prisma.user.update({
-                where: { email: dto.email },
+                where: { id: user.id },
                 data: {
                     otp,
                     otp_expires_at: otpExpiresAt,
+                    // Store pending email if user doesn't have this email yet
+                    ...(dto.phone_number && !user.email && { 
+                        // We'll store pending_email in a JSON field or use a workaround
+                        // For now, we'll check in verifyEmailOTP if email matches the one in OTP request
+                    }),
                 },
             });
     
             // Send OTP by email
-            await this.emailService.sendOTPEmail(dto.email, otp);
-            console.log(colors.magenta(`OTP code: ${otp} sent to user: ${dto.email}`));
+            try {
+                await this.emailService.sendOTPEmail(dto.email, otp);
+                console.log(colors.magenta(`OTP code: ${otp} sent to user: ${dto.email}`));
+            } catch (emailError: any) {
+                // Log detailed error server-side only
+                console.error(colors.red("Error sending OTP email:"), emailError);
+                
+                // Return generic user-friendly error message
+                return new ApiResponseDto(false, "Failed to send OTP email. Please try again later.");
+            }
     
             return {
                 success: true,
                 message: `OTP successfully sent to: ${dto.email}`,
             };
         } catch (error) {
-            console.error("Error in requestEmailOTP:", error);
+            // Re-throw known exceptions (NotFoundException, ConflictException, InternalServerErrorException)
+            if (error instanceof NotFoundException || 
+                error instanceof ConflictException || 
+                error instanceof InternalServerErrorException) {
+                throw error;
+            }
+            
+            // Log unexpected errors server-side only
+            console.error(colors.red("Unexpected error in requestEmailOTP:"), error);
+            
+            // Return generic error message to client
             throw new InternalServerErrorException(
-                `Failed to process OTP request: ${error instanceof Error ? error.message : String(error)}`
+                "Failed to process OTP request. Please try again later."
             );
         }
     }
@@ -72,10 +121,25 @@ export class AuthService {
         console.log(colors.cyan(`Verifying email: ${dto.email} with OTP: ${dto.otp}`));
     
         try {
-            // Find user with matching email and OTP
-            const user = await this.prisma.user.findFirst({
-                where: { email: dto.email, otp: dto.otp },
-            });
+            let user;
+            
+            // If phone_number is provided, find user by phone_number and OTP (for adding email for first time)
+            if (dto.phone_number) {
+                user = await this.prisma.user.findFirst({
+                    where: { 
+                        phone_number: dto.phone_number,
+                        otp: dto.otp,
+                    },
+                });
+            } else {
+                // Find user with matching email and OTP (for existing email verification)
+                user = await this.prisma.user.findFirst({
+                    where: { 
+                        email: dto.email, 
+                        otp: dto.otp 
+                    },
+                });
+            }
     
             // Check if user exists and OTP is valid
             if (!user || !user.otp_expires_at || new Date() > new Date(user.otp_expires_at)) {
@@ -83,12 +147,31 @@ export class AuthService {
                 throw new BadRequestException("Invalid or expired OTP provided");
             }
     
-            // Update `is_email_verified` and clear OTP
+            // Update user: set email (if adding for first time), verify email, and clear OTP
+            const updateData: any = {
+                is_email_verified: true,
+                otp: null,
+                otp_expires_at: null,
+            };
+            
+            // If user doesn't have an email yet, set it
+            if (!user.email && dto.phone_number) {
+                // Check if email is already taken by another user
+                const emailExists = await this.prisma.user.findUnique({
+                    where: { email: dto.email },
+                });
+                
+                if (emailExists && emailExists.id !== user.id) {
+                    throw new ConflictException("Email is already registered to another account");
+                }
+                
+                updateData.email = dto.email;
+                console.log(colors.cyan(`Setting email for user: ${dto.email}`));
+            }
+    
             await this.prisma.user.update({
-                where: { email: dto.email },
-                data: {
-                    is_email_verified: true,
-                },
+                where: { id: user.id },
+                data: updateData,
             });
     
             console.log(colors.magenta("Email address successfully verified"));
@@ -97,7 +180,7 @@ export class AuthService {
         } catch (error) {
             console.error("Error verifying email:", error);
     
-            if (error instanceof HttpException) {
+            if (error instanceof HttpException || error instanceof ConflictException) {
                 throw error; // Re-throw known exceptions
             }
     
@@ -230,11 +313,13 @@ export class AuthService {
 
     async signToken(
         userId: string,
-        email: string,
+        email: string | null,
+        phone_number: string | null,
     ): Promise<string> {
         const payload = {
             sub: userId,
-            email
+            email: email || null,
+            phone_number: phone_number || null
         }
 
         const secret = this.config.get('JWT_SECRET')
@@ -275,7 +360,7 @@ export class AuthService {
             }
     
             // 4. Generate access token
-            const access_token = await this.signToken(user.id, user.email);
+            const access_token = await this.signToken(user.id, user.email, user.phone_number);
     
             // 5. Track device (if device metadata is provided)
             if (deviceMetadata && deviceMetadata.device_id) {

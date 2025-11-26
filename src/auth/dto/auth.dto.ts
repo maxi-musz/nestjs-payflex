@@ -9,6 +9,8 @@ import {
     MaxLength,
     IsOptional,
     IsBoolean,
+    ValidateIf,
+    Matches,
   } from "class-validator";
   import { Type } from "class-transformer";
   
@@ -83,6 +85,13 @@ export class RequestEmailOTPDto {
   @IsEmail()
   @IsNotEmpty()
   email: string;
+
+  @IsString()
+  @IsOptional()
+  @Matches(/^\+234[0-9]{10}$/, {
+    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  })
+  phone_number?: string; // Optional: to identify user when adding email for first time
 }
 
 export class VerifyEmailOTPDto {
@@ -95,6 +104,13 @@ export class VerifyEmailOTPDto {
   @MinLength(4)  
   @MaxLength(4)
   otp: string;
+
+  @IsString()
+  @IsOptional()
+  @Matches(/^\+234[0-9]{10}$/, {
+    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  })
+  phone_number?: string; // Optional: to identify user when adding email for first time
 }
 
 export class SignInDto {

@@ -1,11 +1,13 @@
 import { HttpException, HttpStatus, Injectable, NotFoundException, BadRequestException, Logger } from "@nestjs/common";
 import { PrismaService } from "src/prisma/prisma.service";
+import { ConfigService } from "@nestjs/config";
 import * as colors from "colors";
 import { ApiResponseDto } from "src/common/dto/api-response.dto";
 import { KycVerificationDto, UpdateUserDto, VerifyBvnDto, SetupTransactionPinDto, UpdateTransactionPinDto } from "./dto/user.dto";
 import { formatAmount, formatDate } from "src/common/helper_functions/formatter";
 import { first } from "rxjs";
 import * as bcrypt from "bcrypt";
+import { DvaProviderFactory } from "src/banking/dva-providers/dva-provider.factory";
 
 function maskAccountNumber(accountNumber: string): string {
     if (!accountNumber) return "";
@@ -114,6 +116,8 @@ function getUserTier(user: any): TierInfo {
 
     constructor(
         private prisma: PrismaService,
+        private configService: ConfigService,
+        private dvaProviderFactory: DvaProviderFactory,
     ) {}
 
     async fetchUserDashboard(userPayload: any) {
@@ -207,8 +211,8 @@ function getUserTier(user: any): TierInfo {
     }
 
     async fetchUserWalletAndLatestTransaction(userPayload: any) {
-        console.log(colors.cyan("Fetching user data for app homepage..."));
-    
+        this.logger.log(colors.cyan("Fetching user data for app homepage..."));
+
         try {
             // Fetch user wallet details
             const userWallet = await this.prisma.wallet.findUnique({
@@ -216,7 +220,7 @@ function getUserTier(user: any): TierInfo {
             })
 
             if(!userWallet) {
-                console.log(colors.red("User wallet not found"))
+                this.logger.warn(colors.red("User wallet not found"))
                 
                 await this.prisma.wallet.create({
                     data: {
@@ -229,18 +233,8 @@ function getUserTier(user: any): TierInfo {
                         updatedAt: new Date(),
                     },
                 })
-                console.log(colors.green("User wallet created successfully"))
+                this.logger.log(colors.green("User wallet created successfully"))
             }
-
-            const latest_transaction_history = await this.prisma.transactionHistory.findMany({
-                where: { user_id: userPayload.sub },
-                orderBy: { createdAt: 'desc' },
-                take: 2,
-                include: {
-                    sender_details: true,
-                    icon: true
-                }
-            })
 
             // Fetch user first name and display image 
             const user = await this.prisma.user.findUnique({
@@ -248,13 +242,57 @@ function getUserTier(user: any): TierInfo {
                 include: {
                     profile_image: true,
                     kyc_verification: true,
+                    address: true,
+                    tier: true,
                 }
             })
             if(!user) {
-                console.log(colors.red("User not found"))
+                this.logger.error(colors.red("User not found"))
                 throw new NotFoundException("User not found")
+            } 
+
+            // Check if user has a DVA, if not, auto-assign one
+            const existingDva = await this.prisma.account.findFirst({
+                where: {
+                    user_id: userPayload.sub,
+                    account_status: 'active',
+                    isActive: true,
+                },
+            });
+
+            // Check if existing account is a DVA (has provider in metadata)
+            const isDva = existingDva && (existingDva.meta_data as any)?.provider;
+
+            if (!isDva) {
+                this.logger.log(colors.cyan("User does not have a DVA, auto-assigning..."));
+                try {
+                    const dvaProvider = this.dvaProviderFactory.getProvider();
+                    await dvaProvider.assignDva(
+                        userPayload.sub,
+                        user.email || null,
+                        {
+                            phone_number: user.phone_number || undefined,
+                        }
+                    );
+                    this.logger.log(colors.green("DVA auto-assigned successfully"));
+                } catch (dvaError: any) {
+                    // Log error but don't fail the request
+                    this.logger.error(colors.red(`Failed to auto-assign DVA: ${dvaError.message}`));
+                    // Continue with the request even if DVA assignment fails
+                }
             }
 
+            const latest_transaction_history = await this.prisma.transactionHistory.findMany({
+                where: { user_id: userPayload.sub },
+                orderBy: { createdAt: 'desc' },
+                take: 3,
+                include: {
+                    sender_details: true,
+                    icon: true
+                }
+            })
+
+            // Fetch accounts again (in case DVA was just assigned)
             const accounts = await this.prisma.account.findMany({
                 where: { user_id: userPayload.sub },
             })
@@ -270,7 +308,7 @@ function getUserTier(user: any): TierInfo {
                     phone_number: user.phone_number || "",
                     first_name: user.first_name || "",
                     last_name: user.last_name || "",
-                    email: userPayload.email || "",
+                    email: user.email || "",
                     role: user.role || "",
                     profile_image: user.profile_image?.secure_url || "",
                     is_email_verified: user.is_email_verified || false
@@ -321,12 +359,43 @@ function getUserTier(user: any): TierInfo {
                     initiated_at: user?.kyc_verification?.initiated_at || "",
                     approved_at: user?.kyc_verification?.approved_at || "",
                     failure_reason: user?.kyc_verification?.failure_reason || ""
-                }
+                },
+                current_tier: (() => {
+                    // If user has a tier assigned in database, use that
+                    if (user?.tier) {
+                        this.logger.log(colors.cyan("User has a tier assigned in database, using that..."))
+                        return {
+                            tier: user.tier.tier,
+                            name: user.tier.name,
+                            description: user.tier.description || "",
+                            requirements: (user.tier.requirements as string[]) || [],
+                            limits: {
+                                singleTransaction: user.tier.single_transaction_limit,
+                                daily: user.tier.daily_limit,
+                                monthly: user.tier.monthly_limit,
+                                airtimeDaily: user.tier.airtime_daily_limit,
+                            },
+                            is_active: user.tier.is_active,
+                        };
+                    }
+                    
+                    // Otherwise, determine tier based on verification status
+                    this.logger.log(colors.cyan("Determining user tier based on verification status..."))
+                    const determinedTier = getUserTier(user);
+                    return {
+                        tier: determinedTier.tier,
+                        name: determinedTier.name,
+                        description: determinedTier.description,
+                        requirements: determinedTier.requirements,
+                        limits: determinedTier.limits,
+                        is_active: true,
+                    };
+                })()
             }
-            console.log(colors.magenta("User data for app homepage successfully retrieved"))
+            console.log(colors.magenta(`User data for ${user.email} for app homepage successfully retrieved`))
             return new ApiResponseDto(
                 true, 
-                "User data for app homepage successfully retrieved", 
+                `User data ${user.email} for app homepage successfully retrieved`, 
                 formattedResponse
             )
             
@@ -342,12 +411,12 @@ function getUserTier(user: any): TierInfo {
 
     // App Fetch for profile page
     async fetchUserProfileForApp(userPayload: any) {
-        console.log(colors.cyan(`Fetching current user profile for app: ${userPayload.email}`))
+        this.logger.log(colors.cyan(`Fetching current user profile for app: ${userPayload.phone_number}`));
 
         try {
-            // fetch user from db
-            const fullUserDetails = await this.prisma.user.findUnique({
-                where: {email: userPayload.email},
+            // fetch user from db using phone_number (unique identifier)
+            const fullUserDetails = await this.prisma.user.findFirst({
+                where: {phone_number: userPayload.phone_number},
                 include: {
                     profile_image: true,
                     address: true,
@@ -358,9 +427,9 @@ function getUserTier(user: any): TierInfo {
                 }
             })
 
-            console.log("Kyc verification details: ", fullUserDetails?.kyc_verification)
+            // console.log("Kyc verification details: ", fullUserDetails?.kyc_verification)
 
-            console.log(colors.magenta(`User profile data retrieved successfully for: ${fullUserDetails?.email}`))
+            // console.log(colors.magenta(`User profile data retrieved successfully for: ${fullUserDetails?.email}`))
 
             // Format the response
             const formattedResponse = {

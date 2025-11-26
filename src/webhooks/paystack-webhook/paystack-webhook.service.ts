@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { EmailService } from 'src/common/mailer/email.service';
+import { PushNotificationService } from 'src/push-notification/push-notification.service';
 import * as colors from 'colors/safe';
 import * as crypto from 'crypto';
 
@@ -11,6 +12,7 @@ export class PaystackWebhookService {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly pushNotificationService: PushNotificationService,
   ) {}
 
   /**
@@ -169,6 +171,30 @@ export class PaystackWebhookService {
   }
 
   /**
+   * Format sender name for transaction description
+   * Truncates long names to prevent overly long descriptions
+   */
+  private formatSenderNameForDescription(senderName: string | null): string {
+    if (!senderName) {
+      return 'Unknown Sender';
+    }
+
+    // If name is too long (more than 25 characters), truncate it
+    const maxLength = 15;
+    if (senderName.length > maxLength) {
+      // Try to get first name if it's a multi-word name
+      const nameParts = senderName.trim().split(/\s+/);
+      if (nameParts.length > 1 && nameParts[0].length <= maxLength) {
+        return nameParts[0];
+      }
+      // Otherwise, truncate and add ellipsis
+      return senderName.substring(0, maxLength - 3) + '...';
+    }
+
+    return senderName;
+  }
+
+  /**
    * Handle DVA (Dedicated Virtual Account) payment webhook
    * This processes payments received directly to a user's DVA account
    */
@@ -185,9 +211,17 @@ export class PaystackWebhookService {
       }
       
       // Extract sender information (Paystack provides this for bank transfers)
+      // Check multiple possible field names from Paystack webhook
       const senderName = authorization?.sender_name || authorization?.sender?.name || null;
-      const senderAccountNumber = authorization?.sender_account_number || authorization?.sender?.account_number || null;
+      const senderAccountNumber = authorization?.sender_bank_account_number || 
+                                   authorization?.sender_account_number ||
+                                   authorization?.sender?.account_number || 
+                                   authorization?.sender?.bank_account_number ||
+                                   null;
       const senderBank = authorization?.sender_bank || authorization?.sender?.bank || null;
+      
+      // Log extracted sender details for debugging
+      console.log(colors.cyan(`Extracted sender details: name=${senderName}, account=${senderAccountNumber}, bank=${senderBank}`));
 
       // Validate required data
       if (!customer?.customer_code) {
@@ -237,173 +271,225 @@ export class PaystackWebhookService {
       const balanceBefore = user.wallet.current_balance;
       const balanceAfter = balanceBefore + amountInNgn;
 
-      // Create or update transaction history
-      let transactionRecord;
-      if (existingTransaction) {
-        transactionRecord = await this.prisma.transactionHistory.update({
-          where: { id: existingTransaction.id },
-          data: {
-            status: 'success',
-            amount: amountInNgn,
-            balance_before: balanceBefore,
-            balance_after: balanceAfter,
-            meta_data: {
-              paystack_webhook_payload: data,
-              webhook_received_at: new Date().toISOString(),
-            },
-            updatedAt: new Date()
-          }
-        });
-        console.log(colors.green(`Updated transaction record for DVA payment: ${reference}`));
-        
-        // Store sender details if available and not already stored
-        if (senderName && senderAccountNumber && senderBank) {
-          try {
-            // Check if sender details already exist
-            const existingSenderDetails = await this.prisma.senderDetails.findUnique({
-              where: { transaction_id: transactionRecord.id }
-            });
+      // Wrap all database operations in a transaction to ensure atomicity
+      // All operations must succeed together or fail together
+      const transactionRecord = await this.prisma.$transaction(async (tx) => {
+        let txRecord;
 
-            if (existingSenderDetails) {
-              // Update existing sender details
-              await this.prisma.senderDetails.update({
-                where: { transaction_id: transactionRecord.id },
-                data: {
-                  sender_name: senderName,
-                  sender_account_number: senderAccountNumber,
-                  sender_bank: senderBank,
-                }
+        if (existingTransaction) {
+          // Update existing transaction
+          txRecord = await tx.transactionHistory.update({
+            where: { id: existingTransaction.id },
+            data: {
+              status: 'success',
+              amount: amountInNgn,
+              balance_before: balanceBefore,
+              balance_after: balanceAfter,
+              meta_data: {
+                paystack_webhook_payload: data,
+                webhook_received_at: new Date().toISOString(),
+              },
+              updatedAt: new Date()
+            }
+          });
+          console.log(colors.green(`Updated transaction record for DVA payment: ${reference}`));
+          
+          // Store sender details if available and not already stored
+          if (senderName && senderAccountNumber && senderBank) {
+            try {
+              // Check if sender details already exist
+              const existingSenderDetails = await tx.senderDetails.findUnique({
+                where: { transaction_id: txRecord.id }
               });
-              console.log(colors.cyan(`✅ Updated sender details for transaction ${reference}`));
-            } else {
-              // Create new sender details
-              await this.prisma.senderDetails.create({
+
+              if (existingSenderDetails) {
+                // Update existing sender details
+                await tx.senderDetails.update({
+                  where: { transaction_id: txRecord.id },
+                  data: {
+                    sender_name: senderName,
+                    sender_account_number: senderAccountNumber,
+                    sender_bank: senderBank,
+                  }
+                });
+                console.log(colors.cyan(`✅ Updated sender details for transaction ${reference}`));
+              } else {
+                // Create new sender details
+                await tx.senderDetails.create({
+                  data: {
+                    transaction_id: txRecord.id,
+                    sender_name: senderName,
+                    sender_account_number: senderAccountNumber,
+                    sender_bank: senderBank,
+                  }
+                });
+                console.log(colors.cyan(`✅ Stored sender details for transaction ${reference}`));
+              }
+            } catch (senderError: any) {
+              // Log but don't fail if sender details creation/update fails
+              console.warn(colors.yellow(`⚠️  Could not store sender details: ${senderError.message}`));
+            }
+          }
+        } else {
+          // Find the DVA account for this user
+          const dvaAccount = await tx.account.findFirst({
+            where: {
+              user_id: user.id,
+              account_status: 'active',
+              account_number: authorization?.receiver_bank_account_number || undefined,
+            }
+          });
+
+          // Create new transaction record
+          txRecord = await tx.transactionHistory.create({
+            data: {
+              user_id: user.id,
+              account_id: dvaAccount?.id || null,
+              amount: amountInNgn,
+              transaction_type: 'deposit',
+              credit_debit: 'credit',
+              description: `Transfer from ${this.formatSenderNameForDescription(senderName)}`,
+              status: 'success',
+              currency_type: 'ngn',
+              payment_method: 'bank_transfer',
+              payment_channel: 'paystack',
+              transaction_reference: reference,
+              balance_before: balanceBefore,
+              balance_after: balanceAfter,
+              meta_data: {
+                paystack_webhook_payload: data,
+                webhook_received_at: new Date().toISOString(),
+              },
+              createdAt: paid_at ? new Date(paid_at) : new Date(),
+            }
+          });
+          console.log(colors.green(`Created transaction record for DVA payment: ${reference}`));
+          
+          // Store sender details if available
+          if (senderName && senderAccountNumber && senderBank) {
+            try {
+              await tx.senderDetails.create({
                 data: {
-                  transaction_id: transactionRecord.id,
+                  transaction_id: txRecord.id,
                   sender_name: senderName,
                   sender_account_number: senderAccountNumber,
                   sender_bank: senderBank,
                 }
               });
               console.log(colors.cyan(`✅ Stored sender details for transaction ${reference}`));
+            } catch (senderError: any) {
+              // Log but don't fail if sender details creation fails
+              console.warn(colors.yellow(`⚠️  Could not store sender details: ${senderError.message}`));
             }
-          } catch (senderError: any) {
-            // Log but don't fail if sender details creation/update fails
-            console.warn(colors.yellow(`⚠️  Could not store sender details: ${senderError.message}`));
+          } else {
+            console.log(colors.yellow(`⚠️  Sender details not available in webhook payload`));
           }
         }
-      } else {
-        // Find the DVA account for this user
-        const dvaAccount = await this.prisma.account.findFirst({
-          where: {
-            user_id: user.id,
-            account_status: 'active',
-            account_number: authorization?.receiver_bank_account_number || undefined,
-          }
-        });
 
-        transactionRecord = await this.prisma.transactionHistory.create({
-          data: {
-            user_id: user.id,
-            account_id: dvaAccount?.id || null,
-            amount: amountInNgn,
-            transaction_type: 'deposit',
-            credit_debit: 'credit',
-            description: `DVA Payment received via ${authorization?.receiver_bank || 'Bank Transfer'}`,
-            status: 'success',
-            currency_type: 'ngn',
-            payment_method: 'bank_transfer',
-            payment_channel: 'paystack',
-            transaction_reference: reference,
-            balance_before: balanceBefore,
-            balance_after: balanceAfter,
-            meta_data: {
-              paystack_webhook_payload: data,
-              webhook_received_at: new Date().toISOString(),
-            },
-            createdAt: paid_at ? new Date(paid_at) : new Date(),
-          }
-        });
-        console.log(colors.green(`Created transaction record for DVA payment: ${reference}`));
+        // Update wallet balance (must succeed for transaction to commit)
+        // user.wallet is guaranteed to exist due to check above
+        const walletId = user.wallet!.id;
+        const currentAllTimeFunding = user.wallet!.all_time_fuunding;
         
-        // Store sender details if available
-        if (senderName && senderAccountNumber && senderBank) {
-          try {
-            await this.prisma.senderDetails.create({
-              data: {
-                transaction_id: transactionRecord.id,
-                sender_name: senderName,
-                sender_account_number: senderAccountNumber,
-                sender_bank: senderBank,
-              }
-            });
-            console.log(colors.cyan(`✅ Stored sender details for transaction ${reference}`));
-          } catch (senderError: any) {
-            // Log but don't fail if sender details creation fails
-            console.warn(colors.yellow(`⚠️  Could not store sender details: ${senderError.message}`));
+        console.log(colors.cyan(`Updating wallet ${walletId}: balance ${balanceBefore} → ${balanceAfter}, funding: ${currentAllTimeFunding} → ${currentAllTimeFunding + amountInNgn}`));
+        
+        const updatedWallet = await tx.wallet.update({
+          where: { id: walletId },
+          data: {
+            current_balance: balanceAfter,
+            all_time_fuunding: currentAllTimeFunding + amountInNgn,
+            updatedAt: new Date()
           }
-        } else {
-          console.log(colors.yellow(`⚠️  Sender details not available in webhook payload`));
-        }
-      }
+        });
+        
+        console.log(colors.green(`✅ Wallet updated successfully. New balance: ${updatedWallet.current_balance}`));
 
-      // Update wallet balance
-      await this.prisma.wallet.update({
-        where: { id: user.wallet.id },
-        data: {
-          current_balance: balanceAfter,
-          all_time_fuunding: user.wallet.all_time_fuunding + amountInNgn,
-          updatedAt: new Date()
-        }
+        // Return transaction record for use outside transaction
+        return txRecord;
       });
 
-      console.log(colors.green(`✅ Successfully processed DVA payment:`));
-      console.log(colors.green(`   Reference: ${reference}`));
-      console.log(colors.green(`   User: ${user.email}`));
-      console.log(colors.green(`   Amount: ${amountInNgn} NGN`));
-      console.log(colors.green(`   Balance: ${balanceBefore} → ${balanceAfter} NGN`));
-      console.log(colors.green(`   Account: ${authorization?.receiver_bank_account_number || 'N/A'}`));
+      // Verify wallet was actually updated (read fresh from DB)
+      const verifyWallet = await this.prisma.wallet.findUnique({
+        where: { id: user.wallet!.id },
+        select: { current_balance: true, all_time_fuunding: true },
+      });
+      
+      if (verifyWallet) {
+        console.log(colors.green(`✅ Successfully processed DVA payment:`));
+        console.log(colors.green(`   Reference: ${reference}`));
+        console.log(colors.green(`   User: ${user.email || user.id}`));
+        console.log(colors.green(`   Amount: ${amountInNgn} NGN`));
+        console.log(colors.green(`   Balance: ${balanceBefore} → ${balanceAfter} NGN (verified: ${verifyWallet.current_balance})`));
+        console.log(colors.green(`   Account: ${authorization?.receiver_bank_account_number || 'N/A'}`));
+        
+        // Warn if balance doesn't match expected value
+        if (Math.abs(verifyWallet.current_balance - balanceAfter) > 0.01) {
+          console.error(colors.red(`⚠️  WALLET BALANCE MISMATCH! Expected: ${balanceAfter}, Actual: ${verifyWallet.current_balance}`));
+        }
+      } else {
+        console.error(colors.red(`❌ Wallet not found after transaction!`));
+      }
+
+      // Send push notification (non-blocking - don't fail if notification fails)
+      try {
+        await this.pushNotificationService.sendTransactionNotification(
+          user.id,
+          'deposit',
+          amountInNgn,
+          'success',
+          transactionRecord.id,
+        );
+        console.log(colors.cyan(`📱 Deposit notification push sent to user ${user.id}`));
+      } catch (pushError: any) {
+        // Log push notification error but don't fail the webhook processing
+        console.warn(colors.yellow(`⚠️  Failed to send push notification: ${pushError.message}`));
+      }
 
       // Send deposit notification email (non-blocking - don't fail if email fails)
-      try {
-        // Get bank name from authorization or DVA account
-        const bankName = authorization?.receiver_bank || 
-                        (await this.prisma.account.findFirst({
-                          where: {
-                            user_id: user.id,
-                            account_status: 'active',
-                            account_number: authorization?.receiver_bank_account_number || undefined,
-                          }
-                        }))?.bank_name || 
-                        'Bank Transfer';
+      // Only send if user has an email
+      if (user.email) {
+        try {
+          // Get bank name from authorization or DVA account
+          const bankName = authorization?.receiver_bank || 
+                          (await this.prisma.account.findFirst({
+                            where: {
+                              user_id: user.id,
+                              account_status: 'active',
+                              account_number: authorization?.receiver_bank_account_number || undefined,
+                            }
+                          }))?.bank_name || 
+                          'Bank Transfer';
 
-        const transactionDate = new Date(paid_at || createdAt || new Date()).toLocaleString('en-NG', {
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          timeZone: 'Africa/Lagos'
-        });
+          const transactionDate = new Date(paid_at || createdAt || new Date()).toLocaleString('en-NG', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZone: 'Africa/Lagos'
+          });
 
-        await this.emailService.sendDepositNotificationEmail(
-          user.email,
-          user.first_name || 'Valued Customer',
-          amountInNgn,
-          balanceAfter,
-          reference,
-          authorization?.receiver_bank_account_number || 'N/A',
-          bankName,
-          transactionDate,
-          senderName,
-          senderAccountNumber,
-          senderBank
-        );
-        
-        console.log(colors.cyan(`📧 Deposit notification email sent to ${user.email}`));
-      } catch (emailError: any) {
-        // Log email error but don't fail the webhook processing
-        console.warn(colors.yellow(`⚠️  Failed to send deposit notification email: ${emailError.message}`));
+          await this.emailService.sendDepositNotificationEmail(
+            user.email,
+            user.first_name || 'Valued Customer',
+            amountInNgn,
+            balanceAfter,
+            reference,
+            authorization?.receiver_bank_account_number || 'N/A',
+            bankName,
+            transactionDate,
+            senderName,
+            senderAccountNumber,
+            senderBank
+          );
+          
+          console.log(colors.cyan(`📧 Deposit notification email sent to ${user.email}`));
+        } catch (emailError: any) {
+          // Log email error but don't fail the webhook processing
+          console.warn(colors.yellow(`⚠️  Failed to send deposit notification email: ${emailError.message}`));
+        }
+      } else {
+        console.log(colors.yellow(`⚠️  User ${user.id} does not have an email address. Skipping deposit notification email.`));
       }
 
     } catch (error: any) {

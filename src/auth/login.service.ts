@@ -247,6 +247,12 @@ export class LoginService {
         // Return registration progress status (same format as registration service)
       const regData = registrationProgress.registration_data as any;
 
+      // Check if user exists and get email (user might exist even if registration is in progress)
+      const user = await this.prisma.user.findFirst({
+        where: { phone_number: formattedPhone },
+        select: { email: true },
+      });
+
       // Build steps object using helper
       const steps = RegistrationStepsHelper.buildStepsObject(
         registrationProgress,
@@ -310,6 +316,7 @@ export class LoginService {
           steps: steps,
           registration_data: {
             phone_number: formattedPhone,
+            email: user?.email || null,
             referral_code: registrationProgress.referral_code,
             created_at: registrationProgress.createdAt,
             updated_at: registrationProgress.updatedAt,
@@ -609,7 +616,7 @@ export class LoginService {
       }
 
       // 8. Generate access token
-      const access_token = await this.signToken(user.id, user.email);
+      const access_token = await this.signToken(user.id, user.email, user.phone_number);
 
       // 9. Track device (if device metadata is provided)
       if (deviceMetadata && deviceMetadata.device_id) {
@@ -882,7 +889,7 @@ export class LoginService {
       }
 
       // 7. Generate access token
-      const access_token = await this.signToken(user.id, user.email);
+      const access_token = await this.signToken(user.id, user.email, user.phone_number);
 
       // 8. Track device (if device metadata is provided)
       if (deviceMetadata && deviceMetadata.device_id) {
@@ -951,10 +958,11 @@ export class LoginService {
   /**
    * Sign JWT token
    */
-  private async signToken(userId: string, email: string): Promise<string> {
+  private async signToken(userId: string, email: string | null, phone_number: string | null): Promise<string> {
     const payload = {
       sub: userId,
-      email,
+      email: email || null,
+      phone_number: phone_number || null,
     };
 
     const secret = this.config.get('JWT_SECRET');

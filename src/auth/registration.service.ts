@@ -1780,7 +1780,7 @@ export class RegistrationService {
       const newUser = await this.prisma.user.create({
         data: {
           phone_number: formattedPhone,
-          email: email || `${formattedPhone.replace('+', '')}@smipay.temp`, // Temporary email if not provided
+          email: '',
           password: passwordHash,
           hash: passwordHash,
           smipay_tag: smipayTag,

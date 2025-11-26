@@ -29,7 +29,7 @@ export class UserController{
     @UseGuards(AuthGuard('jwt'))
     @Get('fetch-user-profile')
     fetchUserprofile(@Request() req) {
-        return this.userService.fetchUserProfile(req.user)
+        return this.userService.fetchUserProfileForApp(req.user)
     }
 
     @UseGuards(AuthGuard('jwt'))

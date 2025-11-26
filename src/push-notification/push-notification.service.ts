@@ -287,7 +287,7 @@ export class PushNotificationService {
     transactionId?: string,
   ): Promise<void> {
     try {
-      const title = status === 'success' ? '✅ Transaction Successful' : '❌ Transaction Failed';
+      const title = status === 'success' ? 'Transaction Successful 🥳' : 'Transaction Failed ❌';
       const body =
         status === 'success'
           ? `Your ${transactionType} of ₦${amount.toLocaleString()} was successful`
