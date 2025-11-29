@@ -16,7 +16,7 @@ import { SecurityEventService } from 'src/auth/helpers/security-event.service';
     RegistrationRateLimiter, // Required by RateLimitGuard
     SecurityEventService, // Required by RateLimitGuard
   ],
-  exports: [SecurityHeadersGuard, RateLimitGuard],
+  exports: [SecurityHeadersGuard, RateLimitGuard, RegistrationRateLimiter, SecurityEventService],
 })
 export class CommonModule {}
 

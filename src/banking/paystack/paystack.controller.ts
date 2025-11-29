@@ -2,6 +2,9 @@ import { Body, Controller, Delete, Get, Post, Request, UseGuards } from '@nestjs
 import { PaystackService } from './paystack.service';
 import { AuthGuard } from '@nestjs/passport';
 import { AssignDvaDto } from './dto/dva.dto';
+import { SecurityHeadersGuard } from 'src/common/guards/security-headers.guard';
+import { RateLimitGuard } from 'src/common/guards/rate-limit.guard';
+import { VerifyAccountNumberDto } from '../dto/accountNo-creation.dto';
 
 @Controller('banking/paystack')
 export class PaystackController {
@@ -35,6 +38,18 @@ export class PaystackController {
     @Get('list-all-dvas')
     listAllDedicatedVirtualAccounts() {
         return this.paystackService.listAllDedicatedVirtualAccounts();
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Get('fetch-all-banks')
+    fetchAllBanks() {
+        return this.paystackService.fetchAllBanks();
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Post('verify-account-number')
+    verifyAccountNumber(@Body() dto: VerifyAccountNumberDto) {
+        return this.paystackService.verifyAccountNumber(dto.account_number, dto.bank_code);
     }
 }
 

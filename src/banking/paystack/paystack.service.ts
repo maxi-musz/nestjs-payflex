@@ -603,4 +603,102 @@ export class PaystackService {
             throw new HttpException("Failed to deactivate dedicated virtual account", HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
+
+    /**
+     * Fetch all banks from Paystack
+     */
+    async fetchAllBanks() {
+        this.logger.log("Fetching all banks from Paystack");
+
+        try {
+            const response = await axios.get(
+                `${this.paystackBaseUrl}/bank`,
+                { headers: this.getHeaders() }
+            );
+
+            if (!response.data.status) {
+                const errorMessage = response.data.message || "Failed to fetch banks";
+                this.logger.error(`Failed to fetch banks: ${errorMessage}`);
+                throw new HttpException(errorMessage, HttpStatus.BAD_REQUEST);
+            }
+
+            const formatted = response.data.data.map((bank: any) => ({
+                id: bank.id,
+                name: bank.name,
+                code: bank.code,
+            }));
+
+            this.logger.log(`Successfully fetched ${formatted.length} banks from Paystack`);
+
+            return new ApiResponseDto(
+                true,
+                "Banks retrieved successfully",
+                formatted
+            );
+
+        } catch (error: any) {
+            this.logger.error(`Error fetching banks: ${error.message}`, error.stack);
+            
+            if (error.response?.data) {
+                const paystackMessage = error.response.data.message || "Failed to fetch banks";
+                throw new HttpException(paystackMessage, error.response.status || HttpStatus.BAD_REQUEST);
+            }
+            
+            if (error instanceof HttpException) {
+                throw error;
+            }
+            
+            throw new HttpException("Failed to fetch banks", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Verify account number with Paystack
+     */
+    async verifyAccountNumber(account_number: string, bank_code: string) {
+        this.logger.log(`Verifying account number: ${account_number} for bank: ${bank_code}`);
+
+        try {
+            const response = await axios.get(
+                `${this.paystackBaseUrl}/bank/resolve`,
+                {
+                    params: { account_number, bank_code },
+                    headers: this.getHeaders()
+                }
+            );
+
+            const { status, data, message } = response.data;
+
+            if (status) {
+                this.logger.log(`Account name successfully retrieved: ${data.account_name}`);
+                return new ApiResponseDto(
+                    true,
+                    "Account verified successfully",
+                    {
+                        account_name: data.account_name,
+                        account_number: account_number,
+                        bank_code: bank_code,
+                    }
+                );
+            }
+
+            const errorMessage = message || data?.message || "Failed to verify account number";
+            this.logger.error(`Failed to verify account: ${errorMessage}`);
+            throw new HttpException(errorMessage, HttpStatus.BAD_REQUEST);
+
+        } catch (error: any) {
+            this.logger.error(`Error verifying account number: ${error.message}`, error.stack);
+            
+            if (error.response?.data) {
+                const paystackMessage = error.response.data.message || error.response.data.error || "Failed to verify account number";
+                throw new HttpException(paystackMessage, error.response.status || HttpStatus.BAD_REQUEST);
+            }
+            
+            if (error instanceof HttpException) {
+                throw error;
+            }
+            
+            throw new HttpException("Failed to verify account number", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
 }
