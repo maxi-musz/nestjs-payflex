@@ -10,6 +10,7 @@ import { generateSessionId } from 'src/common/helper_functions/generators';
 import { CreateVirtualAccountDto, InitiateTransferDto, VerifyAccountNumberDto } from './dto/accountNo-creation.dto';
 import { ConfigService } from '@nestjs/config';
 import { error } from 'console';
+import { BankProviderFactory } from './bank-providers/bank-provider.factory';
 
 // Determine Paystack environment key
 const paystackKey =
@@ -37,6 +38,7 @@ export class BankingService {
     constructor(
         private readonly configService: ConfigService,
         private readonly prisma: PrismaService,
+        private readonly bankProviderFactory: BankProviderFactory,
     ) {
         this.apiUrl = 'https://api.flutterwave.com/v3';
         this.secretKey = this.configService.get<string>('FLW_SECRET_KEY') || '';
@@ -197,8 +199,9 @@ export class BankingService {
                     }
                 });
             } catch (error) {
-                console.error(colors.red(`Error verifying transaction with Paystack: ${error}`));
-                throw new Error(`Failed to verify transaction with Paystack: ${error.message}`);
+                console.error(colors.red(`Error verifying transaction with Paystack:`), error);
+                // Return user-friendly error, do not throw generic Error
+                return new ApiResponseDto(false, "Unable to verify payment at this time. Please try again later.");
             }
     
             // Extract relevant data from Paystack response
@@ -258,8 +261,9 @@ export class BankingService {
             return new ApiResponseDto(true, "Payment verified successfully", formattedResponse);
     
         } catch (error) {
-            console.error(colors.red(`Verification error: ${error.message}`));
-            throw new Error(`Verification error: ${error.message}`);
+            console.error(colors.red("Verification error while processing payment:"), error);
+            // Always return ApiResponseDto with simple, user-friendly message
+            return new ApiResponseDto(false, "Unable to verify payment at this time. Please try again later.");
         }
     }
 
@@ -653,75 +657,38 @@ export class BankingService {
     }
 
     async fetchAllBanks() {
-        console.log(colors.cyan("Fetching all banks..."));
-
-
+        console.log(colors.cyan("Fetching all banks via provider..."));
 
         try {
-            const response = await axios.get(`https://api.paystack.co/bank`, {
-                headers: this.getHeaders(),
-            });
+            const provider = this.bankProviderFactory.getProvider();
+            const banks = await provider.fetchAllBanks();
 
-            // console.log("Response: ", response.data);
+            console.log(colors.magenta(`Fetched all banks successfully via ${provider.getProviderName()}`));
 
-            const { status, data } = response.data;
-            if(!status) {
-                console.log(colors.red(`Error fetching banks: ${error}`));
-                return new ApiResponseDto(false, "Error fetching banks");
-            }
-
-            const formattedPaystackBanks = data.map(bank => ({
-                id: bank.id,
-                name: bank.name,
-                code: bank.code
-            }));
-
-            console.log(colors.magenta("Fetched all banks successfully"));
-
-            return new ApiResponseDto(true, "Fetched all banks successfully", formattedPaystackBanks);
-            
-            
+            return new ApiResponseDto(true, "Fetched all banks successfully", banks);
         } catch (error) {
-            
+            console.error(colors.red("Error fetching banks via provider:"), error);
+            return new ApiResponseDto(false, "Error fetching banks");
         }
-        
     }
 
-    async verifyAccountNumberPaystack(dto: VerifyAccountNumberDto, userPayload: any) {
-        console.log("User verifying account number".blue)
+    async verifyAccountNumber(dto: VerifyAccountNumberDto, userPayload: any) {
+        console.log(colors.cyan("User verifying account number via bank provider"));
 
-        const reqBody = {
-            account_number: dto.account_number,
-            bank_code: dto.bank_code
-        }
-    
         try {
-            const response = await axios.get(`https://api.paystack.co/bank/resolve`, {
-                params: reqBody,
-                headers: {
-                    Authorization: `Bearer ${process.env.PAYSTACK_TEST_SECRET_KEY}`
-                }
-            });
-    
-            const { status, data } = response.data;
-    
-            if (status) {
-                console.log("Account name successfully retrieved: ", data.account_name);
-                return new ApiResponseDto(true, "Bank details verified successfully", data.account_name);
-            } else {
-                console.log(`Failed to verify bank details: ${data.message}`);
-                return new ApiResponseDto(false, `Failed to verify bank details: ${data.message}`);
+            const provider = this.bankProviderFactory.getProvider();
+            const result = await provider.verifyAccountNumber(dto.account_number, dto.bank_code);
+
+            if (result.success) {
+                console.log(colors.green(`Account name successfully retrieved via ${provider.getProviderName()}: ${result.account_name}`));
+                return new ApiResponseDto(true, "Bank details verified successfully", result.account_name);
             }
+
+            console.log(colors.red(`Failed to verify bank details via ${provider.getProviderName()}: ${result.error}`));
+            return new ApiResponseDto(false, result.error || "Failed to verify bank details");
         } catch (error) {
-            // Handle the error message and extract the response message
-            if (error.response && error.response.data && error.response.data.message) {
-                console.error(error.response.data.message);
-                return new ApiResponseDto(false, error.response.data.message);
-            } else {
-                // For unexpected errors
-                console.error("Unexpected error verifying bank details", error);
-                return new ApiResponseDto(false, "An unexpected error occurred while verifying bank details");
-            }
+            console.error(colors.red("Unexpected error verifying bank details via provider"), error);
+            return new ApiResponseDto(false, "An unexpected error occurred while verifying bank details");
         }
     }
 
@@ -779,6 +746,5 @@ export class BankingService {
         }
     }
 
-    // Paystack webhook handlers have been moved to PaystackWebhookService
-    // See: src/webhooks/paystack-webhook/paystack-webhook.service.ts
+   
 }

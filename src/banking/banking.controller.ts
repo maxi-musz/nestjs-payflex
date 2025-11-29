@@ -54,7 +54,7 @@ export class BankingController {
     @UseGuards(AuthGuard('jwt'))
     @Post('verify-account-number')
     verifyAccountNumberPaystack(@Body() dto: VerifyAccountNumberDto, @Request() req) {
-        return this.bankingService.verifyAccountNumberPaystack(dto, req.user)
+        return this.bankingService.verifyAccountNumber(dto, req.user)
     }
 
     @UseGuards(AuthGuard('jwt'))

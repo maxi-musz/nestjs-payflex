@@ -4,12 +4,13 @@ import { BankingController } from './banking.controller';
 import { PaystackModule } from './paystack/paystack.module';
 import { SmipayModule } from './smipay/smipay.module';
 import { DvaProviderFactory } from './dva-providers/dva-provider.factory';
+import { BankProviderFactory } from './bank-providers/bank-provider.factory';
 import { PrismaModule } from 'src/prisma/prisma.module';
 
 @Module({
   imports: [PaystackModule, SmipayModule, PrismaModule],
-  providers: [BankingService, DvaProviderFactory],
+  providers: [BankingService, DvaProviderFactory, BankProviderFactory],
   controllers: [BankingController],
-  exports: [BankingService, DvaProviderFactory],
+  exports: [BankingService, DvaProviderFactory, BankProviderFactory],
 })
 export class BankingModule {}

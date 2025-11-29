@@ -1086,17 +1086,49 @@ export class RegistrationService {
           ),
         );
 
+        // TEMPORARY OVERRIDE: Skip face verification by auto-completing step 4
+        // To REVERT later, simply comment out this block and uncomment the original one below it.
+        await this.prisma.registrationProgress.update({
+          where: { phone_number: formattedPhone },
+          data: {
+            step_4_status: 'completed',
+            face_verification_status: 'verified',
+            updatedAt: new Date(),
+          },
+        });
+
         return new ApiResponseDto(true, 'ID information already submitted', {
           session_id: registrationProgress.id,
           step: 3,
-          next_step: 'FACE_VERIFICATION',
+          // TEMPORARY: Skip face verification and go straight to residential address (step 5)
+          next_step: 'RESIDENTIAL_ADDRESS',
           id_type: existingRegistrationData.id_type,
           id_verification_status: registrationProgress.id_verification_status || 'pending',
-          can_proceed: registrationProgress.step_3_status === 'completed' && registrationProgress.id_verification_status === 'verified',
+          can_proceed:
+            registrationProgress.step_3_status === 'completed' &&
+            registrationProgress.id_verification_status === 'verified',
           message: registrationProgress.step_3_status === 'completed' && registrationProgress.id_verification_status === 'verified'
-            ? 'ID verification completed. You can proceed to face verification.'
+            ? 'ID verification completed. You can proceed to the next step.'
             : 'ID verification is pending. Please wait for verification to complete.',
         });
+
+        // ORIGINAL BEHAVIOUR (for when you want to re‑enable face verification):
+        //
+        // return new ApiResponseDto(true, 'ID information already submitted', {
+        //   session_id: registrationProgress.id,
+        //   step: 3,
+        //   next_step: 'FACE_VERIFICATION',
+        //   id_type: existingRegistrationData.id_type,
+        //   id_verification_status: registrationProgress.id_verification_status || 'pending',
+        //   can_proceed:
+        //     registrationProgress.step_3_status === 'completed' &&
+        //     registrationProgress.id_verification_status === 'verified',
+        //   message:
+        //     registrationProgress.step_3_status === 'completed' &&
+        //     registrationProgress.id_verification_status === 'verified'
+        //       ? 'ID verification completed. You can proceed to face verification.'
+        //       : 'ID verification is pending. Please wait for verification to complete.',
+        // });
       }
 
       // 9. Perform KYC verification using configured provider
@@ -1163,6 +1195,10 @@ export class RegistrationService {
           current_step: 3,
           registration_data: updatedRegistrationData,
           id_verification_status: verificationStatus,
+          // TEMPORARY OVERRIDE: Skip face verification by auto-completing step 4
+          // To REVERT later, comment out the two lines below and uncomment the original block further down.
+          step_4_status: 'completed',
+          face_verification_status: 'verified',
           updatedAt: new Date(),
         },
       });
@@ -1191,27 +1227,50 @@ export class RegistrationService {
       // 11. Prepare response based on verification status
       let message = '';
       if (verificationStatus === 'verified') {
-        message = `${idType} verified successfully. You can proceed to face verification.`;
+        message = `${idType} verified successfully. You can proceed to the next step.`;
       } else if (verificationStatus === 'pending') {
         message = `${idType} submitted. Verification is in progress. You will be notified when verification is complete.`;
       } else {
         message = `${idType} verification failed: ${verificationResult.error || 'Unknown error'}. Please check your ${idType} and try again.`;
       }
 
+      // TEMPORARY OVERRIDE RESPONSE (skips face verification and goes to residential address)
+      const responseData = {
+        session_id: registrationProgress.id,
+        step: 3,
+        next_step:
+          verificationStatus === 'failed'
+            ? 'ID_INFORMATION'
+            : 'RESIDENTIAL_ADDRESS',
+        id_type: idType,
+        id_verification_status: verificationStatus,
+        can_proceed: canProceed,
+        verification_provider: this.kycService.getProviderName(),
+        verification_data: verificationResult.data || null,
+        steps: steps,
+      };
+
+      // ORIGINAL RESPONSE (for when you want to re‑enable face verification):
+      //
+      // const responseData = {
+      //   session_id: registrationProgress.id,
+      //   step: 3,
+      //   next_step:
+      //     verificationStatus === 'verified'
+      //       ? 'FACE_VERIFICATION'
+      //       : 'ID_INFORMATION',
+      //   id_type: idType,
+      //   id_verification_status: verificationStatus,
+      //   can_proceed: canProceed,
+      //   verification_provider: this.kycService.getProviderName(),
+      //   verification_data: verificationResult.data || null,
+      //   steps: steps,
+      // };
+
       return new ApiResponseDto(
         verificationStatus !== 'failed',
         message,
-        {
-          session_id: registrationProgress.id,
-          step: 3,
-          next_step: verificationStatus === 'verified' ? 'FACE_VERIFICATION' : 'ID_INFORMATION',
-          id_type: idType,
-          id_verification_status: verificationStatus,
-          can_proceed: canProceed,
-          verification_provider: this.kycService.getProviderName(),
-          verification_data: verificationResult.data || null,
-          steps: steps,
-        },
+        responseData,
       );
     } catch (error) {
       this.logger.error(

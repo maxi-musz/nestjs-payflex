@@ -257,18 +257,30 @@ export class RegistrationStepsHelper {
           };
         }
         if (isCompleted && !isVerified) {
-          // ID submitted but not verified yet
+          // ID submitted but not verified yet - user must wait for verification
+          // Return step 3 so user stays on pending verification screen
           return {
             stepNumber: step.stepNumber,
             stepKey: step.stepKey,
-            nextStep: step.stepKey, // Stay on same step
+            nextStep: step.stepKey, // Stay on same step (pending verification)
             canProceed: false,
           };
         }
         if (isCompleted && isVerified) {
-          // Step 3 verified, check next step
+          // Step 3 verified, check next step (will skip step 4)
           continue;
         }
+      }
+
+      // TEMPORARY: Special handling for step 4 (Face Verification) - Skip entirely
+      // IMPORTANT: This only executes if step 3 is verified (see step 3 logic above)
+      // If step 3 is pending, we return early and never reach this code
+      // To REVERT later, comment out this entire block
+      if (step.stepNumber === 4) {
+        // Step 4 is being skipped temporarily
+        // Only reached if step 3 is completed AND verified
+        // Continue to step 5 (Residential Address)
+        continue;
       }
 
       // For other steps
