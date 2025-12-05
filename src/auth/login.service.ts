@@ -132,7 +132,7 @@ export class LoginService {
       const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number!);
       if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
         throw new BadRequestException(
-          'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+          'Phone number must be in format: 234XXXXXXXXXX',
         );
       }
 
@@ -456,7 +456,7 @@ export class LoginService {
         const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number!);
         if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
           throw new BadRequestException(
-            'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+            'Phone number must be in format: 234XXXXXXXXXX',
           );
         }
 
@@ -731,7 +731,7 @@ export class LoginService {
         const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number!);
         if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
           throw new BadRequestException(
-            'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+            'Phone number must be in format: 234XXXXXXXXXX',
           );
         }
 

@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import * as colors from 'colors/safe';
 import { IBankProvider, BankInfo, AccountVerificationResult } from './bank-provider.interface';
+import { getBankLogo } from 'src/common/helper_functions/bank-logos';
 
 export class PaystackBankProvider implements IBankProvider {
   private readonly baseUrl: string;
@@ -41,6 +42,7 @@ export class PaystackBankProvider implements IBankProvider {
       id: bank.id,
       name: bank.name,
       code: bank.code,
+      logo_url: getBankLogo(bank.code, bank.name) || null,
     }));
 
     console.log(colors.magenta('[PaystackBankProvider] Fetched all banks successfully'));

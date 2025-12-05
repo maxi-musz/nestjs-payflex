@@ -12,7 +12,8 @@ import {
     ValidateIf,
     Matches,
   } from "class-validator";
-  import { Type } from "class-transformer";
+  import { Type, Transform } from "class-transformer";
+  import { PhoneValidator } from "../helpers/phone.validator";
   
   class AddressDto {
     @IsString()
@@ -88,8 +89,12 @@ export class RequestEmailOTPDto {
 
   @IsString()
   @IsOptional()
-  @Matches(/^\+234[0-9]{10}$/, {
-    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  @Transform(({ value }) => {
+    // Strip + sign and format to 234XXXXXXXXXX
+    return value ? PhoneValidator.formatPhoneToE164(value) : value;
+  })
+  @Matches(/^234[0-9]{10}$/, {
+    message: 'Phone number must be in format: 234XXXXXXXXXX (or +234XXXXXXXXXX)',
   })
   phone_number?: string; // Optional: to identify user when adding email for first time
 }
@@ -107,8 +112,12 @@ export class VerifyEmailOTPDto {
 
   @IsString()
   @IsOptional()
-  @Matches(/^\+234[0-9]{10}$/, {
-    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  @Transform(({ value }) => {
+    // Strip + sign and format to 234XXXXXXXXXX
+    return value ? PhoneValidator.formatPhoneToE164(value) : value;
+  })
+  @Matches(/^234[0-9]{10}$/, {
+    message: 'Phone number must be in format: 234XXXXXXXXXX (or +234XXXXXXXXXX)',
   })
   phone_number?: string; // Optional: to identify user when adding email for first time
 }

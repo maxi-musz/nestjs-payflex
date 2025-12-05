@@ -7,6 +7,7 @@ export interface BankInfo {
   id: string | number;
   name: string;
   code: string;
+  logo_url?: string | null; // Bank logo URL (optional)
 }
 
 export interface AccountVerificationResult {

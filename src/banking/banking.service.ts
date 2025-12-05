@@ -678,7 +678,7 @@ export class BankingService {
         try {
             const provider = this.bankProviderFactory.getProvider();
             const result = await provider.verifyAccountNumber(dto.account_number, dto.bank_code);
-
+    
             if (result.success) {
                 console.log(colors.green(`Account name successfully retrieved via ${provider.getProviderName()}: ${result.account_name}`));
                 return new ApiResponseDto(true, "Bank details verified successfully", result.account_name);
@@ -688,7 +688,7 @@ export class BankingService {
             return new ApiResponseDto(false, result.error || "Failed to verify bank details");
         } catch (error) {
             console.error(colors.red("Unexpected error verifying bank details via provider"), error);
-            return new ApiResponseDto(false, "An unexpected error occurred while verifying bank details");
+                return new ApiResponseDto(false, "An unexpected error occurred while verifying bank details");
         }
     }
 

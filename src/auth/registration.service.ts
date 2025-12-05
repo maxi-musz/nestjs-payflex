@@ -57,7 +57,7 @@ export class RegistrationService {
       const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
       if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
         throw new BadRequestException(
-          'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+          'Phone number must be in format: 234XXXXXXXXXX',
         );
       }
 
@@ -165,7 +165,40 @@ export class RegistrationService {
         // If OTP expired, generate and send new one
         if (!isOtpValid) {
           this.logger.log(`OTP expired for ${formattedPhone}. Generating new OTP...`);
-          await this.otpService.generateAndSendOTP(formattedPhone);
+          try {
+            await this.otpService.generateAndSendOTP(formattedPhone);
+          } catch (otpError) {
+            // If OTP sending fails, clear the stored OTP and return error
+            this.logger.error(
+              colors.red(
+                `Failed to send OTP during registration resume for ${formattedPhone}: ${otpError.message}`,
+              ),
+              otpError.stack,
+            );
+
+            // Clear the stored OTP since sending failed
+            try {
+              await this.prisma.registrationProgress.update({
+                where: { phone_number: formattedPhone },
+                data: {
+                  otp: null,
+                  otp_expires_at: null,
+                },
+              });
+            } catch (clearError) {
+              this.logger.error(
+                colors.red(
+                  `Failed to clear OTP after sending failure for ${formattedPhone}: ${clearError.message}`,
+                ),
+              );
+            }
+
+            // Return user-friendly error message
+            throw new HttpException(
+              'Failed to send OTP. Please check your phone number and try again, or contact support if the issue persists.',
+              HttpStatus.SERVICE_UNAVAILABLE,
+            );
+          }
         }
 
         // Update device metadata if device changed (allow continuation on new device)
@@ -223,14 +256,48 @@ export class RegistrationService {
       }
 
       // 10. Generate and send OTP
-      await this.otpService.generateAndSendOTP(formattedPhone);
+      // Wrap in try-catch to handle OTP sending failures specifically
+      try {
+        await this.otpService.generateAndSendOTP(formattedPhone);
+      } catch (otpError) {
+        // If OTP sending fails, clear the stored OTP and return error
+        this.logger.error(
+          colors.red(
+            `Failed to send OTP during registration for ${formattedPhone}: ${otpError.message}`,
+          ),
+          otpError.stack,
+        );
+
+        // Clear the stored OTP since sending failed
+        try {
+          await this.prisma.registrationProgress.update({
+            where: { phone_number: formattedPhone },
+            data: {
+              otp: null,
+              otp_expires_at: null,
+            },
+          });
+        } catch (clearError) {
+          this.logger.error(
+            colors.red(
+              `Failed to clear OTP after sending failure for ${formattedPhone}: ${clearError.message}`,
+            ),
+          );
+        }
+
+        // Return user-friendly error message
+        throw new HttpException(
+          'Failed to send OTP. Please check your phone number and try again, or contact support if the issue persists.',
+          HttpStatus.SERVICE_UNAVAILABLE,
+        );
+      }
 
       // 11. Note: Device will be stored in UserDevice table when user completes registration
       // The device_metadata is already stored in RegistrationProgress.device_metadata
       // When registration completes and User is created, call:
       // deviceTracker.registerOrUpdateDevice(userId, deviceMetadata, ipAddress)
 
-      // 11. Prepare response
+      // 12. Prepare response
       const sessionId = registrationProgress.id;
       const otpExpiresIn = this.otpService.getOTPExpirySeconds();
 
@@ -347,7 +414,7 @@ export class RegistrationService {
       const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
       if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
         throw new BadRequestException(
-          'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+          'Phone number must be in format: 234XXXXXXXXXX',
         );
       }
 
@@ -427,7 +494,41 @@ export class RegistrationService {
       }
 
       // 9. Generate and send new OTP
-      await this.otpService.generateAndSendOTP(formattedPhone);
+      // Wrap in try-catch to handle OTP sending failures specifically
+      try {
+        await this.otpService.generateAndSendOTP(formattedPhone);
+      } catch (otpError) {
+        // If OTP sending fails, clear the stored OTP and return error
+        this.logger.error(
+          colors.red(
+            `Failed to resend OTP for ${formattedPhone}: ${otpError.message}`,
+          ),
+          otpError.stack,
+        );
+
+        // Clear the stored OTP since sending failed
+        try {
+          await this.prisma.registrationProgress.update({
+            where: { phone_number: formattedPhone },
+            data: {
+              otp: null,
+              otp_expires_at: null,
+            },
+          });
+        } catch (clearError) {
+          this.logger.error(
+            colors.red(
+              `Failed to clear OTP after resend failure for ${formattedPhone}: ${clearError.message}`,
+            ),
+          );
+        }
+
+        // Return user-friendly error message
+        throw new HttpException(
+          'Failed to send OTP. Please check your phone number and try again, or contact support if the issue persists.',
+          HttpStatus.SERVICE_UNAVAILABLE,
+        );
+      }
 
       // Fetch updated registration progress to get latest step statuses
       const updatedRegistrationProgress = await this.prisma.registrationProgress.findUnique({
@@ -499,7 +600,7 @@ export class RegistrationService {
       const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
       if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
         throw new BadRequestException(
-          'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+          'Phone number must be in format: 234XXXXXXXXXX',
         );
       }
 
@@ -1033,7 +1134,7 @@ export class RegistrationService {
       const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
       this.logger.log(colors.cyan(`Formatted phone number: ${formattedPhone}`));
       if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
-        return new ApiResponseDto(false, 'Phone number must be in E.164 format (+234XXXXXXXXXX)', null);
+        return new ApiResponseDto(false, 'Phone number must be in format: 234XXXXXXXXXX', null);
       }
 
       // Note: Security headers are now handled by SecurityHeadersGuard at controller level
@@ -1236,18 +1337,18 @@ export class RegistrationService {
 
       // TEMPORARY OVERRIDE RESPONSE (skips face verification and goes to residential address)
       const responseData = {
-        session_id: registrationProgress.id,
-        step: 3,
+          session_id: registrationProgress.id,
+          step: 3,
         next_step:
           verificationStatus === 'failed'
             ? 'ID_INFORMATION'
             : 'RESIDENTIAL_ADDRESS',
-        id_type: idType,
-        id_verification_status: verificationStatus,
-        can_proceed: canProceed,
-        verification_provider: this.kycService.getProviderName(),
-        verification_data: verificationResult.data || null,
-        steps: steps,
+          id_type: idType,
+          id_verification_status: verificationStatus,
+          can_proceed: canProceed,
+          verification_provider: this.kycService.getProviderName(),
+          verification_data: verificationResult.data || null,
+          steps: steps,
       };
 
       // ORIGINAL RESPONSE (for when you want to re‑enable face verification):
@@ -1312,7 +1413,7 @@ export class RegistrationService {
       const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
       this.logger.log(colors.cyan(`Formatted phone number: ${formattedPhone}`));
       if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
-        return new ApiResponseDto(false, 'Phone number must be in E.164 format (+234XXXXXXXXXX)', null);
+        return new ApiResponseDto(false, 'Phone number must be in format: 234XXXXXXXXXX', null);
       }
 
       // 2. Find registration progress
@@ -1450,7 +1551,7 @@ export class RegistrationService {
       const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
       this.logger.log(colors.cyan(`Formatted phone number: ${formattedPhone}`));
       if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
-        return new ApiResponseDto(false, 'Phone number must be in E.164 format (+234XXXXXXXXXX)', null);
+        return new ApiResponseDto(false, 'Phone number must be in format: 234XXXXXXXXXX', null);
       }
 
       // 2. Find registration progress
@@ -1621,7 +1722,7 @@ export class RegistrationService {
       const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
       this.logger.log(colors.cyan(`Formatted phone number: ${formattedPhone}`));
       if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
-        return new ApiResponseDto(false, 'Phone number must be in E.164 format (+234XXXXXXXXXX)', null);
+        return new ApiResponseDto(false, 'Phone number must be in format: 234XXXXXXXXXX', null);
       }
 
       // 2. Find registration progress
@@ -1767,7 +1868,7 @@ export class RegistrationService {
       const formattedPhone = PhoneValidator.formatPhoneToE164(dto.phone_number);
       this.logger.log(colors.cyan(`Formatted phone number: ${formattedPhone}`));
       if (!PhoneValidator.validatePhoneNumber(formattedPhone)) {
-        return new ApiResponseDto(false, 'Phone number must be in E.164 format (+234XXXXXXXXXX)', null);
+        return new ApiResponseDto(false, 'Phone number must be in format: 234XXXXXXXXXX', null);
       }
 
       // 2. Find registration progress

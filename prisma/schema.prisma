@@ -70,6 +70,7 @@ model User {
   userDevices        UserDevice[]     @relation("UserDevices")
   supportTickets     SupportTicket[]  @relation("UserSupportTickets")
   supportMessages    SupportMessage[] @relation("UserSupportMessages")
+  paystackTransferRecipients PaystackTransferRecipient[] @relation("PaystackTransferRecipients")
 }
 
 model ProfileImage {
@@ -753,4 +754,38 @@ model Tier {
 
   @@index([tier])
   @@index([is_active])
+}
+
+// Paystack Transfer Recipient Model
+model PaystackTransferRecipient {
+  id            String   @id @default(uuid())
+  user_id       String   // User who created this recipient
+  user          User     @relation("PaystackTransferRecipients", fields: [user_id], references: [id], onDelete: Cascade)
+
+  // Paystack recipient details
+  recipient_code String  @unique // Paystack recipient code (RCP_xxx)
+  paystack_id    Int?    // Paystack recipient ID
+  type           String  @default("nuban") // nuban, mobile_money, etc.
+  name           String  // Recipient name
+  account_number String  // Bank account number
+  bank_code      String  // Bank code
+  bank_name      String? // Bank name
+  currency       String  @default("NGN")
+  
+  // Status
+  active         Boolean @default(true)
+  is_deleted     Boolean @default(false)
+
+  // Metadata
+  paystack_details Json? // Full Paystack response data
+  metadata        Json?  @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([user_id, account_number, bank_code]) // One recipient per user per account
+  @@index([user_id])
+  @@index([recipient_code])
+  @@index([account_number])
+  @@index([active])
 }

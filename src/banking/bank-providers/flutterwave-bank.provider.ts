@@ -4,6 +4,7 @@ import axios from 'axios';
 import * as colors from 'colors/safe';
 import { IBankProvider, BankInfo, AccountVerificationResult } from './bank-provider.interface';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
+import { getBankLogo } from 'src/common/helper_functions/bank-logos';
 
 export class FlutterwaveBankProvider implements IBankProvider {
   private readonly baseUrl: string;
@@ -51,6 +52,7 @@ export class FlutterwaveBankProvider implements IBankProvider {
       id: bank.id,
       name: bank.name,
       code: bank.code,
+      logo_url: getBankLogo(bank.code, bank.name) || null,
     }));
 
     this.logger.log(colors.magenta('[FlutterwaveBankProvider] Fetched all banks successfully'));

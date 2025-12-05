@@ -1,12 +1,13 @@
-import { BadRequestException, HttpException, HttpStatus, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import { CreatePaystackCustomerDto, AssignDvaDto } from './dto/dva.dto';
+import { getBankLogo, initializeBankLogosCache } from 'src/common/helper_functions/bank-logos';
 
 @Injectable()
-export class PaystackService {
+export class PaystackService implements OnModuleInit {
     private readonly logger = new Logger(PaystackService.name);
     private readonly paystackBaseUrl = 'https://api.paystack.co';
     private readonly paystackSecretKey: string;
@@ -23,6 +24,20 @@ export class PaystackService {
         // Validate API key is set
         if (!this.paystackSecretKey) {
             this.logger.warn('Paystack secret key is not configured. DVA features will not work.');
+        }
+    }
+
+    /**
+     * Initialize bank logos cache on module startup
+     * This pre-fetches all bank data so logos are available immediately
+     */
+    async onModuleInit() {
+        try {
+            this.logger.log('Initializing bank logos cache...');
+            await initializeBankLogosCache();
+            this.logger.log('Bank logos cache initialized successfully');
+        } catch (error) {
+            this.logger.warn('Failed to initialize bank logos cache (will use fallback):', error.message);
         }
     }
 
@@ -626,6 +641,7 @@ export class PaystackService {
                 id: bank.id,
                 name: bank.name,
                 code: bank.code,
+                logo_url: getBankLogo(bank.code, bank.name) || null, // Add logo URL if available
             }));
 
             this.logger.log(`Successfully fetched ${formatted.length} banks from Paystack`);
@@ -699,6 +715,446 @@ export class PaystackService {
             }
             
             throw new HttpException("Failed to verify account number", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Generate a unique transfer reference
+     */
+    private generateTransferReference(): string {
+        const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        let reference = '';
+        
+        for (let i = 0; i < 16; i++) {
+            reference += characters.charAt(Math.floor(Math.random() * characters.length));
+        }
+        
+        return reference;
+    }
+
+    /**
+     * Create or get transfer recipient
+     * Checks database first, then Paystack API if not found
+     */
+    private async createOrGetTransferRecipient(
+        account_number: string,
+        bank_code: string,
+        account_name: string,
+        user_id: string,
+        currency: string = 'NGN'
+    ) {
+        this.logger.log(`Creating/getting transfer recipient for account: ${account_number}`);
+
+        try {
+            // First, check if recipient exists in our database
+            const existingRecipient = await this.prisma.paystackTransferRecipient.findUnique({
+                where: {
+                    user_id_account_number_bank_code: {
+                        user_id: user_id,
+                        account_number: account_number,
+                        bank_code: bank_code,
+                    }
+                }
+            });
+
+            if (existingRecipient && existingRecipient.active && !existingRecipient.is_deleted) {
+                this.logger.log(`Found existing recipient in database: ${existingRecipient.recipient_code}`);
+                return {
+                    recipient_code: existingRecipient.recipient_code,
+                    id: existingRecipient.paystack_id,
+                    name: existingRecipient.name,
+                    account_number: existingRecipient.account_number,
+                    bank_code: existingRecipient.bank_code,
+                    bank_name: existingRecipient.bank_name,
+                    currency: existingRecipient.currency,
+                    active: existingRecipient.active,
+                };
+            }
+
+            // If not in database, create on Paystack
+            const recipientData = {
+                type: 'nuban',
+                name: account_name,
+                account_number: account_number,
+                bank_code: bank_code,
+                currency: currency,
+            };
+
+            const response = await axios.post(
+                `${this.paystackBaseUrl}/transferrecipient`,
+                recipientData,
+                { headers: this.getHeaders() }
+            );
+
+            if (!response.data.status) {
+                const errorMessage = response.data.message || "Failed to create transfer recipient";
+                this.logger.error(`Failed to create transfer recipient: ${errorMessage}`);
+                throw new HttpException(errorMessage, HttpStatus.BAD_REQUEST);
+            }
+
+            const paystackRecipient = response.data.data;
+            this.logger.log(`Transfer recipient created/retrieved from Paystack: ${paystackRecipient.recipient_code}`);
+
+            // Save to database (upsert to handle duplicates)
+            const savedRecipient = await this.prisma.paystackTransferRecipient.upsert({
+                where: {
+                    user_id_account_number_bank_code: {
+                        user_id: user_id,
+                        account_number: account_number,
+                        bank_code: bank_code,
+                    }
+                },
+                update: {
+                    recipient_code: paystackRecipient.recipient_code,
+                    paystack_id: paystackRecipient.id,
+                    name: account_name,
+                    bank_name: paystackRecipient.details?.bank_name || null,
+                    active: paystackRecipient.active !== false,
+                    is_deleted: paystackRecipient.isDeleted === true,
+                    paystack_details: paystackRecipient,
+                    updatedAt: new Date(),
+                },
+                create: {
+                    user_id: user_id,
+                    recipient_code: paystackRecipient.recipient_code,
+                    paystack_id: paystackRecipient.id,
+                    type: paystackRecipient.type || 'nuban',
+                    name: account_name,
+                    account_number: account_number,
+                    bank_code: bank_code,
+                    bank_name: paystackRecipient.details?.bank_name || null,
+                    currency: currency,
+                    active: paystackRecipient.active !== false,
+                    is_deleted: paystackRecipient.isDeleted === true,
+                    paystack_details: paystackRecipient,
+                }
+            });
+
+            this.logger.log(`Transfer recipient saved to database: ${savedRecipient.id}`);
+            return paystackRecipient;
+
+        } catch (error: any) {
+            this.logger.error(`Error creating transfer recipient: ${error.message}`, error.stack);
+            
+            if (error.response?.data) {
+                const paystackMessage = error.response.data.message || "Failed to create transfer recipient";
+                throw new HttpException(paystackMessage, error.response.status || HttpStatus.BAD_REQUEST);
+            }
+            
+            if (error instanceof HttpException) {
+                throw error;
+            }
+            
+            throw new HttpException("Failed to create transfer recipient", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Initiate transfer - Creates recipient and sends money in a single call
+     * ACID compliant: Debits wallet FIRST, then calls Paystack, refunds only on actual failures
+     */
+    async initiateTransfer(
+        account_number: string,
+        bank_code: string,
+        amount: string,
+        beneficiary_name: string,
+        narration: string,
+        userPayload: any
+    ) {
+        const transferAmount = parseFloat(amount);
+        const transferReference = this.generateTransferReference();
+        
+        this.logger.log(`Initiating transfer: ${transferAmount} NGN to ${account_number} (${bank_code}), reference: ${transferReference}`);
+
+        // Check for existing transaction (idempotency)
+        const existingTx = await this.prisma.transactionHistory.findUnique({
+            where: { transaction_reference: transferReference }
+        });
+
+        if (existingTx) {
+            this.logger.log(`Found existing transaction with reference=${transferReference}, status=${existingTx.status}`);
+            
+            if (existingTx.status === 'success') {
+                // Return cached successful result
+                const cachedResponse = (existingTx.meta_data as any)?.paystack_response;
+                return new ApiResponseDto(true, 'Transfer already completed', cachedResponse || {
+                    transfer_reference: transferReference,
+                    transfer_code: (existingTx.meta_data as any)?.transfer_code,
+                    status: 'success',
+                    message: 'Transfer already completed'
+                });
+            }
+
+            // If pending or failed, return existing status
+            const statusMessage = existingTx.status === 'pending' 
+                ? 'Transfer is still processing'
+                : 'Previous transfer attempt failed';
+            
+            const cachedResponse = (existingTx.meta_data as any)?.paystack_response;
+            return new ApiResponseDto(
+                existingTx.status === 'pending',
+                statusMessage,
+                cachedResponse || {
+                    transfer_reference: transferReference,
+                    status: existingTx.status,
+                    transfer_code: (existingTx.meta_data as any)?.transfer_code
+                }
+            );
+        }
+
+        try {
+            // Get user details
+            const user = await this.prisma.user.findUnique({
+                where: { id: userPayload.sub },
+                include: { wallet: true }
+            });
+
+            if (!user) {
+                throw new NotFoundException("User not found");
+            }
+
+            if (!user.wallet) {
+                throw new BadRequestException("User wallet not found");
+            }
+
+            // Verify account number to get the actual account name
+            let accountName = beneficiary_name;
+            try {
+                const verifyResult = await this.verifyAccountNumber(account_number, bank_code);
+                if (verifyResult.success && verifyResult.data?.account_name) {
+                    accountName = verifyResult.data.account_name;
+                    this.logger.log(`Verified account name: ${accountName}`);
+                }
+            } catch (verifyError) {
+                this.logger.warn(`Account verification failed, using provided name: ${verifyError.message}`);
+                // Continue with provided beneficiary_name if verification fails
+            }
+
+            // Create or get transfer recipient
+            const recipient = await this.createOrGetTransferRecipient(
+                account_number,
+                bank_code,
+                accountName,
+                user.id,
+                'NGN'
+            );
+
+            const description = narration || `Transfer to ${accountName}`;
+
+            // CRITICAL: Debit wallet FIRST and create pending transaction atomically
+            // This ensures money is held before calling Paystack (ACID compliance)
+            const createdTx = await this.prisma.$transaction(async (tx) => {
+                // Prevent double-deduct: check existing by reference
+                const existing = await tx.transactionHistory.findUnique({ 
+                    where: { transaction_reference: transferReference } 
+                });
+                if (existing) return existing;
+
+                const wallet = await tx.wallet.findUnique({ 
+                    where: { user_id: userPayload.sub } 
+                });
+                
+                if (!wallet || Number(wallet.current_balance) < transferAmount) {
+                    throw new BadRequestException(
+                        `Insufficient balance. You have ${wallet?.current_balance || 0} NGN, but trying to send ${transferAmount} NGN`
+                    );
+                }
+
+                const balance_before = Number(wallet.current_balance);
+                const balance_after = balance_before - transferAmount;
+
+                // Debit wallet FIRST
+                await tx.wallet.update({
+                    where: { user_id: userPayload.sub },
+                    data: { current_balance: balance_after }
+                });
+
+                // Create pending transaction record
+                return await tx.transactionHistory.create({
+                    data: {
+                        user_id: userPayload.sub,
+                        amount: transferAmount,
+                        transaction_type: 'transfer',
+                        credit_debit: 'debit',
+                        description,
+                        status: 'pending',
+                        transaction_reference: transferReference,
+                        payment_method: 'wallet',
+                        payment_channel: 'paystack',
+                        balance_before,
+                        balance_after,
+                        meta_data: {
+                            account_number,
+                            bank_code,
+                            beneficiary_name: accountName,
+                            recipient_code: recipient.recipient_code,
+                        }
+                    }
+                });
+            });
+
+            // Now call Paystack API (money already debited)
+            const transferData = {
+                source: 'balance',
+                amount: Math.round(transferAmount * 100), // Convert to kobo
+                recipient: recipient.recipient_code,
+                reference: transferReference,
+                reason: description,
+            };
+
+            this.logger.log(`Calling Paystack transfer API with reference: ${transferReference}`);
+
+            const transferResponse = await axios.post(
+                `${this.paystackBaseUrl}/transfer`,
+                transferData,
+                { headers: this.getHeaders() }
+            );
+
+            const paystackData = transferResponse.data?.data || {};
+            const paystackStatus = paystackData.status?.toLowerCase() || '';
+            const paystackMessage = transferResponse.data?.message || '';
+
+            // Determine transaction status based on Paystack response
+            // Status can be: "success", "pending", "otp", "failed", "reversed"
+            const isSuccess = paystackStatus === 'success' && transferResponse.data.status === true;
+            const isProcessing = paystackStatus === 'pending' || paystackStatus === 'otp' || 
+                                paystackMessage.toLowerCase().includes('queued') ||
+                                paystackMessage.toLowerCase().includes('processing');
+            const isFailed = paystackStatus === 'failed' || 
+                           (!transferResponse.data.status && !isProcessing) ||
+                           (paystackData.failures && paystackData.failures.length > 0);
+
+            let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
+            let shouldRefund = false;
+            let errorMessage = '';
+
+            if (isSuccess) {
+                finalStatus = 'success';
+                this.logger.log(`Transfer successful: ${paystackData.transfer_code}`);
+            } else if (isFailed) {
+                finalStatus = 'failed';
+                shouldRefund = true;
+                errorMessage = paystackMessage || paystackData.failures?.[0]?.reason || 'Transfer failed';
+                this.logger.error(`Transfer failed: ${errorMessage}`);
+            } else if (isProcessing) {
+                // Keep as pending - transfer is processing, don't refund
+                finalStatus = 'pending';
+                this.logger.log(`Transfer is processing: ${paystackMessage || `Status: ${paystackStatus}`}`);
+            } else {
+                // Unknown status - treat as pending and log for investigation
+                finalStatus = 'pending';
+                this.logger.warn(`Unknown transfer status. Status: ${paystackStatus}, Message: ${paystackMessage}`);
+            }
+
+            // Update transaction with Paystack response
+            await this.prisma.transactionHistory.update({
+                where: { transaction_reference: transferReference },
+                data: {
+                    status: finalStatus,
+                    transaction_number: paystackData.id?.toString() || null,
+                    meta_data: {
+                        ...(createdTx.meta_data as any),
+                        paystack_response: transferResponse.data,
+                        transfer_code: paystackData.transfer_code,
+                        paystack_status: paystackStatus,
+                        paystack_id: paystackData.id,
+                    }
+                }
+            });
+
+            // Only refund on actual failures (not on processing/pending)
+            if (shouldRefund) {
+                await this.prisma.wallet.update({
+                    where: { user_id: userPayload.sub },
+                    data: { current_balance: { increment: transferAmount } }
+                });
+                
+                this.logger.log(`Refunded ${transferAmount} NGN to user wallet due to transfer failure`);
+                throw new HttpException(errorMessage, HttpStatus.BAD_REQUEST);
+            }
+
+            // If processing, return success response with pending status info
+            if (isProcessing) {
+                const formattedResponse = {
+                    id: createdTx.id,
+                    transfer_reference: transferReference,
+                    transfer_code: paystackData.transfer_code,
+                    status: 'processing',
+                    amount: transferAmount,
+                    recipient: {
+                        account_number,
+                        account_name: accountName,
+                        bank_code,
+                    },
+                    message: 'Transfer is being processed. Status will be updated via webhook.',
+                    paystack_response: transferResponse.data,
+                };
+                return new ApiResponseDto(true, 'Transfer is being processed', formattedResponse);
+            }
+
+            // Success response
+            const formattedResponse = {
+                id: createdTx.id,
+                transfer_reference: transferReference,
+                transfer_code: paystackData.transfer_code,
+                status: 'success',
+                amount: transferAmount,
+                recipient: {
+                    account_number,
+                    account_name: accountName,
+                    bank_code,
+                },
+                narration: description,
+                paystack_response: transferResponse.data,
+            };
+
+            this.logger.log(`Transfer completed successfully. Reference: ${transferReference}, Transfer Code: ${paystackData.transfer_code}`);
+            return new ApiResponseDto(true, 'Transfer successful', formattedResponse);
+
+        } catch (error: any) {
+            this.logger.error(`Error initiating transfer: ${error.message}`, error.stack);
+            
+            // Update transaction status to failed and refund (idempotent - safe to retry)
+            try {
+                await this.prisma.$transaction(async (tx) => {
+                    await tx.transactionHistory.update({
+                        where: { transaction_reference: transferReference },
+                        data: { 
+                            status: 'failed', 
+                            meta_data: { 
+                                transfer_reference: transferReference,
+                                account_number,
+                                bank_code,
+                                beneficiary_name,
+                                paystack_error: error.response?.data || error.message || 'Unknown error'
+                            } 
+                        }
+                    });
+                    await tx.wallet.update({
+                        where: { user_id: userPayload.sub },
+                        data: { current_balance: { increment: transferAmount } }
+                    });
+                });
+            } catch (updateError: any) {
+                // Transaction might not exist if error occurred before creation
+                this.logger.warn(`Could not update transaction status: ${updateError.message}`);
+            }
+
+            if (error.response) {
+                this.logger.error('Paystack API Error Response:', JSON.stringify({
+                    status: error.response.status,
+                    statusText: error.response.statusText,
+                    data: error.response.data,
+                }, null, 2));
+                const message = error.response.data?.message || 'Failed to initiate transfer';
+                throw new HttpException(message, error.response.status || HttpStatus.BAD_REQUEST);
+            }
+            
+            if (error instanceof HttpException || error instanceof NotFoundException || error instanceof BadRequestException) {
+                throw error;
+            }
+            
+            throw new HttpException('Failed to initiate transfer', HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 }

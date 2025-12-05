@@ -13,7 +13,8 @@ import {
   ValidateIf,
   IsIn,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
+import { PhoneValidator } from '../helpers/phone.validator';
 
 export class DeviceMetadataDto {
   @IsString()
@@ -88,8 +89,12 @@ export class DeviceMetadataDto {
 export class StartRegistrationDto {
   @IsString()
   @IsNotEmpty()
-  @Matches(/^\+234[0-9]{10}$/, {
-    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  @Transform(({ value }) => {
+    // Strip + sign and format to 234XXXXXXXXXX
+    return PhoneValidator.formatPhoneToE164(value);
+  })
+  @Matches(/^234[0-9]{10}$/, {
+    message: 'Phone number must be in format: 234XXXXXXXXXX (or +234XXXXXXXXXX)',
   })
   phone_number: string;
 
@@ -111,8 +116,12 @@ export class StartRegistrationDto {
 export class ResendOtpDto {
   @IsString()
   @IsNotEmpty()
-  @Matches(/^\+234[0-9]{10}$/, {
-    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  @Transform(({ value }) => {
+    // Strip + sign and format to 234XXXXXXXXXX
+    return PhoneValidator.formatPhoneToE164(value);
+  })
+  @Matches(/^234[0-9]{10}$/, {
+    message: 'Phone number must be in format: 234XXXXXXXXXX (or +234XXXXXXXXXX)',
   })
   phone_number: string;
 
@@ -129,8 +138,12 @@ export class ResendOtpDto {
 export class VerifyOtpDto {
   @IsString()
   @IsNotEmpty()
-  @Matches(/^\+234[0-9]{10}$/, {
-    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  @Transform(({ value }) => {
+    // Strip + sign and format to 234XXXXXXXXXX
+    return PhoneValidator.formatPhoneToE164(value);
+  })
+  @Matches(/^234[0-9]{10}$/, {
+    message: 'Phone number must be in format: 234XXXXXXXXXX (or +234XXXXXXXXXX)',
   })
   phone_number: string;
 
@@ -151,8 +164,12 @@ export class VerifyOtpDto {
 export class SubmitIdInformationDto {
   @IsString()
   @IsNotEmpty()
-  @Matches(/^\+234[0-9]{10}$/, {
-    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  @Transform(({ value }) => {
+    // Strip + sign and format to 234XXXXXXXXXX
+    return PhoneValidator.formatPhoneToE164(value);
+  })
+  @Matches(/^234[0-9]{10}$/, {
+    message: 'Phone number must be in format: 234XXXXXXXXXX (or +234XXXXXXXXXX)',
   })
   phone_number: string;
 
@@ -186,8 +203,12 @@ export class CheckLoginStatusDto {
   @IsString()
   @IsOptional()
   @ValidateIf((o) => !o.email)
-  @Matches(/^\+234[0-9]{10}$/, {
-    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  @Transform(({ value }) => {
+    // Strip + sign and format to 234XXXXXXXXXX
+    return value ? PhoneValidator.formatPhoneToE164(value) : value;
+  })
+  @Matches(/^234[0-9]{10}$/, {
+    message: 'Phone number must be in format: 234XXXXXXXXXX (or +234XXXXXXXXXX)',
   })
   phone_number?: string;
 }
@@ -201,8 +222,12 @@ export class VerifyPasswordDto {
   @IsString()
   @IsOptional()
   @ValidateIf((o) => !o.email)
-  @Matches(/^\+234[0-9]{10}$/, {
-    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  @Transform(({ value }) => {
+    // Strip + sign and format to 234XXXXXXXXXX
+    return value ? PhoneValidator.formatPhoneToE164(value) : value;
+  })
+  @Matches(/^234[0-9]{10}$/, {
+    message: 'Phone number must be in format: 234XXXXXXXXXX (or +234XXXXXXXXXX)',
   })
   phone_number?: string;
 
@@ -226,8 +251,12 @@ export class VerifyLoginPasswordDto {
   @IsString()
   @IsOptional()
   @ValidateIf((o) => !o.email)
-  @Matches(/^\+234[0-9]{10}$/, {
-    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  @Transform(({ value }) => {
+    // Strip + sign and format to 234XXXXXXXXXX
+    return value ? PhoneValidator.formatPhoneToE164(value) : value;
+  })
+  @Matches(/^234[0-9]{10}$/, {
+    message: 'Phone number must be in format: 234XXXXXXXXXX (or +234XXXXXXXXXX)',
   })
   phone_number?: string;
 
@@ -276,8 +305,12 @@ export class AddressDto {
 export class SubmitResidentialAddressDto {
   @IsString()
   @IsNotEmpty()
-  @Matches(/^\+234[0-9]{10}$/, {
-    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  @Transform(({ value }) => {
+    // Strip + sign and format to 234XXXXXXXXXX
+    return PhoneValidator.formatPhoneToE164(value);
+  })
+  @Matches(/^234[0-9]{10}$/, {
+    message: 'Phone number must be in format: 234XXXXXXXXXX (or +234XXXXXXXXXX)',
   })
   phone_number: string;
 
@@ -338,8 +371,12 @@ export class PepDetailsDto {
 export class SubmitPepDeclarationDto {
   @IsString()
   @IsNotEmpty()
-  @Matches(/^\+234[0-9]{10}$/, {
-    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  @Transform(({ value }) => {
+    // Strip + sign and format to 234XXXXXXXXXX
+    return PhoneValidator.formatPhoneToE164(value);
+  })
+  @Matches(/^234[0-9]{10}$/, {
+    message: 'Phone number must be in format: 234XXXXXXXXXX (or +234XXXXXXXXXX)',
   })
   phone_number: string;
 
@@ -361,8 +398,12 @@ export class SubmitPepDeclarationDto {
 export class SubmitIncomeDeclarationDto {
   @IsString()
   @IsNotEmpty()
-  @Matches(/^\+234[0-9]{10}$/, {
-    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  @Transform(({ value }) => {
+    // Strip + sign and format to 234XXXXXXXXXX
+    return PhoneValidator.formatPhoneToE164(value);
+  })
+  @Matches(/^234[0-9]{10}$/, {
+    message: 'Phone number must be in format: 234XXXXXXXXXX (or +234XXXXXXXXXX)',
   })
   phone_number: string;
 
@@ -403,8 +444,12 @@ export class SubmitIncomeDeclarationDto {
 export class SubmitPasswordSetupDto {
   @IsString()
   @IsNotEmpty()
-  @Matches(/^\+234[0-9]{10}$/, {
-    message: 'Phone number must be in E.164 format (+234XXXXXXXXXX)',
+  @Transform(({ value }) => {
+    // Strip + sign and format to 234XXXXXXXXXX
+    return PhoneValidator.formatPhoneToE164(value);
+  })
+  @Matches(/^234[0-9]{10}$/, {
+    message: 'Phone number must be in format: 234XXXXXXXXXX (or +234XXXXXXXXXX)',
   })
   phone_number: string;
 

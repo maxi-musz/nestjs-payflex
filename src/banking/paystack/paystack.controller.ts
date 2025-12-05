@@ -4,7 +4,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { AssignDvaDto } from './dto/dva.dto';
 import { SecurityHeadersGuard } from 'src/common/guards/security-headers.guard';
 import { RateLimitGuard } from 'src/common/guards/rate-limit.guard';
-import { VerifyAccountNumberDto } from '../dto/accountNo-creation.dto';
+import { VerifyAccountNumberDto, InitiateTransferDto } from '../dto/accountNo-creation.dto';
 
 @Controller('banking/paystack')
 export class PaystackController {
@@ -50,6 +50,19 @@ export class PaystackController {
     @Post('verify-account-number')
     verifyAccountNumber(@Body() dto: VerifyAccountNumberDto) {
         return this.paystackService.verifyAccountNumber(dto.account_number, dto.bank_code);
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Post('initiate-transfer')
+    initiateTransfer(@Body() dto: InitiateTransferDto, @Request() req) {
+        return this.paystackService.initiateTransfer(
+            dto.account_number,
+            dto.bank_code,
+            dto.amount,
+            dto.beneficiary_name,
+            dto.narration,
+            req.user
+        );
     }
 }
 
