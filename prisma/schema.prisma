@@ -321,6 +321,8 @@ model Wallet {
   id                 String  @id @default(uuid())
   user_id            String  @unique
   current_balance    Float   @default(0)
+  balance_before     Float   @default(0)
+  balance_after      Float   @default(0)
   all_time_fuunding  Float   @default(0)
   all_time_withdrawn Float   @default(0)
   isActive           Boolean @default(true)

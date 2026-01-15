@@ -84,16 +84,46 @@ export class MinimalRegistrationService {
         },
       });
 
-      // Only block if user exists AND is fully registered (has password) or email is verified
-      // If user exists but not verified, allow them to request a new OTP
-      if (existingUser && (existingUser.password || existingUser.is_email_verified)) {
-        this.logger.warn(
-          colors.yellow(
-            `Email ${email} already registered. User ID: ${existingUser.id}`,
+      // If user exists and email is verified, return success response (not error)
+      // Frontend can handle this and prompt user to login
+      if (existingUser && existingUser.is_email_verified) {
+        this.logger.log(
+          colors.blue(
+            `Email ${email} already verified. User ID: ${existingUser.id}. Returning success response.`,
           ),
         );
-        throw new ConflictException(
-          'This email is already registered. Please login instead or use a different email.',
+        return new ApiResponseDto(
+          true,
+          'Email is already verified. Please login to continue.',
+          {
+            email: email,
+            email_already_verified: true,
+            is_registered: !!existingUser.password,
+            can_login: true,
+            message: existingUser.password
+              ? 'This email is already registered. Please login instead.'
+              : 'Email is already verified. Please complete your registration or login.',
+          },
+        );
+      }
+
+      // If user exists with password (fully registered), return success response
+      if (existingUser && existingUser.password) {
+        this.logger.log(
+          colors.blue(
+            `Email ${email} already registered. User ID: ${existingUser.id}. Returning success response.`,
+          ),
+        );
+        return new ApiResponseDto(
+          true,
+          'This email is already registered. Please login to continue.',
+          {
+            email: email,
+            email_already_verified: true,
+            is_registered: true,
+            can_login: true,
+            message: 'This email is already registered. Please login instead.',
+          },
         );
       }
 
@@ -250,28 +280,43 @@ export class MinimalRegistrationService {
       const email = dto.email;
       const otp = dto.otp;
 
-      // 1. Check if email already exists in User table (shouldn't happen if flow is correct)
-      const existingUser = await this.prisma.user.findUnique({
+      // 1. Find user by email
+      const user = await this.prisma.user.findUnique({
         where: { email },
-        select: { id: true },
+        select: {
+          id: true,
+          email: true,
+          is_email_verified: true,
+          password: true,
+          otp: true,
+          otp_expires_at: true,
+        },
       });
 
-      if (existingUser) {
-        this.logger.warn(
-          colors.yellow(
-            `Email ${email} already registered. User ID: ${existingUser.id}`,
+      // 2. If user exists and email is already verified, return success response (not error)
+      // Frontend can handle this and prompt user to login
+      if (user && user.is_email_verified) {
+        this.logger.log(
+          colors.blue(
+            `Email ${email} already verified. User ID: ${user.id}. Returning success response.`,
           ),
         );
-        throw new ConflictException(
-          'This email is already registered. Please login instead.',
+        return new ApiResponseDto(
+          true,
+          'Email already verified',
+          {
+            email: email,
+            email_already_verified: true,
+            is_registered: !!user.password,
+            can_login: true,
+            message: user.password
+              ? 'This email is already registered. Please login instead.'
+              : 'Email is already verified. Please complete your registration or login.',
+          },
         );
       }
 
-      // 2. Find user by email
-      const user = await this.prisma.user.findUnique({
-        where: { email },
-      });
-
+      // 3. Check if user exists
       if (!user) {
         this.logger.error(
           colors.red(
@@ -283,7 +328,7 @@ export class MinimalRegistrationService {
         );
       }
 
-      // 3. Check if OTP exists
+      // 4. Check if OTP exists
       if (!user.otp) {
         this.logger.error(
           colors.red(`No OTP found for email: ${email}. Please request a new OTP.`),
@@ -293,7 +338,7 @@ export class MinimalRegistrationService {
         );
       }
 
-      // 4. Check if OTP is expired
+      // 5. Check if OTP is expired
       if (
         !user.otp_expires_at ||
         new Date() > new Date(user.otp_expires_at)
@@ -306,7 +351,7 @@ export class MinimalRegistrationService {
         );
       }
 
-      // 5. Verify OTP matches
+      // 6. Verify OTP matches
       if (user.otp !== otp) {
         this.logger.warn(
           colors.yellow(
@@ -318,7 +363,7 @@ export class MinimalRegistrationService {
         );
       }
 
-      // 6. OTP is valid - mark email as verified
+      // 7. OTP is valid - mark email as verified
       await this.prisma.user.update({
         where: { email },
         data: {
@@ -479,34 +524,54 @@ export class MinimalRegistrationService {
       const smipayTag = await generateSmipayTag(this.prisma);
       this.logger.log(colors.green(`Smipay tag generated: ${smipayTag}`));
 
-      // 8. Update existing user with complete registration details
-      // The user was created in step 1 with email and temporary phone number
-      const newUser = await this.prisma.user.update({
-        where: { email },
-        data: {
-          phone_number: phoneNumber, // Update with real phone number
-          password: passwordHash,
-          hash: passwordHash,
-          smipay_tag: smipayTag,
-          first_name: firstName,
-          last_name: lastName,
-          referral_code: dto.referral_code || null, // Save referral code to user
-          is_email_verified: true, // Email is verified via OTP
-          is_phone_verified: false, // Phone not verified in minimal registration
-          agree_to_terms: true, // Implied by completing registration
-          updates_opt_in: false, // Default
-          account_status: 'active',
-          otp: null, // Clear any remaining OTP
-          otp_expires_at: null,
-          updatedAt: new Date(),
-        },
+      // 8. Use Prisma transaction to ensure user update and wallet creation are atomic
+      // If wallet creation fails, user update is rolled back
+      const { newUser, wallet } = await this.prisma.$transaction(async (tx) => {
+        // Update existing user with complete registration details
+        // The user was created in step 1 with email and temporary phone number
+        const updatedUser = await tx.user.update({
+          where: { email },
+          data: {
+            phone_number: phoneNumber, // Update with real phone number
+            password: passwordHash,
+            hash: passwordHash,
+            smipay_tag: smipayTag,
+            first_name: firstName,
+            last_name: lastName,
+            referral_code: dto.referral_code || null, // Save referral code to user
+            is_email_verified: true, // Email is verified via OTP
+            is_phone_verified: false, // Phone not verified in minimal registration
+            agree_to_terms: true, // Implied by completing registration
+            updates_opt_in: false, // Default
+            account_status: 'active',
+            otp: null, // Clear any remaining OTP
+            otp_expires_at: null,
+            updatedAt: new Date(),
+          },
+        });
+
+        // Create Wallet atomically with user update
+        const createdWallet = await tx.wallet.create({
+          data: {
+            user_id: updatedUser.id,
+            current_balance: 0,
+            all_time_fuunding: 0,
+            all_time_withdrawn: 0,
+            isActive: true,
+          },
+        });
+
+        return { newUser: updatedUser, wallet: createdWallet };
       });
 
       this.logger.log(
-        colors.green(`User created successfully: ${newUser.id}`),
+        colors.green(
+          `User and wallet created successfully in transaction. User ID: ${newUser.id}, Wallet ID: ${wallet.id}`,
+        ),
       );
 
       // 9. Save referral relationship if valid referral code was provided
+      // This is done outside transaction as it's not critical for registration
       if (dto.referral_code && referrerId) {
         try {
           await this.referralValidator.saveReferralRelationship(
@@ -530,26 +595,7 @@ export class MinimalRegistrationService {
         }
       }
 
-      // 10. Create Wallet
-      try {
-        await this.prisma.wallet.create({
-          data: {
-            user_id: newUser.id,
-            current_balance: 0,
-            all_time_fuunding: 0,
-            all_time_withdrawn: 0,
-            isActive: true,
-          },
-        });
-        this.logger.log(colors.green('Wallet created successfully'));
-      } catch (walletError) {
-        this.logger.error(
-          colors.red(`Error creating wallet: ${walletError.message}`),
-        );
-        // Don't fail registration if wallet creation fails - can be retried
-      }
-
-      // 11. Update referral relationship with user ID (if referral exists)
+      // 10. Update referral relationship with user ID (if referral exists)
       if (dto.referral_code && referrerId) {
         try {
           await this.prisma.referral.updateMany({
@@ -577,8 +623,7 @@ export class MinimalRegistrationService {
         }
       }
 
-      // 12. Registration is complete - user record is already updated above
-      // No need to update registration progress as we're using User table directly
+      // 11. Registration is complete - user record and wallet are already created in transaction above
 
       this.logger.log(
         colors.magenta(

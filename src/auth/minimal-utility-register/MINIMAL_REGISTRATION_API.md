@@ -39,13 +39,26 @@ All endpoints are under: `/auth/minimal-register`
 }
 ```
 
-### Response (Error - Email Already Registered)
+### Response (Email Already Verified - Success Response)
+When email is already verified, this returns a **success response** (not an error) so the app can handle it appropriately:
+
 ```json
 {
-  "statusCode": 409,
-  "message": "This email is already registered. Please login instead or use a different email."
+  "success": true,
+  "message": "Email is already verified. Please login to continue.",
+  "data": {
+    "email": "user@example.com",
+    "email_already_verified": true,
+    "is_registered": true,
+    "can_login": true,
+    "message": "This email is already registered. Please login instead."
+  }
 }
 ```
+
+**Note:** The `is_registered` field indicates if the user has completed registration (has password). The app should:
+- If `is_registered: true` → Redirect to login page
+- If `is_registered: false` → User can complete registration or login
 
 ---
 
