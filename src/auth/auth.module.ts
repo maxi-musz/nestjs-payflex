@@ -6,6 +6,8 @@ import { JwtStrategy } from "./strategy";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { RegistrationService } from "./registration.service";
 import { LoginService } from "./login.service";
+import { MinimalRegistrationService } from "./minimal-utility-register/minimal-registration.service";
+import { MinimalLoginService } from "./minimal-utility-register/minimal-login.service";
 import { RegistrationRateLimiter } from "./helpers/rate-limiter";
 import { OtpService } from "./helpers/otp.service";
 import { ReferralValidator } from "./helpers/referral.validator";
@@ -35,6 +37,8 @@ import { SmileIdProvider } from "./helpers/kyc-providers/smileid.provider";
         JwtStrategy,
         RegistrationService,
         LoginService,
+        MinimalRegistrationService,
+        MinimalLoginService,
         RegistrationRateLimiter,
         OtpService,
         ReferralValidator,

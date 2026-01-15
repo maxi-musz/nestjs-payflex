@@ -3,9 +3,13 @@ import { AuthService } from "./auth.service";
 import { AuthDto, RequestEmailOTPDto, ResetPasswordDto, SignInDto, VerifyEmailOTPDto, StartRegistrationDto } from "./dto";
 import { RegistrationService } from "./registration.service";
 import { LoginService } from "./login.service";
+import { MinimalRegistrationService } from "./minimal-utility-register/minimal-registration.service";
 import * as colors from "colors";
 import { Request } from 'express';
 import { DeviceMetadataDto, ResendOtpDto, VerifyOtpDto, SubmitIdInformationDto, CheckLoginStatusDto, VerifyPasswordDto, VerifyLoginPasswordDto, SubmitResidentialAddressDto, SubmitPepDeclarationDto, SubmitIncomeDeclarationDto, SubmitPasswordSetupDto } from "./dto/registration.dto";
+import { RequestEmailOTPDto as MinimalRequestEmailOTPDto, VerifyEmailOTPDto as MinimalVerifyEmailOTPDto, MinimalRegisterDto } from "./minimal-utility-register/dto/minimal-registration.dto";
+import { MinimalLoginDto } from "./minimal-utility-register/dto/minimal-login.dto";
+import { MinimalLoginService } from "./minimal-utility-register/minimal-login.service";
 import { SecurityHeadersGuard } from "src/common/guards/security-headers.guard";
 import { RateLimitGuard } from "src/common/guards/rate-limit.guard";
 
@@ -17,6 +21,8 @@ export class AuthController{
         private authService: AuthService,
         private registrationService: RegistrationService,
         private loginService: LoginService,
+        private minimalRegistrationService: MinimalRegistrationService,
+        private minimalLoginService: MinimalLoginService,
     ) {}
 
     /**
@@ -358,6 +364,102 @@ export class AuthController{
             );
         } catch (error) {
             this.logger.error(colors.red("Error in verify login password:"), error);
+            throw error;
+        }
+    }
+
+    // ============================================
+    // Minimal Utility Registration Endpoints
+    // ============================================
+
+    /**
+     * Request Email OTP for Minimal Registration
+     * Step 1: User provides email, receives OTP
+     */
+    @Post('minimal-register/request-email-otp')
+    @UseGuards(SecurityHeadersGuard, RateLimitGuard)
+    async requestMinimalEmailOTP(
+        @Body() dto: MinimalRequestEmailOTPDto,
+        @Ip() ipAddress: string,
+        @Req() req: Request,
+    ) {
+        try {
+            const clientIp = req.ip || ipAddress || req.socket.remoteAddress || 'unknown';
+            return await this.minimalRegistrationService.requestEmailOTP(
+                dto,
+                clientIp,
+            );
+        } catch (error) {
+            this.logger.error(colors.red("Error in minimal register request email OTP:"), error);
+            throw error;
+        }
+    }
+
+    /**
+     * Verify Email OTP for Minimal Registration
+     * Step 2: User verifies email with OTP
+     */
+    @Post('minimal-register/verify-email-otp')
+    @UseGuards(SecurityHeadersGuard, RateLimitGuard)
+    async verifyMinimalEmailOTP(
+        @Body() dto: MinimalVerifyEmailOTPDto,
+        @Ip() ipAddress: string,
+        @Req() req: Request,
+    ) {
+        try {
+            const clientIp = req.ip || ipAddress || req.socket.remoteAddress || 'unknown';
+            return await this.minimalRegistrationService.verifyEmailOTP(
+                dto,
+                clientIp,
+            );
+        } catch (error) {
+            this.logger.error(colors.red("Error in minimal register verify email OTP:"), error);
+            throw error;
+        }
+    }
+
+    /**
+     * Complete Minimal Registration
+     * Step 3: User completes registration with basic info
+     */
+    @Post('minimal-register/register')
+    @UseGuards(SecurityHeadersGuard, RateLimitGuard)
+    async minimalRegister(
+        @Body() dto: MinimalRegisterDto,
+        @Ip() ipAddress: string,
+        @Req() req: Request,
+    ) {
+        try {
+            const clientIp = req.ip || ipAddress || req.socket.remoteAddress || 'unknown';
+            return await this.minimalRegistrationService.register(
+                dto,
+                clientIp,
+            );
+        } catch (error) {
+            this.logger.error(colors.red("Error in minimal register:"), error);
+            throw error;
+        }
+    }
+
+    /**
+     * Minimal Login
+     * User can login with either email or phone number + password
+     */
+    @Post('minimal-register/login')
+    @UseGuards(SecurityHeadersGuard, RateLimitGuard)
+    async minimalLogin(
+        @Body() dto: MinimalLoginDto,
+        @Ip() ipAddress: string,
+        @Req() req: Request,
+    ) {
+        try {
+            const clientIp = req.ip || ipAddress || req.socket.remoteAddress || 'unknown';
+            return await this.minimalLoginService.login(
+                dto,
+                clientIp,
+            );
+        } catch (error) {
+            this.logger.error(colors.red("Error in minimal login:"), error);
             throw error;
         }
     }
