@@ -61,6 +61,10 @@ export class BankingService {
                 ? process.env.PAYSTACK_TEST_SECRET_KEY || ''
                 : process.env.PAYSTACK_LIVE_SECRET_KEY || '';
     
+        // Log which key is being used (without exposing the actual key)
+        console.log(colors.blue(`Using Paystack ${process.env.NODE_ENV === "development" ? "TEST" : "LIVE"} key`));
+        console.log(colors.blue(`Key prefix: ${paystackKey.substring(0, 7)}...`));
+    
         const amountInKobo = dto.amount * 100;
     
         // Fetch existing user with accounts
@@ -78,6 +82,8 @@ export class BankingService {
     
         try {
             // 1. Initialize Paystack payment
+            console.log(colors.blue("Initializing Paystack transaction..."));
+            
             const response = await axios.post(
                 'https://api.paystack.co/transaction/initialize',
                 {
@@ -87,20 +93,48 @@ export class BankingService {
                 },
                 {
                     headers: {
-                        Authorization: `Bearer ${process.env.PAYSTACK_TEST_SECRET_KEY}`,
+                        Authorization: `Bearer ${paystackKey}`, // Use the same key variable, not hardcoded
                         'Content-Type': 'application/json',
                     },
                 }
             );
 
+            // Log full Paystack response for debugging
+            console.log(colors.green(`Paystack Initialize Status: ${response.status}`));
+
             const wallet = await this.prisma.account.findFirst({
                 where: { user_id: existingUser.id }
             })
     
+            // Extract and validate response data
+            if (!response.data || !response.data.data) {
+                console.error(colors.red("Invalid Paystack response structure"));
+                // console.error(colors.red(`Full response: ${JSON.stringify(response.data)}`));
+                return new ApiResponseDto(false, "Invalid response from payment provider", response.data);
+            }
+    
             const { authorization_url, access_code, reference } = response.data.data;
+            
+            
+            console.log(colors.cyan(`  - reference: ${reference}`));
+            
+            // Validate extracted values
+            if (!reference) {
+                console.error(colors.red("Reference is missing from Paystack response!"));
+                return new ApiResponseDto(false, "Payment initialization failed: Missing reference", response.data);
+            }
+            
+            if (!access_code) {
+                console.error(colors.red("Access code is missing from Paystack response!"));
+                return new ApiResponseDto(false, "Payment initialization failed: Missing access code", response.data);
+            }
     
             // 2. Create transaction history record
-            await this.prisma.transactionHistory.create({
+            // console.log(colors.blue("Saving transaction to database..."));
+            // console.log(colors.blue(`Saving with reference: ${reference}`));
+            // console.log(colors.blue(`Saving with access_code (transaction_number): ${access_code}`));
+            
+            const createdTransaction = await this.prisma.transactionHistory.create({
                 data: {
                     account_id: wallet?.id,
                     user_id: existingUser?.id,
@@ -134,6 +168,18 @@ export class BankingService {
                 },
             });
 
+            // Verify what was saved
+            console.log(colors.green(`Transaction saved successfully. ID: ${createdTransaction.id}`));
+            
+            // // Double-check by querying back from DB
+            // const verifySaved = await this.prisma.transactionHistory.findUnique({
+            //     where: { id: createdTransaction.id },
+            //     select: { transaction_reference: true, transaction_number: true }
+            // });
+            // console.log(colors.cyan("Verification - Retrieved from DB:"));
+            // console.log(colors.cyan(`  - transaction_reference: ${verifySaved?.transaction_reference}`));
+            // console.log(colors.cyan(`  - transaction_number: ${verifySaved?.transaction_number}`));
+
             const clientResponse = {
                 authorization_url:  authorization_url,
                 reference: reference,
@@ -152,75 +198,195 @@ export class BankingService {
     }
 
     async verifyPaystackFunding(dto: PaystackFundingVerifyDto, userPayload: any) {
-        console.log(colors.cyan("Verifying wallet funding with Paystack"));
-    
-        
+        console.log(colors.cyan(`Verifying wallet funding with Paystack. Reference: ${dto.reference}`));
     
         try {
-            // Fetch the transaction from the database
-            const existingTransaction = await this.prisma.transactionHistory.findFirst({
-                where: { transaction_reference: dto.reference }
+            // 1. Validate reference is provided
+            if (!dto.reference || !dto.reference.trim()) {
+                console.log(colors.red("Transaction reference is missing or empty"));
+                return new ApiResponseDto(false, "Transaction reference is required");
+            }
+
+            let reference = dto.reference.trim();
+            const userId = userPayload?.sub;
+
+            if (!userId) {
+                console.log(colors.red("User ID is missing from token"));
+                return new ApiResponseDto(false, "Authentication error. Please login again.");
+            }
+
+            // 2. Fetch the transaction from the database
+            // Try to find by transaction_reference first (Paystack reference)
+            let existingTransaction = await this.prisma.transactionHistory.findFirst({
+                where: { transaction_reference: reference }
             });
+
+            // If not found, try transaction_number (access_code) - in case frontend sends wrong field
+            if (!existingTransaction) {
+                console.log(colors.yellow(`Transaction not found by reference, trying transaction_number: ${reference}`));
+                existingTransaction = await this.prisma.transactionHistory.findFirst({
+                    where: { transaction_number: reference }
+                });
+                
+                if (existingTransaction) {
+                    console.log(colors.yellow(`Found transaction by transaction_number. Using actual Paystack reference: ${existingTransaction.transaction_reference}`));
+                    // Use the actual Paystack reference for verification
+                    const actualReference = existingTransaction.transaction_reference;
+                    if (!actualReference) {
+                        console.log(colors.red(`Transaction found but has no transaction_reference stored`));
+                        return new ApiResponseDto(false, "Transaction found but missing payment reference. Please contact support.");
+                    }
+                    // Update reference to use the actual Paystack reference
+                    reference = actualReference;
+                }
+            }
     
-            // Validate transaction existence and amount
-            if (!existingTransaction || !existingTransaction.amount) {
-                console.log(colors.red("Transaction not found or amount is missing"));
-                throw new NotFoundException("Transaction not found or amount is missing");
+            // 3. Validate transaction exists
+            if (!existingTransaction) {
+                console.log(colors.red(`Transaction not found for reference: ${reference}`));
+                return new ApiResponseDto(false, "Transaction not found. Please check the reference and try again.");
             }
 
-            if(existingTransaction.status === "success") {
-                console.log(colors.red("Transaction already verified"));
-                return new ApiResponseDto(false, "Transaction already verified");
+            // Log the reference being used for Paystack verification
+            console.log(colors.blue(`Using Paystack reference for verification: ${reference}`));
+
+            // 4. Validate transaction belongs to the user
+            if (existingTransaction.user_id !== userId) {
+                console.log(colors.red(`Transaction ${reference} does not belong to user ${userId}`));
+                return new ApiResponseDto(false, "Transaction not found. Please check the reference and try again.");
+            }
+
+            // 5. Validate transaction has amount
+            if (!existingTransaction.amount || existingTransaction.amount <= 0) {
+                console.log(colors.red(`Transaction ${reference} has invalid amount: ${existingTransaction.amount}`));
+                return new ApiResponseDto(false, "Invalid transaction. Please contact support.");
+            }
+
+            // 6. Check if transaction is already verified
+            if (existingTransaction.status === "success") {
+                console.log(colors.yellow(`Transaction ${reference} already verified`));
+                return new ApiResponseDto(true, "Transaction already verified", {
+                    id: existingTransaction.id,
+                    amount: formatAmount(existingTransaction.amount),
+                    transaction_type: existingTransaction.transaction_type || "deposit",
+                    credit_debit: existingTransaction.credit_debit || "null",
+                    description: "wallet funding",
+                    status: "success",
+                    payment_method: "paystack",
+                    date: formatDate(existingTransaction.updatedAt)
+                });
+            }
+
+            // 6.5. Check if payment has been completed
+            // If status is "pending" or null, allow verification anyway (webhook might not have processed yet)
+            // This allows manual verification if user completed payment but webhook is delayed
+            if (existingTransaction.status === "pending" || !existingTransaction.status) {
+                console.log(colors.yellow(`Transaction ${reference} status is pending - proceeding with verification anyway`));
+                console.log(colors.yellow(`This allows manual verification if payment was completed but webhook hasn't processed yet`));
+                // Continue to verification - don't block it
             }
     
-            const amountInKobo = existingTransaction.amount * 100;
-
-            if (!dto.reference) {
-                throw new BadRequestException("Transaction reference is missing");
-            }
-
-            console.log("user id: ", userPayload.sub)
-
+            // 7. Get user wallet
             const userWallet = await this.prisma.wallet.findFirst({
-                where: { user_id: userPayload.sub }
-              })
+                where: { user_id: userId }
+            });
 
             if (!userWallet) {
-                console.log(colors.red("Wallet not found"));
-                throw new NotFoundException("Wallet not found");
+                console.log(colors.red(`Wallet not found for user: ${userId}`));
+                return new ApiResponseDto(false, "Wallet not found. Please contact support.");
             }
 
-            // Verify transaction with Paystack
+            const amountInKobo = existingTransaction.amount * 100;
+
+            // 8. Validate reference format (Paystack references are typically alphanumeric, 10+ characters)
+            // if (reference.length < 10) {
+            //     console.log(colors.red(`Invalid reference format: ${reference} (too short)`));
+            //     return new ApiResponseDto(false, "Invalid transaction reference format. Please check and try again.");
+            // }
+
+            // 9. Determine Paystack environment key (must match initialization)
+            const verifyPaystackKey =
+                process.env.NODE_ENV === "development"
+                    ? process.env.PAYSTACK_TEST_SECRET_KEY || ''
+                    : process.env.PAYSTACK_LIVE_SECRET_KEY || '';
+            
+            // Log which key is being used for verification (without exposing the actual key)
+            console.log(colors.blue(`Verifying with Paystack ${process.env.NODE_ENV === "development" ? "TEST" : "LIVE"} key`));
+            console.log(colors.blue(`Key prefix: ${verifyPaystackKey.substring(0, 7)}...`));
+
+            // 10. Verify transaction with Paystack
             let response: any;
             try {
-                response = await axios.get(`https://api.paystack.co/transaction/verify/${dto.reference}`, {
+                console.log(colors.blue(`Calling Paystack API with reference: ${reference}`));
+                response = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
                     headers: {
-                        Authorization: `Bearer ${paystackKey}`
-                    }
+                        Authorization: `Bearer ${verifyPaystackKey}`
+                    },
+                    timeout: 10000, // 10 second timeout
                 });
-            } catch (error) {
-                console.error(colors.red(`Error verifying transaction with Paystack:`), error);
-                // Return user-friendly error, do not throw generic Error
+                console.log(colors.green(`Paystack API response received successfully`));
+            } catch (error: any) {
+                // Log full error details for debugging
+                console.error(colors.red(`Error verifying transaction with Paystack:`), {
+                    message: error.message,
+                    status: error.response?.status,
+                    statusText: error.response?.statusText,
+                    data: error.response?.data,
+                    reference: reference
+                });
+                
+                // Handle specific error cases
+                if (error.response) {
+                    const status = error.response.status;
+                    const paystackMessage = error.response.data?.message || "Paystack API error";
+                    const paystackData = error.response.data?.data || null;
+                    
+                    console.log(colors.red(`Paystack Error Details: Status ${status}, Message: ${paystackMessage}`));
+                    
+                    if (status === 404) {
+                        return new ApiResponseDto(false, `Transaction reference "${reference}" not found on Paystack. Please ensure the payment was completed and try again.`);
+                    } else if (status === 400) {
+                        // 400 usually means invalid reference format or reference doesn't exist
+                        return new ApiResponseDto(false, `Invalid transaction reference. Please check the reference "${reference}" and ensure it's correct.`);
+                    } else if (status === 401) {
+                        return new ApiResponseDto(false, "Payment verification service error. Please contact support.");
+                    } else {
+                        return new ApiResponseDto(false, `Payment verification failed: ${paystackMessage}`);
+                    }
+                } else if (error.code === 'ECONNABORTED') {
+                    return new ApiResponseDto(false, "Payment verification timed out. Please try again.");
+                } else {
                 return new ApiResponseDto(false, "Unable to verify payment at this time. Please try again later.");
+                }
             }
     
-            // Extract relevant data from Paystack response
-            const { status: paystackStatus, amount: paystackKoboAmount } = response.data?.data;
-    
-            if (paystackStatus !== 'success') {
-                console.log(colors.red("Payment was not completed or successful"));
-                return new ApiResponseDto(false, "Payment was not completed or successful");
-            }
-    
-            // Validate that the amount paid matches the expected amount
-            if (paystackKoboAmount !== amountInKobo) {
-                console.log(colors.red("Amount mismatch detected"));
-                return new ApiResponseDto(false, "Payment amount does not match transaction amount");
+            // 9. Validate Paystack response structure
+            if (!response?.data?.data) {
+                console.error(colors.red("Invalid Paystack response structure"), JSON.stringify(response?.data));
+                return new ApiResponseDto(false, "Invalid response from payment provider. Please try again.");
             }
 
-            // update the payment ststaus in db to success
-            const updatedTx = await this.prisma.transactionHistory.update({
-                where: { transaction_reference: dto.reference },
+            // 10. Extract relevant data from Paystack response
+            const paystackData = response.data.data;
+            const paystackStatus = paystackData.status;
+            const paystackKoboAmount = paystackData.amount;
+    
+            if (paystackStatus !== 'success') {
+                console.log(colors.yellow(`Payment status from Paystack: ${paystackStatus}`));
+                return new ApiResponseDto(false, `Payment was not successful. Status: ${paystackStatus}`);
+            }
+    
+            // 12. Validate that the amount paid matches the expected amount
+            if (paystackKoboAmount !== amountInKobo) {
+                console.log(colors.red(`Amount mismatch. Expected: ${amountInKobo}, Got: ${paystackKoboAmount}`));
+                return new ApiResponseDto(false, "Payment amount does not match transaction amount. Please contact support.");
+            }
+
+            // 12. Use transaction to ensure atomicity of transaction update and wallet update
+            const { updatedTx, updatedWallet } = await this.prisma.$transaction(async (tx) => {
+                // Update transaction status
+                const transaction = await tx.transactionHistory.update({
+                    where: { transaction_reference: reference },
                 data: { 
                   status: paystackStatus,
                   updatedAt: new Date() 
@@ -231,20 +397,25 @@ export class BankingService {
                 }
               });
 
-                console.log(colors.cyan(`Transaction amount: , ${existingTransaction.amount}`)); 
-                console.log(colors.cyan(`Current wallet balance: ", ${userWallet.current_balance}`)); 
-
-                // Update wallet
-                const updatedWalletResult = await this.prisma.wallet.update({
-                where: { id: userWallet?.id },
+                // Update wallet balance atomically
+                const transactionAmount = existingTransaction.amount || 0;
+                const wallet = await tx.wallet.update({
+                    where: { id: userWallet.id },
                 data: {
-                    current_balance: userWallet.current_balance + existingTransaction.amount,
-                    all_time_fuunding: userWallet.all_time_fuunding + existingTransaction.amount,
-                    all_time_withdrawn: userWallet.all_time_withdrawn,
+                        current_balance: {
+                            increment: transactionAmount
+                        },
+                        all_time_fuunding: {
+                            increment: transactionAmount
+                        },
                     updatedAt: new Date()
                 }
                 });
-                console.log(colors.yellow(`Updated wallet new currnt balance: ${updatedWalletResult.current_balance}`))
+
+                return { updatedTx: transaction, updatedWallet: wallet };
+            });
+
+            console.log(colors.green(`Payment verified successfully. New balance: ${updatedWallet.current_balance}`));
 
               const formattedResponse = {
                 id: updatedTx.id,
@@ -254,15 +425,27 @@ export class BankingService {
                 description: "wallet funding",
                 status: "success",
                 payment_method: "paystack",
-                date: formatDate(updatedTx.updatedAt)
+                date: formatDate(updatedTx.updatedAt),
+                balance_after: formatAmount(updatedWallet.current_balance)
               }
     
-            console.log(colors.green("Payment verified successfully"));
             return new ApiResponseDto(true, "Payment verified successfully", formattedResponse);
     
-        } catch (error) {
-            console.error(colors.red("Verification error while processing payment:"), error);
-            // Always return ApiResponseDto with simple, user-friendly message
+        } catch (error: any) {
+            // Log full error details for debugging
+            console.error(colors.red("Verification error while processing payment:"), {
+                message: error.message,
+                stack: error.stack,
+                reference: dto.reference,
+                userId: userPayload?.sub
+            });
+
+            // Return specific error messages based on error type
+            if (error instanceof NotFoundException || error instanceof BadRequestException) {
+                return new ApiResponseDto(false, error.message);
+            }
+
+            // Generic fallback
             return new ApiResponseDto(false, "Unable to verify payment at this time. Please try again later.");
         }
     }
