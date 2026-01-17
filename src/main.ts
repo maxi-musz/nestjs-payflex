@@ -4,6 +4,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { json, urlencoded } from 'express';
 import * as colors from 'colors';
 import * as express from 'express';
+import { RequestLoggerInterceptor } from './common/interceptors/request-logger.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -30,6 +31,9 @@ async function bootstrap() {
       enableImplicitConversion: true,  // Convert dot notation to nested objects
     },
   }));
+
+  // Global request logging interceptor
+  app.useGlobalInterceptors(new RequestLoggerInterceptor());
 
   // health endpoint 
   app.getHttpAdapter().get('/api/v1/auth/health', (req: express.Request, res: express.Response) => {
