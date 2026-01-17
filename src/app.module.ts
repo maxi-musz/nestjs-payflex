@@ -14,7 +14,7 @@ import { FlutterwaveModule } from './flutterwave/flutterwave.module';
 import { VasModule } from './vas/vas.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { FlutterwaveService } from './flutterwave/flutterwave.service';
-import { VtpassModule } from './vtpass/vtpass.module';
+import { UtilityServicesModule } from './utility-services/utility-services.module';
 import { PushNotificationModule } from './push-notification/push-notification.module';
 import { CommonModule } from './common/common.module';
 import { SupportModule } from './support/support.module';
@@ -29,7 +29,7 @@ import { EmailModule } from './common/mailer/email.module';
     AuthModule, 
     UserModule, 
     BookmarkModule, 
-    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule, WebhooksModule, VtpassModule, PushNotificationModule, SupportModule, EmailModule
+    PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule, WebhooksModule, UtilityServicesModule, PushNotificationModule, SupportModule, EmailModule
   ],
   controllers: [],
   providers: [FlutterwaveService],

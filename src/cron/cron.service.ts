@@ -3,8 +3,8 @@ import * as cron from 'node-cron';
 import axios from 'axios';
 import * as colors from 'colors';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { DataService } from 'src/vtpass/data/data.service';
-import { AirtimeService } from 'src/vtpass/airtime/airtime.service';
+import { DataService } from 'src/utility-services/vtpass-service/data/data.service';
+import { AirtimeService } from 'src/utility-services/vtpass-service/airtime/airtime.service';
 
 @Injectable()
 export class CronService implements OnModuleInit {
