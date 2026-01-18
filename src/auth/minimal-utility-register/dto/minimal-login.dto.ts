@@ -28,11 +28,21 @@ export class MinimalLoginDto {
   @IsString()
   @IsNotEmpty({ message: 'Phone number is required if email is not provided' })
   @Transform(({ value }) => {
+    if (!value) return value;
     // Strip + sign and format to 234XXXXXXXXXX
-    return PhoneValidator.formatPhoneToE164(value);
+    const formatted = PhoneValidator.formatPhoneToE164(value);
+    // Additional validation: if formatted number is longer than 13 digits, it's likely malformed
+    if (formatted && formatted.length > 13) {
+      // If it starts with 234234, it might be a duplicate prefix - try to fix it
+      if (formatted.startsWith('234234') && formatted.length === 16) {
+        // Remove the duplicate 234 prefix
+        return formatted.substring(3);
+      }
+    }
+    return formatted;
   })
   @Matches(/^234[0-9]{10}$/, {
-    message: 'Phone number must be in format: 234XXXXXXXXXX (or +234XXXXXXXXXX)',
+    message: 'Phone number must be in format: 234XXXXXXXXXX (13 digits total). Received invalid format. Please check your phone number.',
   })
   phone_number?: string;
 
