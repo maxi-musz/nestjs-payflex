@@ -39,14 +39,23 @@ export class RegistrationRateLimiter {
 
   /**
    * Check if phone number has exceeded rate limit
+   * @param phoneNumber - Phone number to check
+   * @param customLimit - Optional custom limit (overrides global config)
+   * @param customWindowMs - Optional custom window in milliseconds (overrides global config)
    */
-  async checkPhoneRateLimit(phoneNumber: string): Promise<{
+  async checkPhoneRateLimit(
+    phoneNumber: string,
+    customLimit?: number,
+    customWindowMs?: number,
+  ): Promise<{
     allowed: boolean;
     remaining: number;
     resetAt: number;
   }> {
     this.logger.log(`Checking phone number rate limit for ${phoneNumber}`);
-    const { windowMs, maxRequests } = this.getRateLimitConfig();
+    const globalConfig = this.getRateLimitConfig();
+    const maxRequests = customLimit ?? globalConfig.maxRequests;
+    const windowMs = customWindowMs ?? globalConfig.windowMs;
     const key = `phone:${phoneNumber}`;
     const now = Date.now();
     const entry = this.rateLimitStore.get(key);
@@ -87,14 +96,22 @@ export class RegistrationRateLimiter {
 
   /**
    * Check if IP address has exceeded rate limit
-   * Uses global rate limit configuration
+   * @param ipAddress - IP address to check
+   * @param customLimit - Optional custom limit (overrides global config)
+   * @param customWindowMs - Optional custom window in milliseconds (overrides global config)
    */
-  async checkIPRateLimit(ipAddress: string): Promise<{
+  async checkIPRateLimit(
+    ipAddress: string,
+    customLimit?: number,
+    customWindowMs?: number,
+  ): Promise<{
     allowed: boolean;
     remaining: number;
     resetAt: number;
   }> {
-    const { windowMs, maxRequests } = this.getRateLimitConfig();
+    const globalConfig = this.getRateLimitConfig();
+    const maxRequests = customLimit ?? globalConfig.maxRequests;
+    const windowMs = customWindowMs ?? globalConfig.windowMs;
     const key = `ip:${ipAddress}`;
     const now = Date.now();
     const entry = this.rateLimitStore.get(key);
@@ -134,15 +151,23 @@ export class RegistrationRateLimiter {
 
   /**
    * Check if device has exceeded rate limit
-   * Uses global rate limit configuration
+   * @param deviceId - Device ID to check
+   * @param customLimit - Optional custom limit (overrides global config)
+   * @param customWindowMs - Optional custom window in milliseconds (overrides global config)
    */
-  async checkDeviceRateLimit(deviceId: string): Promise<{
+  async checkDeviceRateLimit(
+    deviceId: string,
+    customLimit?: number,
+    customWindowMs?: number,
+  ): Promise<{
     allowed: boolean;
     remaining: number;
     resetAt: number;
   }> {
     this.logger.log(`Checking device rate limit for ${deviceId}`);
-    const { windowMs, maxRequests } = this.getRateLimitConfig();
+    const globalConfig = this.getRateLimitConfig();
+    const maxRequests = customLimit ?? globalConfig.maxRequests;
+    const windowMs = customWindowMs ?? globalConfig.windowMs;
     const key = `device:${deviceId}`;
     const now = Date.now();
     const entry = this.rateLimitStore.get(key);

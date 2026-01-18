@@ -58,25 +58,42 @@ export class RateLimitGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const handler = context.getHandler();
 
-    // Get global rate limit configuration (simple: X requests per Y seconds)
-    // Uses environment variables: GLOBAL_RATE_LIMIT_REQUESTS and GLOBAL_RATE_LIMIT_WINDOW_SECONDS
-    const maxRequests = process.env.GLOBAL_RATE_LIMIT_REQUESTS
-      ? parseInt(process.env.GLOBAL_RATE_LIMIT_REQUESTS, 10)
-      : 10; // Default: 10 requests
+    // Try to get endpoint-specific rate limit configuration from decorator
+    const decoratorConfig = this.reflector.get<RateLimitConfig>(
+      RATE_LIMIT_CONFIG_KEY,
+      handler,
+    );
 
-    const windowSeconds = process.env.GLOBAL_RATE_LIMIT_WINDOW_SECONDS
-      ? parseInt(process.env.GLOBAL_RATE_LIMIT_WINDOW_SECONDS, 10)
-      : 60; // Default: 60 seconds (1 minute)
+    let config: RateLimitConfig;
 
-    const windowMs = windowSeconds * 1000;
+    if (decoratorConfig) {
+      // Use endpoint-specific configuration from decorator
+      config = decoratorConfig;
+      // Default windowMs to 1 hour if not specified
+      if (!config.windowMs) {
+        config.windowMs = 60 * 60 * 1000; // 1 hour default
+      }
+    } else {
+      // Fall back to global rate limit configuration
+      // Uses environment variables: GLOBAL_RATE_LIMIT_REQUESTS and GLOBAL_RATE_LIMIT_WINDOW_SECONDS
+      const maxRequests = process.env.GLOBAL_RATE_LIMIT_REQUESTS
+        ? parseInt(process.env.GLOBAL_RATE_LIMIT_REQUESTS, 10)
+        : 10; // Default: 10 requests
 
-    // Use same limit for phone, IP, and device (global rate limit)
-    const config: RateLimitConfig = {
-      phoneLimit: maxRequests,
-      ipLimit: maxRequests,
-      deviceLimit: maxRequests,
-      windowMs: windowMs,
-    };
+      const windowSeconds = process.env.GLOBAL_RATE_LIMIT_WINDOW_SECONDS
+        ? parseInt(process.env.GLOBAL_RATE_LIMIT_WINDOW_SECONDS, 10)
+        : 60; // Default: 60 seconds (1 minute)
+
+      const windowMs = windowSeconds * 1000;
+
+      // Use same limit for phone, IP, and device (global rate limit)
+      config = {
+        phoneLimit: maxRequests,
+        ipLimit: maxRequests,
+        deviceLimit: maxRequests,
+        windowMs: windowMs,
+      };
+    }
 
     // Extract identifiers from request
     const phoneNumber = this.extractPhoneNumber(request);
@@ -91,6 +108,8 @@ export class RateLimitGuard implements CanActivate {
     if (phoneNumber && config.phoneLimit) {
       const phoneLimit = await this.rateLimiter.checkPhoneRateLimit(
         phoneNumber,
+        config.phoneLimit,
+        config.windowMs,
       );
       if (!phoneLimit.allowed) {
         const retryAfter = Math.ceil(
@@ -110,7 +129,11 @@ export class RateLimitGuard implements CanActivate {
 
     // Check IP rate limit
     if (config.ipLimit) {
-      const ipLimit = await this.rateLimiter.checkIPRateLimit(ipAddress);
+      const ipLimit = await this.rateLimiter.checkIPRateLimit(
+        ipAddress,
+        config.ipLimit,
+        config.windowMs,
+      );
       if (!ipLimit.allowed) {
         const retryAfter = Math.ceil((ipLimit.resetAt - Date.now()) / 1000);
         await this.securityEventService.logRateLimitExceeded({
@@ -127,7 +150,11 @@ export class RateLimitGuard implements CanActivate {
 
     // Check device rate limit (if device ID is available)
     if (deviceId && config.deviceLimit) {
-      const deviceLimit = await this.rateLimiter.checkDeviceRateLimit(deviceId);
+      const deviceLimit = await this.rateLimiter.checkDeviceRateLimit(
+        deviceId,
+        config.deviceLimit,
+        config.windowMs,
+      );
       if (!deviceLimit.allowed) {
         const retryAfter = Math.ceil(
           (deviceLimit.resetAt - Date.now()) / 1000,

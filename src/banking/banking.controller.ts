@@ -3,18 +3,22 @@ import { BankingService } from './banking.service';
 import { PaystackFundingDto, PaystackFundingVerifyDto } from 'src/common/dto/banking.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { CreateTempVirtualLocalAccountDto, CreateVirtualAccountDto, InitiateTransferDto, VerifyAccountNumberDto } from './dto/accountNo-creation.dto';
+import { SecurityHeadersGuard } from 'src/common/guards/security-headers.guard';
+import { RateLimitGuard, RateLimit } from 'src/common/guards/rate-limit.guard';
 
 @Controller('banking')
 export class BankingController {
     constructor(private bankingService: BankingService) {}
 
-    @UseGuards(AuthGuard('jwt'))
+    @UseGuards(SecurityHeadersGuard, RateLimitGuard, AuthGuard('jwt'))
+    @RateLimit({ ipLimit: 10, deviceLimit: 5, windowMs: 60 * 60 * 1000 }) // 10 per hour per IP, 5 per hour per device
     @Post('initialise-paystack-funding')
     initiatePaystackFunding(@Body() dto: PaystackFundingDto, @Request() req){
         return this.bankingService.initialisePaystackFunding(dto, req.user)
     }
  
-    @UseGuards(AuthGuard('jwt'))
+    @UseGuards(SecurityHeadersGuard, RateLimitGuard, AuthGuard('jwt'))
+    @RateLimit({ ipLimit: 20, deviceLimit: 10, windowMs: 60 * 60 * 1000 }) // 20 per hour per IP, 10 per hour per device (more lenient for verification)
     @Post('verify-paystack-funding')
     verifyPaystackFunding(@Body() dto: PaystackFundingVerifyDto, @Request() req) {
         return this.bankingService.verifyPaystackFunding(dto, req.user)

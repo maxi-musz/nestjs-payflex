@@ -63,25 +63,30 @@ export class RequestLoggerInterceptor implements NestInterceptor {
           const duration = Date.now() - startTime;
           const statusCode = response.statusCode;
 
-          // Log response
+          // Extract key info from response for concise logging
+          let responseSummary = '';
+          if (data && typeof data === 'object') {
+            // For ApiResponseDto format
+            if (data.success !== undefined) {
+              responseSummary = `success: ${data.success}`;
+              if (data.message) {
+                const shortMessage = data.message.length > 60 
+                  ? data.message.substring(0, 60) + '...' 
+                  : data.message;
+                responseSummary += ` | message: "${shortMessage}"`;
+              }
+            } else {
+              // For other response formats, just show type
+              responseSummary = `type: ${data.constructor?.name || 'object'}`;
+            }
+          }
+
+          // Log concise response
           this.logger.log(
             colors.green(
-              `← ${method} ${url} | ${statusCode} | ${duration}ms | User: ${userId}`,
+              `← ${method} ${url} | ${statusCode} | ${duration}ms | User: ${userId}${responseSummary ? ' | ' + responseSummary : ''}`,
             ),
           );
-
-          // Log response data (truncated if too long)
-          if (data && typeof data === 'object') {
-            const responseStr = JSON.stringify(data);
-            const truncatedResponse =
-              responseStr.length > 500
-                ? responseStr.substring(0, 500) + '... (truncated)'
-                : responseStr;
-
-            this.logger.debug(
-              colors.green(`  Response: ${truncatedResponse}`),
-            );
-          }
         },
         error: (error) => {
           const duration = Date.now() - startTime;
