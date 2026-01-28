@@ -340,6 +340,7 @@ function getUserTier(user: any): TierInfo {
                     id: tx.id,
                     amount: tx.amount,
                     type: tx.transaction_type,
+                    provider: tx.provider,
                     description: tx.description,
                     credit_debit: tx.credit_debit,
                     status: tx.status,

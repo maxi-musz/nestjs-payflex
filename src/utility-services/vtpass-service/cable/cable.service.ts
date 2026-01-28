@@ -234,6 +234,7 @@ export class CableService {
           data: {
             user_id: userPayload.sub,
             amount: amountNum,
+            provider: dto.serviceID,
             transaction_type: `cable`,
             credit_debit: 'debit',
             description,
@@ -245,7 +246,7 @@ export class CableService {
             balance_before,
             balance_after,
             meta_data: payload,
-          }
+          } as any
         });
       });
 

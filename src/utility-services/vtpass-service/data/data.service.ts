@@ -306,6 +306,8 @@ export class DataService {
       // Wallet hold + create pending transaction atomically
       const provider = this.getProviderLabelFromServiceId(dto.serviceID);
       const description = `${provider} DATA - ${dto.billersCode}`;
+      // Derive plain provider name (e.g. "mtn" from "mtn-data") for reporting
+      const providerName = dto.serviceID.split('-')[0];
       const createdTx = await this.prisma.$transaction(async (tx) => {
         // Prevent double-deduct: check existing by request_id
         const existing = await tx.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
@@ -329,6 +331,7 @@ export class DataService {
           data: ({
             user_id: userPayload.sub,
             amount: amountNum,
+            provider: providerName,
             vtpass_amount: vtpassAmount,
             smipay_amount: smipayAmount,
             markup_percent: markupPercent,

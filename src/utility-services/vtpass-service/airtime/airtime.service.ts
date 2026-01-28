@@ -213,6 +213,7 @@ export class AirtimeService {
           data: {
             user_id: userPayload.sub,
             amount: amountNum,
+            provider: dto.serviceID,
             transaction_type: 'airtime',
             credit_debit: 'debit',
             description,

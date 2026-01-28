@@ -97,6 +97,7 @@ export class TransactionHistoryService {
             amount: formatAmount(transaction.amount || 0),
             type: transaction.transaction_type,
             description: transaction.description,
+            provider: transaction.provider,
             status: transaction.status,
             recipient_mobile: transaction.recipient_mobile,
             tx_reference: transaction.transaction_reference,

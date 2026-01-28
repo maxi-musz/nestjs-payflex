@@ -188,6 +188,7 @@ model TransactionHistory {
   account_id       String?
   user_id          String
   amount           Float?
+  provider         String?          // e.g. mtn, glo, airtel, etc. or specific service identifier
   vtpass_amount    Float? // raw amount sent to VTpass (from variation)
   smipay_amount    Float? // amount charged to customer (after markup)
   markup_percent   Float? // percent applied (general or friendlies)
