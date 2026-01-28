@@ -6,6 +6,18 @@ import { PurchaseAirtimeDto } from './dto/purchase-airtime.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
 import { PushNotificationService } from 'src/push-notification/push-notification.service';
+import {
+  validateCredentialsOnInit,
+  validateBaseUrl,
+  validateCredentialsForPost,
+  validateSecretKeyForHeaders,
+  validateWalletBalance,
+  determineTransactionStatus,
+  handleAuthenticationError,
+  shouldRequeryTransaction,
+  generateVtpassRequestId,
+  maskKey,
+} from './airtime.validators';
 
 @Injectable()
 export class AirtimeService {
@@ -31,21 +43,20 @@ export class AirtimeService {
     const baseUrlPreview = this.credentials.baseUrl || 'NOT SET';
     this.logger.log(`VTpass mode: ${this.isDevelopment ? 'SANDBOX' : 'LIVE'} | Base URL: ${baseUrlPreview}`);
 
-    if (!this.apiKey || !this.publicKey) {
-      this.logger.warn('VTpass API credentials are not fully configured (api/public).');
-    }
-    if (!this.secretKey) {
-      this.logger.warn('VTpass secret key is not configured (needed for POST requests).');
-    }
+    // Validate and log credentials
+    validateCredentialsOnInit(
+      {
+        apiKey: this.apiKey,
+        publicKey: this.publicKey,
+        secretKey: this.secretKey,
+        isDevelopment: this.isDevelopment,
+      },
+      this.logger,
+    );
   }
 
   private getBaseUrl(): string {
-    if (!this.credentials.baseUrl) {
-      const which = this.isDevelopment ? 'VT_PASS_SANDBOX_API_URL' : 'VT_PASS_LIVE_API_URL';
-      this.logger.error(`VTpass base URL not configured. Please set ${which}.`);
-      throw new HttpException(`VTpass base URL not configured. Please set ${which}.`, HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-    return this.credentials.baseUrl.replace(/\/+$/, '');
+    return validateBaseUrl(this.credentials.baseUrl, this.isDevelopment);
   }
 
   private getGetHeaders() {
@@ -57,6 +68,7 @@ export class AirtimeService {
   }
 
   private getPostHeaders() {
+    validateSecretKeyForHeaders(this.secretKey, this.logger);
     return {
       'api-key': this.apiKey,
       'secret-key': this.secretKey,
@@ -65,16 +77,7 @@ export class AirtimeService {
   }
 
   private generateVtpassRequestId(): string {
-    const now = new Date();
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    const yyyy = now.getFullYear();
-    const mm = pad(now.getMonth() + 1);
-    const dd = pad(now.getDate());
-    const hh = pad(now.getHours());
-    const ii = pad(now.getMinutes());
-    const base = `${yyyy}${mm}${dd}${hh}${ii}`;
-    const suffix = Math.random().toString(36).slice(2, 10);
-    return `${base}${suffix}`;
+    return generateVtpassRequestId();
   }
 
   async getAirtimeProviderServiceIds() {
@@ -155,6 +158,17 @@ export class AirtimeService {
     }
 
     try {
+      // Validate credentials before making the request
+      validateCredentialsForPost(
+        {
+          apiKey: this.apiKey,
+          publicKey: this.publicKey,
+          secretKey: this.secretKey,
+          isDevelopment: this.isDevelopment,
+        },
+        this.logger,
+      );
+
       const payload = {
         request_id,
         serviceID: dto.serviceID,
@@ -163,7 +177,14 @@ export class AirtimeService {
       };
 
       this.logger.log(`Payload: ${JSON.stringify(payload)}`);
-      this.logger.log(`Headers: ${JSON.stringify(this.getPostHeaders())}`);
+      const headers = this.getPostHeaders();
+      // Log headers with masked secret key for debugging
+      const maskedHeaders = {
+        ...headers,
+        'secret-key': maskKey(headers['secret-key']),
+        'api-key': maskKey(headers['api-key']),
+      };
+      this.logger.log(`Headers: ${JSON.stringify(maskedHeaders)}`);
       this.logger.log(`URL: ${url}`);
 
       // Wallet hold + create pending transaction atomically
@@ -175,9 +196,10 @@ export class AirtimeService {
 
         const wallet = await tx.wallet.findUnique({ where: { user_id: userPayload.sub } });
         const amountNum = Number(dto.amount);
-        if (!wallet || Number(wallet.current_balance) < amountNum) {
-          throw new HttpException('Insufficient wallet balance', HttpStatus.BAD_REQUEST);
+        if (!wallet) {
+          throw new HttpException('Wallet not found', HttpStatus.BAD_REQUEST);
         }
+        validateWalletBalance(Number(wallet.current_balance), amountNum);
 
         const balance_before = Number(wallet.current_balance);
         const balance_after = balance_before - amountNum;
@@ -212,52 +234,15 @@ export class AirtimeService {
       const responseCode = response.data?.code || '';
       const txStatus = txContent.status?.toLowerCase() || '';
       const responseDescription = response.data?.response_description || '';
-      
-      // Determine transaction status based on VTpass documentation
-      // Code "000" with status "delivered" = success
-      // Code "000" with status "pending" or "initiated" = processing (keep as pending, don't refund)
-      // Code "099" = TRANSACTION IS PROCESSING (keep as pending, requery recommended)
-      // Code "016" = TRANSACTION FAILED (actual failure)
-      // Code "040" = TRANSACTION REVERSAL (refund)
-      // Other codes = check response_description for actual status
-      
-      const isProcessing = responseCode === '000' && (txStatus === 'pending' || txStatus === 'initiated') ||
-                           responseCode === '099' ||
-                           responseDescription.includes('PROCESSING') ||
-                           responseDescription.includes('PENDING');
-      
-      const isDelivered = responseCode === '000' && txStatus === 'delivered';
-      const isReversed = responseCode === '040' || txStatus === 'reversed';
-      const isFailed = responseCode === '016' || 
-                      (responseCode === '000' && txStatus === 'failed') ||
-                      (!isProcessing && !isDelivered && !isReversed && responseCode !== '000');
 
-      let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
-      let shouldRefund = false;
-      let shouldThrow = false;
-      let errorMessage = '';
-
-      if (isDelivered) {
-        finalStatus = 'success';
-      } else if (isReversed) {
-        finalStatus = 'failed';
-        shouldRefund = true;
-        errorMessage = responseDescription || 'Transaction was reversed';
-        shouldThrow = true;
-      } else if (isFailed) {
-        finalStatus = 'failed';
-        shouldRefund = true;
-        errorMessage = responseDescription || `Transaction failed with code: ${responseCode}`;
-        shouldThrow = true;
-      } else if (isProcessing) {
-        // Keep as pending - transaction is processing, don't refund yet
-        finalStatus = 'pending';
-        this.logger.log(`Transaction is processing: ${responseDescription || `Status: ${txStatus}`}`);
-      } else {
-        // Unknown status - treat as pending and log for investigation
-        finalStatus = 'pending';
-        this.logger.warn(`Unknown transaction status. Code: ${responseCode}, Status: ${txStatus}, Description: ${responseDescription}`);
-      }
+      // Determine transaction status
+      const statusResult = determineTransactionStatus(
+        responseCode,
+        txStatus,
+        responseDescription,
+        this.logger,
+      );
+      const { finalStatus, shouldRefund, shouldThrow, errorMessage } = statusResult;
 
       await this.prisma.transactionHistory.update({
         where: { transaction_reference: request_id },
@@ -287,7 +272,7 @@ export class AirtimeService {
       }
 
       // If processing, return success response with pending status info
-      if (isProcessing) {
+      if (finalStatus === 'pending') {
         const formattedResponse = {
           id: createdTx.id,
           ...response.data,
@@ -355,6 +340,24 @@ export class AirtimeService {
           statusText: error.response.statusText,
           data: error.response.data,
         }, null, 2));
+
+        // Handle authentication errors with detailed logging
+        if (error.response.status === 401) {
+          const authError = handleAuthenticationError(
+            error,
+            {
+              apiKey: this.apiKey,
+              publicKey: this.publicKey,
+              secretKey: this.secretKey,
+              isDevelopment: this.isDevelopment,
+            },
+            this.logger,
+          );
+          if (authError) {
+            throw authError;
+          }
+        }
+
         const message = error.response.data?.response_description || error.response.data?.message || 'Failed to purchase airtime';
         throw new HttpException(message, error.response.status || HttpStatus.BAD_REQUEST);
       }
@@ -396,21 +399,14 @@ export class AirtimeService {
         return { updated: false, status: 'failed' };
       }
 
-      // Check requery count
+      // Check if transaction should be requeried
       const metaData = transaction.meta_data as any || {};
       const requeryCount = metaData.requery_count || 0;
-      const maxRequeryAttempts = 3;
-
-      if (requeryCount >= maxRequeryAttempts) {
-        this.logger.warn(`[Cron] Transaction ${requestId} exceeded max requery attempts (${maxRequeryAttempts}), skipping`);
-        return { updated: false };
-      }
-
-      // Check if transaction is too old (older than 30 minutes)
       const transactionAge = Date.now() - transaction.createdAt.getTime();
-      const maxAge = 30 * 60 * 1000; // 30 minutes
-      if (transactionAge > maxAge) {
-        this.logger.warn(`[Cron] Transaction ${requestId} is too old (${Math.round(transactionAge / 60000)} minutes), skipping`);
+
+      const requeryCheck = shouldRequeryTransaction(transactionAge, requeryCount);
+      if (!requeryCheck.shouldRequery) {
+        this.logger.warn(`[Cron] Transaction ${requestId} skipped: ${requeryCheck.reason}`);
         return { updated: false };
       }
 
@@ -423,31 +419,21 @@ export class AirtimeService {
       const txStatus = txContent.status?.toLowerCase() || '';
       const responseDescription = response.data?.response_description || '';
 
-      // Determine status (same logic as purchase method)
-      const isDelivered = responseCode === '000' && txStatus === 'delivered';
-      const isReversed = responseCode === '040' || txStatus === 'reversed';
-      const isFailed = responseCode === '016' || (responseCode === '000' && txStatus === 'failed');
-      const isProcessing = responseCode === '000' && (txStatus === 'pending' || txStatus === 'initiated') ||
-                           responseCode === '099' ||
-                           responseDescription.includes('PROCESSING') ||
-                           responseDescription.includes('PENDING');
+      // Determine transaction status
+      const statusResult = determineTransactionStatus(
+        responseCode,
+        txStatus,
+        responseDescription,
+        this.logger,
+      );
+      const { finalStatus, shouldRefund } = statusResult;
 
-      let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
-      let shouldRefund = false;
-
-      if (isDelivered) {
-        finalStatus = 'success';
+      if (finalStatus === 'success') {
         this.logger.log(`[Cron] Transaction ${requestId} delivered successfully`);
-      } else if (isReversed || isFailed) {
-        finalStatus = 'failed';
-        shouldRefund = true;
-        this.logger.warn(`[Cron] Transaction ${requestId} ${isReversed ? 'reversed' : 'failed'}`);
-      } else if (isProcessing) {
-        finalStatus = 'pending';
-        this.logger.log(`[Cron] Transaction ${requestId} still processing`);
+      } else if (finalStatus === 'failed') {
+        this.logger.warn(`[Cron] Transaction ${requestId} failed`);
       } else {
-        finalStatus = 'pending';
-        this.logger.warn(`[Cron] Unknown status for transaction ${requestId}: ${responseCode}/${txStatus}`);
+        this.logger.log(`[Cron] Transaction ${requestId} still processing`);
       }
 
       // Update transaction

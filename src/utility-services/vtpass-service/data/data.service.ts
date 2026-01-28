@@ -142,31 +142,10 @@ export class DataService {
       const content = response.data?.content || {};
       const variations = content.variations || content.varations || [];
 
-      // Apply markup and round down to nearest whole number for client display
-      const isFriendlyUser = Boolean(userPayload?.is_friendly || userPayload?.friendlies);
-      const generalPct = Number(process.env.DATA_MARKUP_PERCENT || 0);
-      const friendlyPct = Number(process.env.DATA_MARKUP_PERCENT_FRIENDLIES || generalPct);
-      const markupPercentForList = isFriendlyUser ? friendlyPct : generalPct;
+      // Return variations exactly as they come from VTpass (no markup applied)
+      const transformed = variations.map((v: any) => ({ ...v }));
 
-      const transformed = variations.map((v: any) => {
-        const vtpassAmount = Number(v.variation_amount);
-        if (isNaN(vtpassAmount)) return v;
-        const underThreshold = vtpassAmount < 300;
-        const markupValue = underThreshold ? 0 : (vtpassAmount * markupPercentForList) / 100;
-        const smipayAmountFloat = underThreshold ? vtpassAmount : vtpassAmount + markupValue;
-        const roundedDown = Math.floor(smipayAmountFloat);
-        const smipayAmountStr = roundedDown.toFixed(2);
-
-        // Update variation_amount
-        const updated: any = { ...v, variation_amount: smipayAmountStr, vtpass_amount: vtpassAmount.toFixed(2) };
-        // Update name leading price pattern like "N100" → new value
-        if (typeof v.name === 'string') {
-          updated.name = v.name.replace(/^\s*N\s*[0-9,]+(?:\.\d{1,2})?\s*/i, `N${roundedDown} `);
-        }
-        return updated;
-      });
-
-      // Categorize variations based on transformed prices/names
+      // Categorize variations based on original prices/names
       const categorized = categorizeVariations(transformed);
 
       // Build response: counts (per category + total), then content, then categorized + original variations
@@ -309,12 +288,9 @@ export class DataService {
       markupValue = underThreshold ? 0 : (vtpassAmount * markupPercent) / 100;
       smipayAmount = Math.floor(underThreshold ? vtpassAmount : vtpassAmount + markupValue);
 
-      let phone: string;
-      if(process.env.NODE_ENV === 'development') {
-        phone = "201000000000";
-      } else {
-        phone = dto.phone?.trim() || existingUser?.phone_number?.trim() || '';
-      }
+      // Phone should be the phone number where data is needed (same as billersCode)
+      // According to VTpass docs: phone is "The phone number of the customer or recipient of this service"
+      const phone = dto.billersCode.trim();
 
       const payload = {
         request_id,
