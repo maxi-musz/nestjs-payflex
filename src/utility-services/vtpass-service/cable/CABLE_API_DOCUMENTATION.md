@@ -233,12 +233,18 @@ Purchases a new subscription or renews an existing one.
 
 Different providers have different requirements:
 
-| Provider | Verify Endpoint | Subscription Types | billersCode Type |
-|----------|----------------|-------------------|------------------|
-| **DSTV** | ✅ Supported | `change` or `renew` | Smartcard number (10 digits) |
-| **GOTV** | ✅ Supported | `change` or `renew` | Smartcard number (10 digits) |
-| **Startimes** | ✅ Supported | Purchase only (no subscription_type) | Smartcard number or eWallet |
-| **Showmax** | ❌ Not supported | Purchase only (no subscription_type) | Phone number (11 digits) |
+| Provider | Verify Endpoint | Subscription Types | Required Fields | billersCode Type |
+|----------|----------------|-------------------|-----------------|------------------|
+| **DSTV** | ✅ Supported | `change` or `renew` (required) | `subscription_type`, `variation_code` (for change), `amount` (for renew) | Smartcard number (10 digits) |
+| **GOTV** | ✅ Supported | `change` or `renew` (required) | `subscription_type`, `variation_code` (for change), `amount` (for renew) | Smartcard number (10 digits) |
+| **Startimes** | ✅ Supported | Purchase only (no `subscription_type`) | `variation_code` (always required) | Smartcard number or eWallet |
+| **Showmax** | ❌ Not supported | Purchase only (no `subscription_type`) | `variation_code` (always required) | Phone number (11 digits) |
+
+**Important Notes:**
+- **DSTV/GOTV**: Must include `subscription_type` field with value "change" or "renew"
+- **Startimes/Showmax**: Must NOT include `subscription_type` field (omit it entirely)
+- **Startimes/Showmax**: Always require `variation_code` in the purchase request
+- If you send `subscription_type` for Startimes/Showmax, you will get an "INVALID ARGUMENTS" error from VTpass
 
 ### Endpoint
 ```
@@ -447,6 +453,26 @@ Content-Type: application/json
 
 **Note:** This validation only applies to DSTV/GOTV. For Startimes and Showmax, omit the `subscription_type` field entirely.
 
+```json
+{
+  "statusCode": 400,
+  "message": "subscription_type is not used for Startimes/Showmax. Omit this field.",
+  "error": "Bad Request"
+}
+```
+
+**Note:** This error occurs when `subscription_type` is provided for Startimes or Showmax purchases. Simply omit the field.
+
+```json
+{
+  "statusCode": 400,
+  "message": "variation_code is required for Startimes/Showmax purchases",
+  "error": "Bad Request"
+}
+```
+
+**Note:** Startimes and Showmax always require `variation_code` in the purchase request.
+
 ---
 
 ## Transaction Status Handling
@@ -535,6 +561,8 @@ All errors follow NestJS HttpException format:
 ### Common Error Scenarios
 
 #### 1. Validation Errors (400)
+
+**DSTV/GOTV - Missing variation_code for change:**
 ```json
 {
   "statusCode": 400,
@@ -543,7 +571,28 @@ All errors follow NestJS HttpException format:
 }
 ```
 
-**Note:** This error only applies to DSTV/GOTV. Startimes and Showmax always require `variation_code` but don't use `subscription_type`.
+**Startimes/Showmax - Missing variation_code:**
+```json
+{
+  "statusCode": 400,
+  "message": "variation_code is required for Startimes/Showmax purchases",
+  "error": "Bad Request"
+}
+```
+
+**Startimes/Showmax - subscription_type provided (should be omitted):**
+```json
+{
+  "statusCode": 400,
+  "message": "subscription_type is not used for Startimes/Showmax. Omit this field.",
+  "error": "Bad Request"
+}
+```
+
+**Note:** 
+- DSTV/GOTV require `subscription_type` (either "change" or "renew")
+- Startimes/Showmax should NOT include `subscription_type` in the request
+- Startimes/Showmax always require `variation_code`
 
 #### 2. Insufficient Balance (400)
 ```json
@@ -580,7 +629,26 @@ All errors follow NestJS HttpException format:
 }
 ```
 
-#### 5. Network/Server Errors (500)
+#### 5. Invalid Arguments (400) - Startimes/Showmax
+```json
+{
+  "statusCode": 400,
+  "message": "INVALID ARGUMENTS",
+  "error": "Bad Request"
+}
+```
+
+**Note:** This error typically occurs when:
+- `subscription_type` is included in the request for Startimes/Showmax (should be omitted)
+- Required fields are missing (e.g., `variation_code` for Startimes/Showmax)
+- Invalid `billersCode` format
+
+**Solution:** For Startimes/Showmax, ensure:
+- Do NOT include `subscription_type` field
+- Always include `variation_code`
+- Use correct `billersCode` format (smartcard for Startimes, phone for Showmax)
+
+#### 6. Network/Server Errors (500)
 ```json
 {
   "statusCode": 500,
@@ -614,8 +682,10 @@ All errors follow NestJS HttpException format:
 #### For Showmax:
 1. **Get Service IDs** → User selects provider
 2. **Get Variation Codes** → Show available plans
-3. **Purchase** → Execute transaction (no verify step, no `subscription_type` field)
-   - Use phone number as `billersCode`
+3. **Purchase** → Execute transaction (no verify step)
+   - **Required**: `serviceID`, `billersCode` (phone number), `variation_code`, `phone`
+   - **Do NOT include**: `subscription_type` field
+   - **Optional**: `amount` (will use variation_code price if omitted)
 
 ### 2. Idempotency
 - Always provide `request_id` when retrying failed requests
@@ -773,16 +843,20 @@ For issues or questions:
 
 #### Startimes
 - Use smartcard number or eWallet number as `billersCode`
-- Only supports purchase (no `subscription_type` field)
+- **Do NOT include `subscription_type` field** in the request
+- Always requires `variation_code` in the purchase request
 - Verify endpoint is available but optional
 - Example smartcard: `1212121212`
+- **Common Error**: If you include `subscription_type`, VTpass will return "INVALID ARGUMENTS"
 
 #### Showmax
 - Use phone number (11 digits) as `billersCode`
-- Only supports purchase (no `subscription_type` field)
+- **Do NOT include `subscription_type` field** in the request
+- Always requires `variation_code` in the purchase request
 - **No verify endpoint** - skip verification step
 - Example phone: `08011111111`
 - Response includes `purchased_code` (voucher code) that should be displayed to user
+- **Common Error**: If you include `subscription_type`, VTpass will return "INVALID ARGUMENTS"
 
 ### Product Whitelisting
 **Important:** Products must be whitelisted in the VTpass account before they can be purchased. If you receive a "PRODUCT IS NOT WHITELISTED ON YOUR ACCOUNT" error:

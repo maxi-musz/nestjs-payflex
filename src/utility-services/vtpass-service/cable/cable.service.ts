@@ -141,7 +141,12 @@ export class CableService {
     try {
       const payload = { billersCode: dto.billersCode, serviceID: dto.serviceID };
       const response = await axios.post(url, payload, { headers: this.getPostHeaders() });
-      return new ApiResponseDto(true, 'Smartcard verified successfully', response.data);
+      
+      // Remove commission_details from response
+      const responseData = { ...response.data };
+      console.log(JSON.stringify(response.data));
+      
+      return new ApiResponseDto(true, 'Smartcard verified successfully', responseData);
     } catch (error: any) {
       this.logger.error(`Error verifying smartcard: ${error.message}`);
       if (error.response) {
@@ -170,16 +175,36 @@ export class CableService {
 
     let vtpassAmount = 0;
     try {
-      // Determine amount
-      if (dto.subscription_type === 'renew') {
-        if (!dto.amount) {
-          throw this.buildApiError('amount is required for renew subscription_type (use Renewal_Amount from verify)', HttpStatus.BAD_REQUEST);
+      // Determine amount based on service type
+      const isDstvOrGotv = dto.serviceID === 'dstv' || dto.serviceID === 'gotv';
+      const isStartimesOrShowmax = dto.serviceID === 'startimes' || dto.serviceID === 'showmax';
+
+      if (isDstvOrGotv) {
+        // DSTV/GOTV logic
+        if (dto.subscription_type === 'renew') {
+          if (!dto.amount) {
+            throw this.buildApiError('amount is required for renew subscription_type (use Renewal_Amount from verify)', HttpStatus.BAD_REQUEST);
+          }
+          vtpassAmount = Number(dto.amount);
+        } else {
+          // change: use variation_code amount if not provided
+          if (!dto.variation_code) {
+            throw this.buildApiError('variation_code is required for change subscription_type', HttpStatus.BAD_REQUEST);
+          }
+          if (dto.amount) {
+            vtpassAmount = Number(dto.amount);
+          } else {
+            const varResp = await this.getVariationCodes(dto.serviceID);
+            const variations = (varResp.data as any)?.variations || (varResp.data as any)?.varations || [];
+            const found = variations.find((v: any) => v.variation_code === dto.variation_code);
+            if (!found) throw this.buildApiError(`Variation code ${dto.variation_code} not found for ${dto.serviceID}`, HttpStatus.BAD_REQUEST);
+            vtpassAmount = Number(found.variation_amount);
+          }
         }
-        vtpassAmount = Number(dto.amount);
-      } else {
-        // change: use variation_code amount if not provided
+      } else if (isStartimesOrShowmax) {
+        // Startimes/Showmax: always require variation_code
         if (!dto.variation_code) {
-          throw this.buildApiError('variation_code is required for change subscription_type', HttpStatus.BAD_REQUEST);
+          throw this.buildApiError('variation_code is required for Startimes/Showmax purchases', HttpStatus.BAD_REQUEST);
         }
         if (dto.amount) {
           vtpassAmount = Number(dto.amount);
@@ -190,6 +215,8 @@ export class CableService {
           if (!found) throw this.buildApiError(`Variation code ${dto.variation_code} not found for ${dto.serviceID}`, HttpStatus.BAD_REQUEST);
           vtpassAmount = Number(found.variation_amount);
         }
+      } else {
+        throw this.buildApiError(`Invalid serviceID: ${dto.serviceID}`, HttpStatus.BAD_REQUEST);
       }
 
       // Determine phone in dev vs prod
@@ -207,11 +234,22 @@ export class CableService {
         billersCode: dto.billersCode,
         amount: vtpassAmount,
         phone,
-        subscription_type: dto.subscription_type,
       };
-      if (dto.subscription_type === 'change') {
-        payload.variation_code = dto.variation_code;
+
+      // Only include subscription_type for DSTV/GOTV
+      if (isDstvOrGotv && dto.subscription_type) {
+        payload.subscription_type = dto.subscription_type;
+        // For change, include variation_code
+        if (dto.subscription_type === 'change') {
+          payload.variation_code = dto.variation_code;
+        }
+      } else {
+        // For Startimes/Showmax, always include variation_code (no subscription_type)
+        if (dto.variation_code) {
+          payload.variation_code = dto.variation_code;
+        }
       }
+
       if (dto.quantity) payload.quantity = dto.quantity;
 
       // Wallet hold + pending tx

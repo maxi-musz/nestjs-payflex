@@ -15,7 +15,7 @@ export class PurchaseCableDto {
 
   @IsOptional()
   @IsString()
-  variation_code?: string; // required for subscription_type=change
+  variation_code?: string; // Required for DSTV/GOTV (change) and always required for Startimes/Showmax
 
   @IsOptional()
   @IsNumber()
@@ -26,8 +26,9 @@ export class PurchaseCableDto {
   phone: string;
 
   @IsString()
+  @IsOptional()
   @IsIn(['change', 'renew'])
-  subscription_type: 'change' | 'renew';
+  subscription_type?: 'change' | 'renew'; // Required for DSTV/GOTV, not used for Startimes/Showmax
 
   @IsOptional()
   @IsNumber()
