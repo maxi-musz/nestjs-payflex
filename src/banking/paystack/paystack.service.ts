@@ -186,7 +186,7 @@ export class PaystackService implements OnModuleInit {
                     data: error.response.data,
                 }, null, 2));
             } else if (error.request) {
-                this.logger.error(`Paystack API Request Error:`, JSON.stringify(error.request, null, 2));
+                this.logger.error(`Paystack API Request Error: network/request issue — no response received`);
             } else {
                 this.logger.error(`Error details:`, JSON.stringify(error, null, 2));
             }
@@ -430,7 +430,7 @@ export class PaystackService implements OnModuleInit {
                     headers: error.response.headers,
                 }, null, 2));
             } else if (error.request) {
-                this.logger.error(`Paystack API Request Error:`, JSON.stringify(error.request, null, 2));
+                this.logger.error(`Paystack API Request Error: network/request issue — no response received`);
             } else {
                 this.logger.error(`Error details:`, JSON.stringify(error, null, 2));
             }

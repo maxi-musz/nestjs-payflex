@@ -116,7 +116,7 @@ export class DataService {
         throw new HttpException(message, error.response.status || HttpStatus.BAD_REQUEST);
       }
       if (error.request) {
-        this.logger.error('VTpass API Request Error:', JSON.stringify(error.request, null, 2));
+        this.logger.error('VTpass API Request Error: network/request issue — no response received');
       }
       throw new HttpException('Failed to fetch service IDs', HttpStatus.INTERNAL_SERVER_ERROR);
     }
@@ -531,7 +531,7 @@ export class DataService {
         throw new HttpException(message, error.response.status || HttpStatus.BAD_REQUEST);
       }
       if (error.request) {
-        this.logger.error('VTpass API Request Error:', JSON.stringify(error.request, null, 2));
+        this.logger.error('VTpass API Request Error: network/request issue — no response received');
       }
       throw new HttpException('Failed to query transaction', HttpStatus.INTERNAL_SERVER_ERROR);
     }

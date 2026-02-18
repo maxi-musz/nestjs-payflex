@@ -74,6 +74,7 @@ model User {
   supportTickets             SupportTicket[]             @relation("UserSupportTickets")
   supportMessages            SupportMessage[]            @relation("UserSupportMessages")
   paystackTransferRecipients PaystackTransferRecipient[] @relation("PaystackTransferRecipients")
+  auditLogs                  AuditLog[]                  @relation("UserAuditLogs")
 }
 
 model ProfileImage {
@@ -794,4 +795,296 @@ model PaystackTransferRecipient {
   @@index([recipient_code])
   @@index([account_number])
   @@index([active])
+}
+
+// ============================================================================
+// AUDIT LOG SYSTEM - Banking-Grade Compliance & Activity Tracking
+// ============================================================================
+
+model AuditLog {
+  id String @id @default(uuid())
+
+  // WHO - Actor identification
+  user_id    String?        // The user who performed the action (null for system/webhook)
+  user       User?          @relation("UserAuditLogs", fields: [user_id], references: [id], onDelete: SetNull)
+  actor_type AuditActorType @default(USER) // user, admin, system, webhook, cron
+  actor_name String? // Display name at time of action (denormalized for historical accuracy)
+  session_id String? // JWT jti or session identifier for tracing
+
+  // WHAT - Action details
+  action   AuditAction   // The specific action performed
+  category AuditCategory // High-level grouping
+  status   AuditStatus   // Outcome of the action
+  severity AuditSeverity @default(LOW) // Risk classification
+
+  // TARGET - What resource was affected
+  resource_type String? // e.g., "User", "Wallet", "TransactionHistory", "Account"
+  resource_id   String? // ID of the affected resource
+  resource_name String? // Human-readable label of the resource (e.g. account name)
+
+  // WHERE - Source / origin details
+  ip_address   String? // Client IP address
+  user_agent   String? // Browser or app user agent string
+  device_id    String? // Device identifier from device metadata
+  device_model String? // e.g., "iPhone 14 Pro"
+  platform     String? // ios, android, web
+  geo_location String? // Country/city if resolved from IP
+
+  // HOW - Request context
+  http_method String? // GET, POST, PUT, DELETE
+  endpoint    String? // API endpoint path, e.g. /api/v1/banking/send-ngn-money
+  request_id  String? // Correlation ID (x-request-id header) for distributed tracing
+
+  // CONTEXT - Change details
+  description   String // Human-readable description of what happened
+  old_values    Json? // Previous state snapshot (for updates/changes)
+  new_values    Json? // New state snapshot (for updates/changes)
+  metadata      Json? // Arbitrary additional context (provider responses, etc.)
+  error_message String? @db.Text // Error details if action failed
+
+  // FINANCIAL - For money-related actions
+  amount          Float? // Transaction amount
+  currency        String? // Currency code (NGN, USD, etc.)
+  balance_before  Float? // Wallet/account balance before action
+  balance_after   Float? // Wallet/account balance after action
+  transaction_ref String? // Reference to related TransactionHistory
+
+  // COMPLIANCE - Regulatory & review fields
+  is_flagged     Boolean   @default(false) // Flagged for compliance review
+  flagged_reason String? // Why it was flagged
+  reviewed_by    String? // Admin user ID who reviewed
+  reviewed_at    DateTime? // When it was reviewed
+  review_notes   String? // Review outcome notes
+
+  // TIMESTAMP
+  created_at DateTime @default(now())
+
+  // INDEXES - Optimized for common query patterns
+  @@index([user_id])
+  @@index([action])
+  @@index([category])
+  @@index([status])
+  @@index([severity])
+  @@index([resource_type, resource_id])
+  @@index([ip_address])
+  @@index([request_id])
+  @@index([is_flagged])
+  @@index([created_at])
+  @@index([transaction_ref])
+  @@index([user_id, action])
+  @@index([user_id, category])
+  @@index([user_id, created_at])
+  @@index([category, created_at])
+  @@index([action, status])
+  @@index([actor_type, created_at])
+  @@map("audit_logs")
+}
+
+// Actor type - who initiated the action
+enum AuditActorType {
+  USER
+  ADMIN
+  SYSTEM
+  WEBHOOK
+  CRON
+}
+
+// Granular action types covering every service
+enum AuditAction {
+  // ── Authentication ──────────────────────────────────────────
+  LOGIN
+  LOGIN_FAILED
+  LOGOUT
+  SESSION_REFRESH
+  TOKEN_REFRESH
+  PASSWORD_VERIFY
+  PASSWORD_VERIFY_FAILED
+  LOGIN_STATUS_CHECK
+
+  // ── Registration (multi-step) ──────────────────────────────
+  REGISTER_START
+  REGISTER_RESEND_OTP
+  REGISTER_VERIFY_OTP
+  REGISTER_SUBMIT_ID
+  REGISTER_SUBMIT_ADDRESS
+  REGISTER_SUBMIT_PEP
+  REGISTER_SUBMIT_INCOME
+  REGISTER_SETUP_PASSWORD
+  REGISTER_COMPLETE
+  MINIMAL_REGISTER
+  MINIMAL_LOGIN
+
+  // ── Email & OTP ────────────────────────────────────────────
+  EMAIL_OTP_REQUEST
+  EMAIL_OTP_VERIFY
+  PASSWORD_RESET_REQUEST
+  PASSWORD_RESET_VERIFY
+  PASSWORD_RESET_COMPLETE
+
+  // ── User Management ────────────────────────────────────────
+  PROFILE_VIEW
+  PROFILE_UPDATE
+  KYC_VIEW
+  KYC_UPDATE
+  TRANSACTION_PIN_SETUP
+  TRANSACTION_PIN_UPDATE
+  DASHBOARD_VIEW
+  HOMEPAGE_VIEW
+
+  // ── Banking & Accounts ─────────────────────────────────────
+  FUND_WALLET_INIT
+  FUND_WALLET_VERIFY
+  FUND_WALLET_COMPLETE
+  VIRTUAL_ACCOUNT_CREATE
+  ACCOUNT_NUMBER_VERIFY
+  BANK_LIST_FETCH
+  DVA_CREATE
+  DVA_DEACTIVATE
+  DVA_VIEW
+  DVA_LIST
+
+  // ── Money Transfers ────────────────────────────────────────
+  TRANSFER_INITIATE
+  TRANSFER_COMPLETE
+  TRANSFER_FAILED
+  SMIPAY_TAG_LOOKUP
+  SMIPAY_TAG_TRANSFER
+  PAYSTACK_TRANSFER_INITIATE
+  PAYSTACK_TRANSFER_COMPLETE
+  PAYSTACK_TRANSFER_FAILED
+
+  // ── Wallet Operations ──────────────────────────────────────
+  WALLET_CREDIT
+  WALLET_DEBIT
+  WALLET_BALANCE_CHECK
+
+  // ── Airtime ────────────────────────────────────────────────
+  AIRTIME_PURCHASE
+  AIRTIME_PURCHASE_FAILED
+  AIRTIME_PROVIDERS_FETCH
+
+  // ── Data ───────────────────────────────────────────────────
+  DATA_PURCHASE
+  DATA_PURCHASE_FAILED
+  DATA_PLANS_FETCH
+  DATA_PROVIDERS_FETCH
+
+  // ── Cable TV ───────────────────────────────────────────────
+  CABLE_SMARTCARD_VERIFY
+  CABLE_PURCHASE
+  CABLE_PURCHASE_FAILED
+  CABLE_PROVIDERS_FETCH
+  CABLE_PLANS_FETCH
+
+  // ── Education ──────────────────────────────────────────────
+  EDUCATION_PURCHASE
+  EDUCATION_PURCHASE_FAILED
+
+  // ── Electricity ────────────────────────────────────────────
+  ELECTRICITY_METER_VERIFY
+  ELECTRICITY_PURCHASE
+  ELECTRICITY_PURCHASE_FAILED
+
+  // ── Insurance ──────────────────────────────────────────────
+  INSURANCE_PURCHASE
+  INSURANCE_PURCHASE_FAILED
+
+  // ── Betting / VAS ──────────────────────────────────────────
+  BETTING_VALIDATE
+  BETTING_FUND
+
+  // ── Virtual Cards ──────────────────────────────────────────
+  CARD_CREATE
+  CARD_LIST
+  CARD_FUND
+  CARD_FREEZE
+  CARD_UNFREEZE
+  CARD_TERMINATE
+
+  // ── KYC / Identity Verification ────────────────────────────
+  BVN_VERIFY
+  BVN_VERIFY_FAILED
+  NIN_VERIFY
+  NIN_VERIFY_FAILED
+  ID_VERIFY
+  ID_VERIFY_FAILED
+
+  // ── Customer Support ───────────────────────────────────────
+  SUPPORT_TICKET_CREATE
+  SUPPORT_TICKET_VIEW
+  SUPPORT_TICKET_UPDATE
+  SUPPORT_MESSAGE_ADD
+
+  // ── Push Notifications ─────────────────────────────────────
+  DEVICE_TOKEN_REGISTER
+  DEVICE_TOKEN_REMOVE
+  NOTIFICATION_SEND
+
+  // ── Admin Operations ───────────────────────────────────────
+  TIER_CREATE
+  TIER_UPDATE
+  TIER_LIST
+  USER_SUSPEND
+  USER_ACTIVATE
+  USER_VIEW
+  ADMIN_LOGIN
+  AUDIT_LOG_VIEW
+  AUDIT_LOG_FLAG
+  AUDIT_LOG_REVIEW
+
+  // ── Webhooks ───────────────────────────────────────────────
+  WEBHOOK_PAYSTACK
+  WEBHOOK_FLUTTERWAVE
+  WEBHOOK_VTPASS
+
+  // ── System / Cron ──────────────────────────────────────────
+  CRON_TRANSACTION_REQUERY
+  CRON_KEEPALIVE
+  SYSTEM_ERROR
+  RATE_LIMIT_EXCEEDED
+
+  // ── Transaction History ────────────────────────────────────
+  TRANSACTION_HISTORY_VIEW
+  TRANSACTION_DETAIL_VIEW
+}
+
+// High-level category for grouping and filtering
+enum AuditCategory {
+  AUTHENTICATION
+  REGISTRATION
+  USER_MANAGEMENT
+  KYC_VERIFICATION
+  BANKING
+  TRANSFER
+  WALLET
+  AIRTIME
+  DATA
+  CABLE
+  EDUCATION
+  ELECTRICITY
+  INSURANCE
+  BETTING
+  CARD_MANAGEMENT
+  SUPPORT
+  NOTIFICATION
+  ADMIN
+  SYSTEM
+  WEBHOOK
+  TRANSACTION_HISTORY
+}
+
+// Outcome of the audited action
+enum AuditStatus {
+  SUCCESS
+  FAILURE
+  PENDING
+  BLOCKED
+}
+
+// Risk classification for compliance
+enum AuditSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
 }

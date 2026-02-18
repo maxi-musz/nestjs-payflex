@@ -159,7 +159,7 @@ export class PaystackDvaProvider implements IDvaProvider {
           this.logger.error(`Paystack Error Message: ${error.response.data.message || JSON.stringify(error.response.data)}`);
         }
       } else if (error.request) {
-        this.logger.error(`Paystack API Request Error:`, JSON.stringify(error.request, null, 2));
+        this.logger.error(`Paystack API Request Error: network/request issue — no response received`);
       } else {
         this.logger.error(`Error details:`, JSON.stringify(error, null, 2));
       }
@@ -393,7 +393,7 @@ export class PaystackDvaProvider implements IDvaProvider {
           this.logger.error(`Paystack DVA Error Message: ${error.response.data.message || JSON.stringify(error.response.data)}`);
         }
       } else if (error.request) {
-        this.logger.error(`Paystack DVA API Request Error:`, JSON.stringify(error.request, null, 2));
+        this.logger.error(`Paystack DVA API Request Error: network/request issue — no response received`);
       } else {
         this.logger.error(`DVA Assignment Error details:`, JSON.stringify(error, null, 2));
       }

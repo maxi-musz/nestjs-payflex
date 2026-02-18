@@ -43,10 +43,18 @@ async function bootstrap() {
   const port = parseInt(process.env.PORT || '3000', 10);
   await app.listen(port, '0.0.0.0');
 
-  
-  console.log(colors.blue(`Application is running on: http://0.0.0.0:${port}`));
-  console.log(`Access URL from host: http://localhost:${port}`);
-  console.log(`Environment: ${process.env.NODE_ENV}`);
-  console.log(`Port: ${port}`);
+  const appUrl = await app.getUrl();
+  const baseUrl = process.env.BASE_URL || process.env.APP_URL;
+  const env = process.env.NODE_ENV || 'development';
+
+  console.log(colors.blue(`\n🚀 Application started successfully`));
+  console.log(colors.blue(`───────────────────────────────────`));
+  console.log(`  Environment : ${env}`);
+  console.log(`  Port        : ${port}`);
+  console.log(`  Local       : ${appUrl}`);
+  if (baseUrl) {
+    console.log(colors.green(`  Public      : ${baseUrl}`));
+  }
+  console.log(colors.blue(`───────────────────────────────────\n`));
 } 
 bootstrap();

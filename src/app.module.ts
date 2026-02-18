@@ -19,6 +19,7 @@ import { PushNotificationModule } from './push-notification/push-notification.mo
 import { CommonModule } from './common/common.module';
 import { SupportModule } from './support/support.module';
 import { EmailModule } from './common/mailer/email.module';
+import { AuditLogModule } from './common/audit-log/audit-log.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { EmailModule } from './common/mailer/email.module';
       isGlobal: true
     }),
     CommonModule, // Global guards available to all modules
+    AuditLogModule, // Global audit logging available to all modules
     AuthModule, 
     UserModule, 
     BookmarkModule, 
