@@ -5,6 +5,7 @@ import { NewAuthService } from './new-auth.service';
 import {
   RegisterDto,
   SignInDto,
+  RequestEmailVerificationDto,
   RequestPasswordResetDto,
   VerifyPasswordResetOtpDto,
   ResetPasswordDto,
@@ -14,6 +15,24 @@ import { RateLimitGuard } from '../common/guards/rate-limit.guard';
 @Controller('new-auth')
 export class NewAuthController {
   constructor(private readonly newAuthService: NewAuthService) {}
+
+  @Post('request-email-verification')
+  @UseGuards(RateLimitGuard)
+  async requestEmailVerification(
+    @Body() dto: RequestEmailVerificationDto,
+    @Req() req: Request,
+  ) {
+    return this.newAuthService.requestEmailVerification(dto, req);
+  }
+
+  @Post('verify-email-for-registration')
+  @UseGuards(RateLimitGuard)
+  verifyEmailForRegistration(
+    @Body() dto: VerifyPasswordResetOtpDto,
+    @Req() req: Request,
+  ) {
+    return this.newAuthService.verifyEmailForRegistration(dto, req);
+  }
 
   @Post('register')
   @UseGuards(RateLimitGuard)

@@ -35,6 +35,18 @@ The system uses a **factory pattern** similar to the SMS provider system:
   ```
 - **To Implement**: Install `@sendgrid/mail` and uncomment the implementation in `sendgrid.provider.ts`
 
+### 3. Resend
+- **Provider Name**: `resend`
+- **Status**: ✅ Fully implemented
+- **Setup Required**:
+  ```env
+  EMAIL_PROVIDER=resend
+  RESEND_API_KEY=re_your_api_key
+  RESEND_FROM_EMAIL=onboarding@resend.dev
+  RESEND_FROM_NAME=SmiPay MFB
+  ```
+- **Note**: Get your API key from [Resend Dashboard](https://resend.com/api-keys). For production, verify your domain and use an email from that domain (e.g. `noreply@yourdomain.com`). For testing you can use `onboarding@resend.dev`.
+
 ## 🔄 Switching Providers
 
 To switch email providers, simply change the `EMAIL_PROVIDER` environment variable:
@@ -45,6 +57,9 @@ EMAIL_PROVIDER=gmail
 
 # Use SendGrid
 EMAIL_PROVIDER=sendgrid
+
+# Use Resend
+EMAIL_PROVIDER=resend
 ```
 
 No code changes needed! The factory automatically selects the correct provider.
@@ -188,6 +203,14 @@ SENDGRID_FROM_EMAIL=your-verified-email@domain.com
 SENDGRID_FROM_NAME=SmiPay MFB
 ```
 
+### Resend
+```env
+EMAIL_PROVIDER=resend
+RESEND_API_KEY=re_your_api_key
+RESEND_FROM_EMAIL=onboarding@resend.dev
+RESEND_FROM_NAME=SmiPay MFB
+```
+
 ## 🔍 Current Provider
 
 Check which provider is currently active:
@@ -204,6 +227,7 @@ console.log(`Using email provider: ${providerName}`);
 - `email-provider.factory.ts` - Provider factory
 - `gmail-smtp.provider.ts` - Gmail SMTP implementation
 - `sendgrid.provider.ts` - SendGrid implementation (placeholder)
+- `resend.provider.ts` - Resend implementation
 
 ## 🎨 Similar to SMS Provider System
 

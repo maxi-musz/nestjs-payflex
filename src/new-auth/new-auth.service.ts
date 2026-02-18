@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -20,6 +21,7 @@ import { formatDate } from '../common/helper_functions/formatter';
 import { generateSmipayTag } from '../common/helper_functions/generators';
 import type { SignInDto } from './dto/sign-in.dto';
 import type { RegisterDto } from './dto/register.dto';
+import type { RequestEmailVerificationDto } from './dto/request-email-verification.dto';
 import type { RequestPasswordResetDto } from './dto/request-password-reset.dto';
 import type { VerifyPasswordResetOtpDto } from './dto/verify-password-reset-otp.dto';
 import type { ResetPasswordDto } from './dto/reset-password.dto';
@@ -147,7 +149,134 @@ export class NewAuthService {
   }
 
   // ──────────────────────────────────────────────────────────
-  // REGISTER
+  // REQUEST EMAIL VERIFICATION (pre-registration: check email new, send OTP)
+  // ──────────────────────────────────────────────────────────
+
+  async requestEmailVerification(dto: RequestEmailVerificationDto, req: Request) {
+    this.logger.log(`Request email verification for ${dto.email}`);
+
+    const defaultTier = await this.prisma.tier.findFirst({
+      where: { order: 1 },
+      orderBy: { order: 'asc' },
+    });
+    if (!defaultTier) {
+      await this.audit.logAuth(AuditAction.EMAIL_OTP_REQUEST, AuditStatus.FAILURE, req, {
+        description: `Email verification blocked — tier service not available (no tier with order 1)`,
+        metadata: { email: dto.email, reason: 'tier_service_unavailable' },
+        ...this.deviceFields(req),
+      });
+      this.logger.error('Error connecting to Tier service. No tier with order 1 found');
+      throw new ServiceUnavailableException(
+        'Error connecting toTier service. Please try again later or contact support.',
+      );
+    }
+
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+    if (existingUser) {
+      await this.audit.logAuth(AuditAction.EMAIL_OTP_REQUEST, AuditStatus.FAILURE, req, {
+        description: `Email verification requested but email ${dto.email} is already registered`,
+        metadata: { email: dto.email, reason: 'email_already_registered' },
+        ...this.deviceFields(req),
+      });
+      this.logger.log("This emil is already registered to another customer")         
+      throw new ConflictException('This email is already registered. Please sign in.');
+    }
+
+    const otp = crypto.randomInt(1000, 9999).toString();
+    const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+    await this.prisma.emailVerification.upsert({
+      where: { email: dto.email },
+      create: {
+        email: dto.email,
+        otp,
+        otp_expires_at: otpExpiresAt,
+      },
+      update: {
+        otp,
+        otp_expires_at: otpExpiresAt,
+        verified_at: null,
+      },
+    });
+
+    try {
+      await this.emailService.sendOTPEmail(dto.email, otp);
+    } catch (err: any) {
+      this.logger.error('Failed to send OTP email for verification', err?.message);
+      await this.audit.logAuth(AuditAction.EMAIL_OTP_REQUEST, AuditStatus.FAILURE, req, {
+        description: `Email verification OTP failed to send for ${dto.email}`,
+        error_message: err?.message,
+        metadata: { email: dto.email, reason: 'email_send_failed' },
+        ...this.deviceFields(req),
+      });
+      throw new BadRequestException('Failed to send verification email. Please try again.');
+    }
+
+    await this.audit.logAuth(AuditAction.EMAIL_OTP_REQUEST, AuditStatus.SUCCESS, req, {
+      description: `Verification OTP sent to ${dto.email}`,
+      metadata: { email: dto.email },
+      ...this.deviceFields(req),
+    });
+
+    return new ApiResponseDto(true, `OTP sent to ${dto.email}. Enter it to verify your email.`);
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // VERIFY EMAIL FOR REGISTRATION (pre-registration: confirm OTP, set verified_at)
+  // ──────────────────────────────────────────────────────────
+
+  async verifyEmailForRegistration(dto: VerifyPasswordResetOtpDto, req: Request) {
+    this.logger.log(`Verifying email for registration: ${dto.email}`);
+
+    const record = await this.prisma.emailVerification.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (!record) {
+      await this.audit.logAuth(AuditAction.EMAIL_OTP_VERIFY, AuditStatus.FAILURE, req, {
+        description: `Email verification failed — no verification record for ${dto.email}`,
+        metadata: { email: dto.email, reason: 'no_record' },
+        ...this.deviceFields(req),
+      });
+      throw new BadRequestException('Invalid or expired OTP. Request a new verification code.');
+    }
+
+    if (record.otp !== dto.otp) {
+      await this.audit.logAuth(AuditAction.EMAIL_OTP_VERIFY, AuditStatus.FAILURE, req, {
+        description: `Email verification failed — wrong OTP for ${dto.email}`,
+        metadata: { email: dto.email, reason: 'wrong_otp' },
+        ...this.deviceFields(req),
+      });
+      throw new BadRequestException('Invalid or expired OTP provided');
+    }
+
+    if (new Date() > new Date(record.otp_expires_at)) {
+      await this.audit.logAuth(AuditAction.EMAIL_OTP_VERIFY, AuditStatus.FAILURE, req, {
+        description: `Email verification failed — expired OTP for ${dto.email}`,
+        metadata: { email: dto.email, reason: 'expired_otp' },
+        ...this.deviceFields(req),
+      });
+      throw new BadRequestException('Invalid or expired OTP provided');
+    }
+
+    await this.prisma.emailVerification.update({
+      where: { email: dto.email },
+      data: { verified_at: new Date() },
+    });
+
+    await this.audit.logAuth(AuditAction.EMAIL_OTP_VERIFY, AuditStatus.SUCCESS, req, {
+      description: `Email ${dto.email} verified for registration`,
+      metadata: { email: dto.email },
+      ...this.deviceFields(req),
+    });
+
+    return new ApiResponseDto(true, 'Email verified. You can now complete registration.');
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // REGISTER (requires email verified via request-email-verification + verify-email-for-registration)
   // ──────────────────────────────────────────────────────────
 
   async register(dto: RegisterDto, req: Request) {
@@ -157,12 +286,50 @@ export class NewAuthService {
       where: { email: dto.email },
     });
     if (existingUser) {
-      this.audit.logAuth(AuditAction.REGISTER_START, AuditStatus.FAILURE, req, {
+      await this.audit.logAuth(AuditAction.REGISTER_START, AuditStatus.FAILURE, req, {
         description: `Registration failed — email ${dto.email} already exists`,
         metadata: { email: dto.email, reason: 'email_exists' },
         ...this.deviceFields(req),
       });
       throw new ConflictException('User already exists with this email');
+    }
+
+    const emailVerification = await this.prisma.emailVerification.findUnique({
+      where: { email: dto.email },
+    });
+    if (!emailVerification?.verified_at) {
+      await this.audit.logAuth(AuditAction.REGISTER_START, AuditStatus.FAILURE, req, {
+        description: `Registration failed — email ${dto.email} not verified. Verify email first.`,
+        metadata: { email: dto.email, reason: 'email_not_verified' },
+        ...this.deviceFields(req),
+      });
+      throw new BadRequestException('Please verify your email first using the code we sent you.');
+    }
+
+    const verifiedAt = new Date(emailVerification.verified_at);
+    const maxAgeMs = 30 * 60 * 1000;
+    if (Date.now() - verifiedAt.getTime() > maxAgeMs) {
+      await this.audit.logAuth(AuditAction.REGISTER_START, AuditStatus.FAILURE, req, {
+        description: `Registration failed — email verification expired for ${dto.email}`,
+        metadata: { email: dto.email, reason: 'verification_expired' },
+        ...this.deviceFields(req),
+      });
+      throw new BadRequestException('Email verification expired. Please verify your email again.');
+    }
+
+    const tierWithOrderOne = await this.prisma.tier.findFirst({
+      where: { order: 1 },
+      orderBy: { order: 'asc' },
+    });
+    if (!tierWithOrderOne) {
+      await this.audit.logAuth(AuditAction.REGISTER_START, AuditStatus.FAILURE, req, {
+        description: `Registration failed — tier service not available (no tier with order 1)`,
+        metadata: { email: dto.email, reason: 'tier_service_unavailable' },
+        ...this.deviceFields(req),
+      });
+      throw new ServiceUnavailableException(
+        'Tier service is not yet running. Please try again later or contact support.',
+      );
     }
 
     const hash = await argon.hash(dto.password);
@@ -187,39 +354,13 @@ export class NewAuthService {
         referral_code: dto.referral_code ?? null,
         agree_to_terms: dto.agree_to_terms,
         updates_opt_in: dto.updates_opt_in ?? false,
+        is_email_verified: true,
+        tier_id: tierWithOrderOne.id,
         address: dto.country
           ? { create: { country: dto.country } }
           : undefined,
       },
     });
-
-    const otp = crypto.randomInt(1000, 9999).toString();
-    const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
-    await this.prisma.user.update({
-      where: { id: newUser.id },
-      data: { otp, otp_expires_at: otpExpiresAt },
-    });
-
-    try {
-      await this.emailService.sendOTPEmail(dto.email, otp);
-    } catch (err: any) {
-      this.logger.error('Failed to send OTP email after register', err?.message);
-      this.audit.logAuth(AuditAction.REGISTER_COMPLETE, AuditStatus.FAILURE, req, {
-        user_id: newUser.id,
-        actor_name: `${dto.first_name} ${dto.last_name}`,
-        description: `Registration completed but verification email failed for ${dto.email}`,
-        resource_type: 'User',
-        resource_id: newUser.id,
-        error_message: err?.message,
-        metadata: { email: dto.email, reason: 'email_send_failed' },
-        ...this.deviceFields(req),
-      });
-      return new ApiResponseDto(
-        false,
-        'Account created but failed to send verification email. Please use forgot password or contact support.',
-        { user: { id: newUser.id, email: newUser.email, first_name: newUser.first_name, last_name: newUser.last_name } },
-      );
-    }
 
     await this.prisma.wallet.create({
       data: {
@@ -231,7 +372,7 @@ export class NewAuthService {
       },
     });
 
-    this.audit.logAuth(AuditAction.REGISTER_COMPLETE, AuditStatus.SUCCESS, req, {
+    await this.audit.logAuth(AuditAction.REGISTER_COMPLETE, AuditStatus.SUCCESS, req, {
       user_id: newUser.id,
       actor_name: `${dto.first_name} ${dto.last_name}`,
       description: `User ${dto.email} registered successfully`,
@@ -242,12 +383,18 @@ export class NewAuthService {
         phone_number: dto.phone_number,
         smipay_tag: smipayTag,
         referral_code: dto.referral_code ?? null,
+        tier_id: tierWithOrderOne.id,
       },
       ...this.deviceFields(req),
     });
 
-    return new ApiResponseDto(true, 'Enter the OTP sent to your email to verify', {
-      user: { id: newUser.id, email: newUser.email, first_name: newUser.first_name, last_name: newUser.last_name },
+    return new ApiResponseDto(true, 'Account created successfully. You can sign in.', {
+      user: {
+        id: newUser.id,
+        email: newUser.email,
+        first_name: newUser.first_name,
+        last_name: newUser.last_name,
+      },
     });
   }
 

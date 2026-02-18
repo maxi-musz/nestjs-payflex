@@ -3,7 +3,7 @@
 **Base URL:** `https://<your-host>/api/v1`  
 **Content-Type:** `application/json`
 
-All API requests must include the device metadata headers described in **Section 1**. The **Section 2** section documents the standard response envelope. **Section 3** documents the New Auth endpoints with full request payload and response structures as implemented.
+All API requests must include the device metadata headers described in **Section 1**. **Section 2** documents the standard response envelope. **Section 3** documents the New Auth endpoints, including the **three-step registration flow** (request email verification → verify email with OTP → register with full payload).
 
 ---
 
@@ -158,15 +158,111 @@ All paths are relative to the base URL. Include the device metadata headers from
 
 ---
 
-### 3.1 Register
+### 3.0 Registration flow (UI sequence)
 
-**Endpoint:** `POST /new-auth/register`
+Registration is a **three-step** flow. The backend requires the email to be verified **before** calling register.
+
+| Step | UI action | Endpoint | Purpose |
+|------|-----------|----------|---------|
+| 1 | User enters email and clicks **Verify email** | `POST /new-auth/request-email-verification` | Check email is new, send OTP to email |
+| 2 | User enters OTP received by email | `POST /new-auth/verify-email-for-registration` | Confirm OTP and mark email as verified |
+| 3 | User submits full form (name, phone, password, etc.) | `POST /new-auth/register` | Create account (email must already be verified) |
+
+Email verification expires after **30 minutes**. If the user delays, they must run steps 1 and 2 again.
+
+---
+
+### 3.1 Request email verification
+
+**Endpoint:** `POST /new-auth/request-email-verification`
+
+Call this when the user clicks **Verify email** (e.g. next to the email field). The backend checks that the email is not already registered and sends an OTP to the address.
 
 **Request body:**
 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
 | `email` | string | Yes | Valid email. |
+
+**Example request:**
+
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+**Success response (200):**
+
+```json
+{
+  "success": true,
+  "message": "OTP sent to user@example.com. Enter it to verify your email."
+}
+```
+
+**Error responses:**
+
+| statusCode | message |
+|------------|---------|
+| 409 | `This email is already registered. Please sign in.` |
+| 400 | `Failed to send verification email. Please try again.` (e.g. mail send failed) |
+
+OTP is valid for **5 minutes**. If the user does not receive it, call this endpoint again to get a new OTP.
+
+---
+
+### 3.2 Verify email for registration
+
+**Endpoint:** `POST /new-auth/verify-email-for-registration`
+
+Call this after the user enters the OTP they received. On success, the email is marked as verified and the user can submit the full registration form (step 3).
+
+**Request body:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `email` | string | Yes | Same email used in request-email-verification. |
+| `otp` | string | Yes | Exactly 4 characters. |
+
+**Example request:**
+
+```json
+{
+  "email": "user@example.com",
+  "otp": "1234"
+}
+```
+
+**Success response (200):**
+
+```json
+{
+  "success": true,
+  "message": "Email verified. You can now complete registration."
+}
+```
+
+**Error responses:**
+
+| statusCode | message |
+|------------|---------|
+| 400 | `Invalid or expired OTP. Request a new verification code.` |
+| 400 | `Invalid or expired OTP provided` |
+
+---
+
+### 3.3 Register
+
+**Endpoint:** `POST /new-auth/register`
+
+**Prerequisite:** The email **must** have been verified first (steps 3.1 and 3.2). Otherwise the backend returns 400.
+
+**Request body:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `email` | string | Yes | Valid email (must be already verified). |
 | `password` | string | Yes | Min 6, max 64. |
 | `first_name` | string | Yes | |
 | `last_name` | string | Yes | |
@@ -192,12 +288,12 @@ All paths are relative to the base URL. Include the device metadata headers from
 }
 ```
 
-**Success response (201):** Account created and OTP sent.
+**Success response (200):** Account created. User is assigned the tier with **order 1** and can sign in immediately (no post-registration OTP).
 
 ```json
 {
   "success": true,
-  "message": "Enter the OTP sent to your email to verify",
+  "message": "Account created successfully. You can sign in.",
   "data": {
     "user": {
       "id": "uuid",
@@ -209,34 +305,21 @@ All paths are relative to the base URL. Include the device metadata headers from
 }
 ```
 
-**Success response when email send fails:** Account still created; user should use forgot password or support.
-
-```json
-{
-  "success": false,
-  "message": "Account created but failed to send verification email. Please use forgot password or contact support.",
-  "data": {
-    "user": {
-      "id": "uuid",
-      "email": "user@example.com",
-      "first_name": "Jane",
-      "last_name": "Doe"
-    }
-  }
-}
-```
-
-**Error response:**
+**Error responses:**
 
 | statusCode | message |
 |------------|---------|
 | 409 | `User already exists with this email` |
+| 400 | `Please verify your email first using the code we sent you.` |
+| 400 | `Email verification expired. Please verify your email again.` |
 
 ---
 
-### 3.2 Verify email OTP
+### 3.4 Verify email OTP (legacy / other flows)
 
 **Endpoint:** `POST /new-auth/verify-email-otp`
+
+Used in flows where a **user already exists** and has an OTP stored (e.g. legacy post-registration verification). For the main registration flow, use **3.2 Verify email for registration** instead.
 
 **Request body:**
 
@@ -244,15 +327,6 @@ All paths are relative to the base URL. Include the device metadata headers from
 |-------|------|----------|-------------|
 | `email` | string | Yes | Same as used at register. |
 | `otp` | string | Yes | Exactly 4 characters. |
-
-**Example request:**
-
-```json
-{
-  "email": "user@example.com",
-  "otp": "1234"
-}
-```
 
 **Success response (200):**
 
@@ -263,15 +337,11 @@ All paths are relative to the base URL. Include the device metadata headers from
 }
 ```
 
-**Error response:**
-
-| statusCode | message |
-|------------|---------|
-| 400 | `Invalid or expired OTP provided` |
+**Error response:** `400` — `Invalid or expired OTP provided`
 
 ---
 
-### 3.3 Sign in
+### 3.5 Sign in
 
 **Endpoint:** `POST /new-auth/signin`
 
@@ -331,7 +401,7 @@ Use `access_token` in the `Authorization` header for protected endpoints:
 
 ---
 
-### 3.4 Forgot password (request OTP)
+### 3.6 Forgot password (request OTP)
 
 **Endpoint:** `POST /new-auth/forgot-password`
 
@@ -368,7 +438,7 @@ OTP expires in 5 minutes. On email delivery failure the backend may return `succ
 
 ---
 
-### 3.5 Verify password reset OTP
+### 3.7 Verify password reset OTP
 
 **Endpoint:** `POST /new-auth/verify-password-reset-otp`
 
@@ -405,7 +475,7 @@ OTP expires in 5 minutes. On email delivery failure the backend may return `succ
 
 ---
 
-### 3.6 Reset password
+### 3.8 Reset password
 
 **Endpoint:** `POST /new-auth/reset-password`
 
@@ -447,7 +517,7 @@ On success, all existing sessions (refresh tokens) for the user are invalidated;
 
 ---
 
-### 3.7 Logout
+### 3.9 Logout
 
 **Endpoint:** `POST /new-auth/logout`
 
@@ -511,6 +581,7 @@ The backend captures the user's location through a **two-layer approach**:
 
 | Item | Requirement |
 |------|-------------|
+| **Registration** | 1) Request email verification → 2) Verify email for registration (OTP) → 3) Register with full payload. Email must be verified before register. |
 | **Device headers** | Send `x-device-id` (and optional headers from Section 1.1) on **every** request. |
 | **Geolocation** | Send `x-latitude` / `x-longitude` headers for precise location tracking. If omitted, the backend falls back to IP-based city-level geolocation. |
 | **Body** | Do not send device metadata in the request body. |
@@ -519,5 +590,5 @@ The backend captures the user's location through a **two-layer approach**:
 
 ---
 
-**Document version:** 1.3  
+**Document version:** 1.4  
 **Last updated:** 2026-02

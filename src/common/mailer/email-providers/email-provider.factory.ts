@@ -3,15 +3,17 @@ import { ConfigService } from '@nestjs/config';
 import { IEmailProvider } from './email-provider.interface';
 import { GmailSmtpProvider } from './gmail-smtp.provider';
 import { SendGridProvider } from './sendgrid.provider';
+import { ResendProvider } from './resend.provider';
 
 /**
  * Email Provider Factory
  * Creates and returns the appropriate email provider based on configuration
- * 
+ *
  * To switch providers, set EMAIL_PROVIDER in .env:
  * - "gmail" or "gmail-smtp" (default - uses Gmail SMTP)
- * - "sendgrid" (professional email service)
- * 
+ * - "sendgrid" (SendGrid API)
+ * - "resend" (Resend API - https://resend.com)
+ *
  * Default: "gmail"
  */
 @Injectable()
@@ -38,6 +40,9 @@ export class EmailProviderFactory {
       case 'sendgrid':
         return new SendGridProvider(this.configService);
 
+      case 'resend':
+        return new ResendProvider(this.configService);
+
       default:
         this.logger.warn(
           `Unknown email provider "${providerName}", defaulting to Gmail SMTP`,
@@ -50,7 +55,7 @@ export class EmailProviderFactory {
    * Get list of available providers
    */
   getAvailableProviders(): string[] {
-    return ['gmail', 'gmail-smtp', 'sendgrid'];
+    return ['gmail', 'gmail-smtp', 'sendgrid', 'resend'];
   }
 }
 

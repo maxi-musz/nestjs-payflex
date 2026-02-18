@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
+import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { NewAuthController } from './new-auth.controller';
 import { NewAuthService } from './new-auth.service';
+import { JwtStrategy } from './jwt.strategy';
 import { PrismaModule } from '../prisma/prisma.module';
 import { EmailModule } from '../common/mailer/email.module';
 
@@ -10,6 +12,7 @@ import { EmailModule } from '../common/mailer/email.module';
   imports: [
     PrismaModule,
     EmailModule,
+    PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
@@ -22,7 +25,7 @@ import { EmailModule } from '../common/mailer/email.module';
     }),
   ],
   controllers: [NewAuthController],
-  providers: [NewAuthService],
-  exports: [NewAuthService],
+  providers: [NewAuthService, JwtStrategy],
+  exports: [NewAuthService, JwtModule],
 })
 export class NewAuthModule {}

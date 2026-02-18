@@ -85,6 +85,11 @@ export class UpdateTierDto {
     @Min(0)
     @IsOptional()
     airtime_daily_limit?: number;
+
+    @IsNumber()
+    @Min(0)
+    @IsOptional()
+    order?: number;
 }
 
 

@@ -33,6 +33,12 @@ export class TierService {
                 throw new BadRequestException(`Tier with code "${dto.tier}" already exists`);
             }
 
+            // Next order = max existing order + 1 (first tier gets 1, second gets 2, ...)
+            const maxOrder = await this.prisma.tier.aggregate({
+                _max: { order: true },
+            });
+            const nextOrder = (maxOrder._max.order ?? 0) + 1;
+
             // Create the tier
             const tier = await this.prisma.tier.create({
                 data: {
@@ -40,6 +46,7 @@ export class TierService {
                     name: dto.name,
                     description: dto.description || null,
                     is_active: dto.is_active !== undefined ? dto.is_active : true,
+                    order: nextOrder,
                     requirements: dto.requirements || [],
                     single_transaction_limit: dto.single_transaction_limit,
                     daily_limit: dto.daily_limit,
@@ -59,6 +66,7 @@ export class TierService {
                     name: tier.name,
                     description: tier.description,
                     is_active: tier.is_active,
+                    order: tier.order,
                     requirements: tier.requirements,
                     limits: {
                         single_transaction_limit: tier.single_transaction_limit,
@@ -119,6 +127,7 @@ export class TierService {
             if (dto.daily_limit !== undefined) updateData.daily_limit = dto.daily_limit;
             if (dto.monthly_limit !== undefined) updateData.monthly_limit = dto.monthly_limit;
             if (dto.airtime_daily_limit !== undefined) updateData.airtime_daily_limit = dto.airtime_daily_limit;
+            if (dto.order !== undefined) updateData.order = dto.order;
 
             // Update the tier
             const updatedTier = await this.prisma.tier.update({
@@ -137,6 +146,7 @@ export class TierService {
                     name: updatedTier.name,
                     description: updatedTier.description,
                     is_active: updatedTier.is_active,
+                    order: updatedTier.order,
                     requirements: updatedTier.requirements,
                     limits: {
                         single_transaction_limit: updatedTier.single_transaction_limit,
@@ -166,6 +176,7 @@ export class TierService {
         try {
             const tiers = await this.prisma.tier.findMany({
                 orderBy: [
+                    { order: 'asc' },
                     { is_active: 'desc' },
                     { createdAt: 'asc' },
                 ],
@@ -179,6 +190,7 @@ export class TierService {
                 name: tier.name,
                 description: tier.description,
                 is_active: tier.is_active,
+                order: tier.order,
                 requirements: tier.requirements,
                 limits: {
                     single_transaction_limit: tier.single_transaction_limit,

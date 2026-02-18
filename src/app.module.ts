@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { AuthModule } from './.auth/auth.module';
 import { UserModule } from './user/user.module';
 import { BookmarkModule } from './bookmark/bookmark.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -30,7 +29,6 @@ import { NewAuthModule } from './new-auth/new-auth.module';
     CommonModule, // Global guards available to all modules
     AuditLogModule, // Global audit logging available to all modules
     NewAuthModule,
-    AuthModule, 
     UserModule, 
     BookmarkModule, 
     PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule, WebhooksModule, UtilityServicesModule, PushNotificationModule, SupportModule, EmailModule
