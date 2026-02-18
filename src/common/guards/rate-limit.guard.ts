@@ -6,8 +6,8 @@ import {
   HttpStatus,
   SetMetadata,
 } from '@nestjs/common';
-import { RegistrationRateLimiter } from 'src/auth/helpers/rate-limiter';
-import { SecurityEventService } from 'src/auth/helpers/security-event.service';
+import { RegistrationRateLimiter } from '../helpers/rate-limiter';
+import { SecurityEventService } from '../helpers/security-event.service';
 import { Reflector } from '@nestjs/core';
 import { formatTimeDuration } from 'src/common/helper_functions/time-formatter';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';

@@ -5,7 +5,7 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
-import { SecurityHeadersValidator } from 'src/auth/helpers/security-headers.validator';
+import { SecurityHeadersValidator } from '../helpers/security-headers.validator';
 
 /**
  * Security Headers Guard

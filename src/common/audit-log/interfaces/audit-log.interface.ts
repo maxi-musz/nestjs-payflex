@@ -36,6 +36,8 @@ export interface CreateAuditLogInput {
   device_model?: string;
   platform?: string;
   geo_location?: string;
+  latitude?: number;
+  longitude?: number;
 
   // HOW
   http_method?: string;
@@ -66,6 +68,8 @@ export interface RequestInfo {
   http_method?: string;
   endpoint?: string;
   request_id?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 /**

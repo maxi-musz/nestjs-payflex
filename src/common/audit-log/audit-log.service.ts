@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AuditAction, AuditActorType, AuditSeverity, AuditStatus, Prisma } from '@prisma/client';
+import * as geoip from 'geoip-lite';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ACTION_CATEGORY_MAP,
@@ -33,6 +34,8 @@ export class AuditLogService {
       const severity = input.severity ?? ACTION_SEVERITY_MAP[input.action] ?? AuditSeverity.LOW;
       const description = input.description ?? ACTION_DESCRIPTION_MAP[input.action];
 
+      const geo = this.resolveGeo(input);
+
       await this.prisma.auditLog.create({
         data: {
           user_id: input.user_id,
@@ -51,7 +54,9 @@ export class AuditLogService {
           device_id: input.device_id,
           device_model: input.device_model,
           platform: input.platform,
-          geo_location: input.geo_location,
+          geo_location: geo.geo_location ?? input.geo_location,
+          latitude: geo.latitude ?? input.latitude,
+          longitude: geo.longitude ?? input.longitude,
           http_method: input.http_method,
           endpoint: input.endpoint,
           request_id: input.request_id,
@@ -434,12 +439,14 @@ export class AuditLogService {
 
   /**
    * Extract common request metadata from an Express/NestJS Request object.
+   * Also pulls latitude/longitude from deviceMetadata (set by global middleware).
    */
   private extractRequestInfo(req: any): RequestInfo {
     if (!req) return {};
 
     const forwarded = req.headers?.['x-forwarded-for'];
     const ip = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : req.ip;
+    const dm = req.deviceMetadata;
 
     return {
       ip_address: ip,
@@ -447,6 +454,47 @@ export class AuditLogService {
       http_method: req.method,
       endpoint: req.originalUrl ?? req.url,
       request_id: req.headers?.['x-request-id'],
+      latitude: dm?.latitude,
+      longitude: dm?.longitude,
     };
+  }
+
+  /**
+   * Resolve geo-location data.
+   *   - Always runs an IP lookup to get a human-readable location (e.g. "Ile-Ife, OS, NG").
+   *   - If frontend sent GPS lat/lng, those are used (more precise than IP).
+   *   - If no GPS, lat/lng also comes from the IP lookup.
+   */
+  private resolveGeo(input: CreateAuditLogInput): {
+    latitude?: number;
+    longitude?: number;
+    geo_location?: string;
+  } {
+    const ipGeo = this.lookupIp(input.ip_address);
+
+    const hasGps = input.latitude != null && input.longitude != null;
+
+    return {
+      latitude: hasGps ? input.latitude : ipGeo?.lat,
+      longitude: hasGps ? input.longitude : ipGeo?.lng,
+      geo_location: input.geo_location ?? ipGeo?.label,
+    };
+  }
+
+  private lookupIp(ip?: string): { lat: number; lng: number; label?: string } | null {
+    if (!ip) return null;
+    try {
+      const lookup = geoip.lookup(ip);
+      if (!lookup) return null;
+
+      const parts = [lookup.city, lookup.region, lookup.country].filter(Boolean);
+      return {
+        lat: lookup.ll?.[0],
+        lng: lookup.ll?.[1],
+        label: parts.length > 0 ? parts.join(', ') : undefined,
+      };
+    } catch {
+      return null;
+    }
   }
 }

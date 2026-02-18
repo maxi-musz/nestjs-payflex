@@ -10,7 +10,7 @@ import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import { CreateSupportTicketDto } from './dto/create-support-ticket.dto';
 import { GetTicketByNumberDto } from './dto/get-ticket.dto';
 import { AddMessageToTicketDto } from './dto/add-message.dto';
-import { PhoneValidator } from 'src/auth/helpers/phone.validator';
+import { PhoneValidator } from '../common/helpers/phone.validator';
 import { generateTicketNumber } from 'src/common/helper_functions/generators';
 import { EmailService } from 'src/common/mailer/email.service';
 import * as colors from 'colors';

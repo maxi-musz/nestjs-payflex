@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { AuthModule } from './auth/auth.module';
+import { AuthModule } from './.auth/auth.module';
 import { UserModule } from './user/user.module';
 import { BookmarkModule } from './bookmark/bookmark.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -20,6 +20,7 @@ import { CommonModule } from './common/common.module';
 import { SupportModule } from './support/support.module';
 import { EmailModule } from './common/mailer/email.module';
 import { AuditLogModule } from './common/audit-log/audit-log.module';
+import { NewAuthModule } from './new-auth/new-auth.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { AuditLogModule } from './common/audit-log/audit-log.module';
     }),
     CommonModule, // Global guards available to all modules
     AuditLogModule, // Global audit logging available to all modules
+    NewAuthModule,
     AuthModule, 
     UserModule, 
     BookmarkModule, 

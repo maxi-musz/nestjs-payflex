@@ -5,6 +5,7 @@ import { json, urlencoded } from 'express';
 import * as colors from 'colors';
 import * as express from 'express';
 import { RequestLoggerInterceptor } from './common/interceptors/request-logger.interceptor';
+import { deviceMetadataMiddleware } from './common/device-metadata';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -17,6 +18,9 @@ async function bootstrap() {
   // Increase payload size limit
   app.use(json({ limit: '50mb' }));
   app.use(urlencoded({ extended: true, limit: '50mb' }));
+
+  // Attach device metadata from headers to every request (req.deviceMetadata)
+  app.use(deviceMetadataMiddleware);
 
   app.enableCors({
     origin: process.env.ALLOWED_ORIGINS || '*',
