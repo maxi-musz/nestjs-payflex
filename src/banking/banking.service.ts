@@ -2,6 +2,7 @@ import { BadRequestException, HttpException, HttpStatus, Injectable, NotFoundExc
 import { PaystackFundingDto, PaystackFundingVerifyDto } from 'src/common/dto/banking.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import * as colors from "colors"
+import { Logger } from '@nestjs/common';
 
 import axios from "axios";
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
@@ -34,7 +35,7 @@ export class BankingService {
 
     private readonly apiUrl: string;
     private readonly secretKey: string;
-
+    private readonly logger = new Logger(BankingService.name);
     constructor(
         private readonly configService: ConfigService,
         private readonly prisma: PrismaService,
@@ -447,6 +448,82 @@ export class BankingService {
 
             // Generic fallback
             return new ApiResponseDto(false, "Unable to verify payment at this time. Please try again later.");
+        }
+    }
+
+    /**
+     * Requery a pending Paystack (deposit) transaction with Paystack API and update DB if successful.
+     * Used by cron to reconcile pending funding transactions.
+     */
+    async requeryPendingPaystackTransaction(reference: string): Promise<{ updated: boolean }> {
+        this.logger.log(colors.cyan(`Requerying pending Paystack transaction: ${reference}`));
+        try {
+            const existingTransaction = await this.prisma.transactionHistory.findFirst({
+                where: { transaction_reference: reference },
+            });
+            if (!existingTransaction || existingTransaction.status === 'success') {
+                return { updated: false };
+            }
+            if (existingTransaction.transaction_type !== 'deposit' || existingTransaction.payment_method !== 'paystack') {
+                return { updated: false };
+            }
+            if (!existingTransaction.amount || existingTransaction.amount <= 0) {
+                return { updated: false };
+            }
+
+            const userWallet = await this.prisma.wallet.findFirst({
+                where: { user_id: existingTransaction.user_id },
+            });
+            if (!userWallet) {
+                return { updated: false };
+            }
+
+            const verifyPaystackKey =
+                process.env.NODE_ENV === 'development'
+                    ? process.env.PAYSTACK_TEST_SECRET_KEY || ''
+                    : process.env.PAYSTACK_LIVE_SECRET_KEY || '';
+            if (!verifyPaystackKey) {
+                return { updated: false };
+            }
+
+            const response = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
+                headers: { Authorization: `Bearer ${verifyPaystackKey}` },
+                timeout: 10000,
+            });
+
+            if (!response?.data?.data) {
+                return { updated: false };
+            }
+
+            const paystackData = response.data.data;
+            const paystackStatus = paystackData.status;
+            const paystackKoboAmount = paystackData.amount;
+            const amountInKobo = existingTransaction.amount * 100;
+
+            if (paystackStatus !== 'success' || paystackKoboAmount !== amountInKobo) {
+                return { updated: false };
+            }
+
+            await this.prisma.$transaction(async (tx) => {
+                await tx.transactionHistory.update({
+                    where: { transaction_reference: reference },
+                    data: { status: paystackStatus, updatedAt: new Date() },
+                });
+                await tx.wallet.update({
+                    where: { id: userWallet.id },
+                    data: {
+                        current_balance: { increment: existingTransaction.amount || 0 },
+                        all_time_fuunding: { increment: existingTransaction.amount || 0 },
+                        updatedAt: new Date(),
+                    },
+                });
+            });
+
+            this.logger.log(colors.green(`[Cron] Paystack transaction ${reference} requery: verified and wallet credited`));
+            return { updated: true };
+        } catch (error: any) {
+            console.log(colors.yellow(`[Cron] Paystack requery ${reference} failed: ${error?.message || error}`));
+            return { updated: false };
         }
     }
 

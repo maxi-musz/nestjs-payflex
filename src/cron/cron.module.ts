@@ -3,12 +3,14 @@ import { CronService } from './cron.service';
 import { PrismaModule } from 'src/prisma/prisma.module';
 import { DataModule } from 'src/utility-services/vtpass-service/data/data.module';
 import { AirtimeModule } from 'src/utility-services/vtpass-service/airtime/airtime.module';
+import { BankingModule } from 'src/banking/banking.module';
 
 @Module({
     imports: [
         PrismaModule,
         DataModule,
         AirtimeModule,
+        BankingModule,
     ],
     providers: [CronService],
 })

@@ -5,9 +5,11 @@ import { EmailService } from 'src/common/mailer/email.service';
 import { PushNotificationService } from 'src/push-notification/push-notification.service';
 import * as colors from 'colors/safe';
 import * as crypto from 'crypto';
+import { Logger } from '@nestjs/common';
 
 @Injectable()
 export class PaystackWebhookService {
+  private readonly logger = new Logger(PaystackWebhookService.name);
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
@@ -19,6 +21,7 @@ export class PaystackWebhookService {
    * Verify Paystack webhook signature
    */
   verifySignature(rawBody: Buffer, signature: string): boolean {
+    this.logger.log(colors.cyan(`Verifying Paystack webhook signature for reference: ${rawBody}`));
     const secretKey = 
       process.env.NODE_ENV === 'development'
         ? this.configService.get<string>('PAYSTACK_TEST_SECRET_KEY')
@@ -41,6 +44,7 @@ export class PaystackWebhookService {
    * Handle Paystack webhook events
    */
   async handleWebhookEvent(payload: any, rawBody: Buffer, signature: string): Promise<void> {
+    this.logger.log(colors.cyan(`Processing Paystack event: ${payload.event}`));
     // Verify webhook signature
     if (signature && rawBody) {
       const isValid = this.verifySignature(rawBody, signature);
@@ -52,7 +56,7 @@ export class PaystackWebhookService {
     }
 
     const { event, data } = payload;
-    console.log(colors.green(`Processing Paystack event: ${event}`));
+    this.logger.log(colors.green(`Processing Paystack event: ${event}`));
 
     // Handle different Paystack events
     switch (event) {
@@ -75,7 +79,7 @@ export class PaystackWebhookService {
         break;
 
       default:
-        console.warn(colors.yellow(`Unhandled Paystack event: ${event}`));
+        this.logger.warn(colors.yellow(`Unhandled Paystack event: ${event}`));
     }
   }
 
@@ -84,11 +88,12 @@ export class PaystackWebhookService {
    * Handles both regular payments and DVA (Dedicated Virtual Account) payments
    */
   private async handlePaymentSuccess(data: any): Promise<void> {
+    this.logger.log(`Processing Paystack payment success for reference: ${data.reference}`);
     try {
       const { reference, amount, status, customer, channel, authorization } = data;
       
-      console.log(colors.cyan(`Processing Paystack payment success for reference: ${reference}`));
-      console.log(colors.cyan(`Payment channel: ${channel}, Customer: ${customer?.customer_code || 'N/A'}`));
+      this.logger.log(colors.cyan(`Processing Paystack payment success for reference: ${reference}`));
+      this.logger.log(colors.cyan(`Payment channel: ${channel}, Customer: ${customer?.customer_code || 'N/A'}`));
 
       // Check if this is a DVA payment (bank transfer to dedicated virtual account)
       const isDvaPayment = channel === 'bank_transfer' && 
@@ -108,12 +113,12 @@ export class PaystackWebhookService {
       });
 
       if (!transaction) {
-        console.log(colors.red(`Transaction not found for reference: ${reference}`));
-        console.log(colors.yellow(`This might be a DVA payment. Checking customer code...`));
+        this.logger.log(colors.red(`Transaction not found for reference: ${reference}`));
+        this.logger.log(colors.yellow(`This might be a DVA payment. Checking customer code...`));
         
         // If no transaction found but we have a customer, try to handle as DVA
         if (customer?.customer_code) {
-          console.log(colors.cyan(`Attempting to process as DVA payment...`));
+          this.logger.log(colors.cyan(`Attempting to process as DVA payment...`));
           await this.handleDvaPayment(data);
         }
         return;
@@ -121,14 +126,14 @@ export class PaystackWebhookService {
 
       // Check if already processed
       if (transaction.status === 'success') {
-        console.log(colors.yellow(`Transaction ${reference} already processed`));
+        this.logger.log(colors.yellow(`Transaction ${reference} already processed`));
         return;
       }
 
       // Verify amount matches (amount is in kobo from Paystack)
       const amountInKobo = Math.round((transaction.amount || 0) * 100);
       if (amount !== amountInKobo) {
-        console.error(colors.red(`Amount mismatch for transaction ${reference}. Expected: ${amountInKobo}, Got: ${amount}`));
+        this.logger.error(colors.red(`Amount mismatch for transaction ${reference}. Expected: ${amountInKobo}, Got: ${amount}`));
         return;
       }
 
@@ -138,7 +143,7 @@ export class PaystackWebhookService {
       });
 
       if (!wallet) {
-        console.log(colors.red(`Wallet not found for user: ${transaction.user_id}`));
+        this.logger.log(colors.red(`Wallet not found for user: ${transaction.user_id}`));
         return;
       }
 
@@ -162,7 +167,7 @@ export class PaystackWebhookService {
         }
       });
 
-      console.log(colors.green(`Successfully processed Paystack payment for reference: ${reference}`));
+      this.logger.log(colors.green(`Successfully processed Paystack payment for reference: ${reference}`));
     } catch (error: any) {
       console.error(colors.red(`Error processing Paystack payment success: ${error.message}`));
       console.error(colors.red(`Error stack: ${error.stack}`));

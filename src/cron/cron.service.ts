@@ -5,6 +5,7 @@ import * as colors from 'colors';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { DataService } from 'src/utility-services/vtpass-service/data/data.service';
 import { AirtimeService } from 'src/utility-services/vtpass-service/airtime/airtime.service';
+import { BankingService } from 'src/banking/banking.service';
 
 @Injectable()
 export class CronService implements OnModuleInit {
@@ -14,6 +15,7 @@ export class CronService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly dataService: DataService,
     private readonly airtimeService: AirtimeService,
+    private readonly bankingService: BankingService,
   ) {}
 
   onModuleInit() {
@@ -28,15 +30,15 @@ export class CronService implements OnModuleInit {
 
     // Keep-alive ping (only in production)
     if (process.env.NODE_ENV === 'production') {
-      cron.schedule('*/3 * * * *', async () => {  // Runs every 3 minutes
-        try {
-          this.logger.log("Pinging service to keep alive...");
-          await axios.get(url); // Replace with your actual endpoint
-          this.logger.log(colors.america("Service is up"));
-        } catch (error: any) {
-          this.logger.error("Failed to ping service:", error.message);
-        }
-      });
+      // cron.schedule('*/3 * * * *', async () => {  // Runs every 3 minutes
+      //   try {
+      //     this.logger.log("Pinging service to keep alive...");
+      //     await axios.get(url); // Replace with your actual endpoint
+      //     this.logger.log(colors.america("Service is up"));
+      //   } catch (error: any) {
+      //     this.logger.error("Failed to ping service:", error.message);
+      //   }
+      // });
     }
 
     // VTpass transaction requery - runs every 3 minutes - production only
@@ -44,7 +46,12 @@ export class CronService implements OnModuleInit {
       cron.schedule('*/3 * * * *', async () => {
           await this.requeryPendingVtpassTransactions();
         });
-      }
+    }
+
+    // Paystack transaction requery - runs every 1 minute (pending deposits)
+    cron.schedule('* * * * *', async () => {
+      await this.requeryPendingPaystackTransactions();
+    });
   }
 
   /**
@@ -119,6 +126,56 @@ export class CronService implements OnModuleInit {
       this.logger.log('[Cron] Finished requerying pending transactions');
     } catch (error: any) {
       this.logger.error(`[Cron] Error in requery job: ${error.message}`, error.stack);
+    }
+  }
+
+  /**
+   * Requery pending Paystack (deposit) transactions.
+   * Runs every 1 minute.
+   */
+  private async requeryPendingPaystackTransactions(): Promise<void> {
+    try {
+      this.logger.log(colors.america('[Cron] Starting requery of pending Paystack transactions...'));
+
+      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+      const pending = await this.prisma.transactionHistory.findMany({
+        where: {
+          status: 'pending',
+          transaction_type: 'deposit',
+          payment_method: 'paystack',
+          transaction_reference: { not: null },
+          createdAt: { gte: thirtyMinutesAgo },
+        },
+        select: { transaction_reference: true },
+        take: 50,
+      });
+
+      const refs = pending
+        .map((t) => t.transaction_reference)
+        .filter((r): r is string => r != null);
+      if (refs.length === 0) {
+        this.logger.log('[Cron] No pending Paystack transactions to requery');
+        return;
+      }
+
+      this.logger.log(`[Cron] Found ${refs.length} pending Paystack transactions to requery`);
+      const batchSize = 5;
+      for (let i = 0; i < refs.length; i += batchSize) {
+        const batch = refs.slice(i, i + batchSize);
+        await Promise.all(
+          batch.map((ref) =>
+            this.bankingService.requeryPendingPaystackTransaction(ref).catch((err: any) => {
+              this.logger.error(`[Cron] Paystack requery ${ref}: ${err?.message || err}`);
+            }),
+          ),
+        );
+        if (i + batchSize < refs.length) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+      this.logger.log('[Cron] Finished requerying pending Paystack transactions');
+    } catch (error: any) {
+      this.logger.error(`[Cron] Error in Paystack requery job: ${error.message}`, error.stack);
     }
   }
 }
