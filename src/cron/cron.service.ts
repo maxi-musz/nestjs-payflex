@@ -48,8 +48,8 @@ export class CronService implements OnModuleInit {
         });
     }
 
-    // Paystack transaction requery - runs every 1 minute (pending deposits)
-    cron.schedule('* * * * *', async () => {
+    // Paystack transaction requery - runs every 5 minutes (pending deposits)
+    cron.schedule('*/5 * * * *', async () => {
       await this.requeryPendingPaystackTransactions();
     });
   }
@@ -131,7 +131,7 @@ export class CronService implements OnModuleInit {
 
   /**
    * Requery pending Paystack (deposit) transactions.
-   * Runs every 1 minute.
+   * Runs every 5 minute.
    */
   private async requeryPendingPaystackTransactions(): Promise<void> {
     try {
