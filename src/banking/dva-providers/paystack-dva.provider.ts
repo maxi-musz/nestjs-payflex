@@ -45,6 +45,44 @@ export class PaystackDvaProvider implements IDvaProvider {
   }
 
   /**
+   * Normalize phone to +234XXXXXXXXXX format that Paystack expects.
+   */
+  private formatPhoneForPaystack(raw: string): string {
+    const digits = raw.replace(/[^0-9]/g, '');
+    if (!digits) return '';
+
+    if (digits.startsWith('234') && digits.length >= 13) {
+      return '+' + digits;
+    }
+    if (digits.startsWith('0') && digits.length === 11) {
+      return '+234' + digits.substring(1);
+    }
+    if (digits.length === 10) {
+      return '+234' + digits;
+    }
+    // Already has country code or unknown format — prefix + if missing
+    return raw.startsWith('+') ? raw : '+' + digits;
+  }
+
+  /**
+   * Ensure the Paystack customer record has the phone number set.
+   * Paystack requires phone on the customer before DVA assignment.
+   */
+  private async ensureCustomerPhone(customerCode: string, phone: string): Promise<void> {
+    if (!phone) return;
+    try {
+      await axios.put(
+        `${this.paystackBaseUrl}/customer/${customerCode}`,
+        { phone },
+        { headers: this.getHeaders() },
+      );
+      this.logger.log(`Paystack customer ${customerCode} phone updated to ${phone}`);
+    } catch (err: any) {
+      this.logger.warn(`Failed to update Paystack customer phone: ${err.response?.data?.message || err.message}`);
+    }
+  }
+
+  /**
    * Create or get Paystack customer
    */
   private async createOrGetPaystackCustomer(userId: string, userEmail: string, phoneNumber?: string): Promise<string> {
@@ -59,27 +97,29 @@ export class PaystackDvaProvider implements IDvaProvider {
       return user.paystack_customer_code;
     }
 
-    // Format phone number
-    let formattedPhone = phoneNumber || user?.phone_number || '';
-    if (formattedPhone && !formattedPhone.startsWith('+')) {
-      if (formattedPhone.startsWith('0')) {
-        formattedPhone = '+234' + formattedPhone.substring(1);
-      } else if (formattedPhone.startsWith('234')) {
-        formattedPhone = '+' + formattedPhone;
-      } else if (formattedPhone.length === 10 || formattedPhone.length === 11) {
-        const cleaned = formattedPhone.startsWith('0') ? formattedPhone.substring(1) : formattedPhone;
-        formattedPhone = '+234' + cleaned;
-      }
-    }
+    // Format phone number for Paystack (expects +234XXXXXXXXXX)
+    let formattedPhone = this.formatPhoneForPaystack(phoneNumber || user?.phone_number || '');
 
     // Create customer in Paystack
     const customerData: any = {
       email: userEmail,
+      first_name: undefined,
+      last_name: undefined,
+      phone: formattedPhone || undefined,
     };
 
-    if (formattedPhone) {
-      customerData.phone = formattedPhone;
+    // Fetch names for customer creation (Paystack uses these later for DVA)
+    if (!customerData.first_name) {
+      const fullUser = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { first_name: true, last_name: true },
+      });
+      customerData.first_name = fullUser?.first_name || undefined;
+      customerData.last_name = fullUser?.last_name || undefined;
     }
+
+    // Remove undefined keys
+    Object.keys(customerData).forEach(k => customerData[k] === undefined && delete customerData[k]);
 
     try {
       const response = await axios.post(
@@ -262,6 +302,23 @@ export class PaystackDvaProvider implements IDvaProvider {
 
       if (!customerCode) {
         throw new BadRequestException('Unable to get Paystack customer code');
+      }
+
+      // Paystack requires phone on the customer record before DVA assignment.
+      // Ensure it's set even if customer was created earlier without one.
+      const phoneForPaystack = this.formatPhoneForPaystack(options?.phone_number || '');
+      if (phoneForPaystack) {
+        await this.ensureCustomerPhone(customerCode, phoneForPaystack);
+      } else {
+        // Try from database as fallback
+        const userForPhone = await this.prisma.user.findUnique({
+          where: { id: userId },
+          select: { phone_number: true },
+        });
+        const dbPhone = this.formatPhoneForPaystack(userForPhone?.phone_number || '');
+        if (dbPhone) {
+          await this.ensureCustomerPhone(customerCode, dbPhone);
+        }
       }
 
       // Check if user already has an active DVA

@@ -243,6 +243,7 @@ enum TransactionType {
   cable
   education
   betting
+  referral_bonus
 }
 
 enum CreditDebit {
@@ -535,30 +536,88 @@ model Referral {
   referrer    User   @relation("Referrer", fields: [referrer_id], references: [id], onDelete: Cascade)
 
   // Referee (the person who used the referral code)
-  referee_phone_number String // Phone number from registration (before user is created)
-  referee_user_id      String? // User ID after registration is complete (null until user completes registration)
+  referee_phone_number String
+  referee_user_id      String?
   referee              User?   @relation("Referee", fields: [referee_user_id], references: [id], onDelete: SetNull)
 
   // Referral code used
   referral_code_used String
 
-  // Status
-  is_active       Boolean   @default(true)
-  reward_given    Boolean   @default(false)
-  reward_amount   Decimal?  @db.Decimal(10, 2)
-  reward_given_at DateTime?
+  // Status tracking
+  status          ReferralStatus @default(pending)
+  is_active       Boolean        @default(true)
+
+  // Milestone tracking
+  referee_registered    Boolean   @default(false)
+  referee_registered_at DateTime?
+  referee_kyc_verified  Boolean   @default(false)
+  referee_first_tx      Boolean   @default(false)
+  referee_first_tx_at   DateTime?
+
+  // Reward tracking — referrer side
+  referrer_reward_given    Boolean   @default(false)
+  referrer_reward_amount   Float?
+  referrer_reward_given_at DateTime?
+  referrer_reward_tx_ref   String?
+
+  // Reward tracking — referee side
+  referee_reward_given    Boolean   @default(false)
+  referee_reward_amount   Float?
+  referee_reward_given_at DateTime?
+  referee_reward_tx_ref   String?
+
+  // Admin override
+  manually_approved    Boolean  @default(false)
+  manually_approved_by String?
+  manually_rejected    Boolean  @default(false)
+  rejection_reason     String?
 
   // Metadata
-  registration_progress_id String? // Link to registration progress
+  registration_progress_id String?
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
 
-  @@unique([referee_phone_number, referrer_id]) // One referral per phone per referrer
+  @@unique([referee_phone_number, referrer_id])
   @@index([referrer_id])
   @@index([referee_user_id])
   @@index([referee_phone_number])
   @@index([is_active])
-  @@index([reward_given])
+  @@index([status])
+  @@index([referrer_reward_given])
+  @@index([referee_reward_given])
+}
+
+enum ReferralStatus {
+  pending        // Referee registered but hasn't met reward conditions
+  eligible       // Conditions met, reward ready to be issued
+  rewarded       // Both sides rewarded
+  partially_rewarded // Only one side rewarded (edge case)
+  expired        // Referral expired (e.g. 90 days, no first tx)
+  rejected       // Admin manually rejected
+}
+
+model ReferralConfig {
+  id String @id @default("referral_config")
+
+  // Program status
+  is_active Boolean @default(true)
+
+  // Reward amounts (in NGN)
+  referrer_reward_amount Float @default(200)
+  referee_reward_amount  Float @default(100)
+
+  // Reward trigger — what must the referee do before rewards are issued?
+  reward_trigger String @default("first_transaction") // first_transaction | kyc_verified | registration
+
+  // Limits
+  max_referrals_per_user    Int @default(50)
+  referral_expiry_days      Int @default(90)
+  min_transaction_amount    Float @default(100)
+
+  // Updated by
+  updated_by String?
+  updatedAt  DateTime @updatedAt
+  createdAt  DateTime @default(now())
 }
 
 // Security Events Logging
@@ -1054,6 +1113,11 @@ enum AuditAction {
   AUDIT_LOG_VIEW
   AUDIT_LOG_FLAG
   AUDIT_LOG_REVIEW
+
+  // ── Referrals ─────────────────────────────────────────────
+  REFERRAL_CONFIG_UPDATE
+  REFERRAL_MANUAL_APPROVE
+  REFERRAL_MANUAL_REJECT
 
   // ── Webhooks ───────────────────────────────────────────────
   WEBHOOK_PAYSTACK

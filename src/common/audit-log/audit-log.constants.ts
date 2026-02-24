@@ -148,6 +148,11 @@ export const ACTION_CATEGORY_MAP: Record<AuditAction, AuditCategory> = {
   AUDIT_LOG_FLAG: AuditCategory.ADMIN,
   AUDIT_LOG_REVIEW: AuditCategory.ADMIN,
 
+  // Referrals
+  REFERRAL_CONFIG_UPDATE: AuditCategory.ADMIN,
+  REFERRAL_MANUAL_APPROVE: AuditCategory.ADMIN,
+  REFERRAL_MANUAL_REJECT: AuditCategory.ADMIN,
+
   // Webhooks
   WEBHOOK_PAYSTACK: AuditCategory.WEBHOOK,
   WEBHOOK_FLUTTERWAVE: AuditCategory.WEBHOOK,
@@ -381,6 +386,11 @@ export const ACTION_DESCRIPTION_MAP: Record<AuditAction, string> = {
   AUDIT_LOG_VIEW: 'Audit logs viewed',
   AUDIT_LOG_FLAG: 'Audit log entry flagged',
   AUDIT_LOG_REVIEW: 'Audit log entry reviewed',
+
+  // Referrals
+  REFERRAL_CONFIG_UPDATE: 'Referral config updated',
+  REFERRAL_MANUAL_APPROVE: 'Referral manually approved',
+  REFERRAL_MANUAL_REJECT: 'Referral manually rejected',
 
   // Webhooks
   WEBHOOK_PAYSTACK: 'Paystack webhook received',

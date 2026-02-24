@@ -11,6 +11,7 @@ import {
   AdminReplyDto,
 } from './dto/update-ticket.dto';
 import { AuditAction, AuditStatus, Prisma } from '@prisma/client';
+import { SupportGateway } from '../../../support/gateway/support.gateway';
 
 const TICKET_LIST_SELECT = {
   id: true,
@@ -115,6 +116,7 @@ export class AdminSupportService {
     private readonly prisma: PrismaService,
     private readonly auditLogService: AuditLogService,
     private readonly stats: StatsService,
+    private readonly gateway: SupportGateway,
   ) {}
 
   // ──────────────────────────────────────────────────────────
@@ -305,7 +307,7 @@ export class AdminSupportService {
   async replyToTicket(ticketId: string, dto: AdminReplyDto, adminUser: any, req: any) {
     const ticket = await this.prisma.supportTicket.findUnique({
       where: { id: ticketId },
-      select: { id: true, ticket_number: true, status: true, first_response_at: true, createdAt: true, email: true },
+      select: { id: true, ticket_number: true, status: true, first_response_at: true, createdAt: true, email: true, user_id: true },
     });
 
     if (!ticket) throw new NotFoundException('Ticket not found');
@@ -366,14 +368,20 @@ export class AdminSupportService {
       },
     );
 
-    return new ApiResponseDto(true, 'Reply sent', {
+    const replyPayload = {
       id: message.id,
       message: message.message,
       is_internal: message.is_internal,
       is_from_user: false,
       sender_name: adminName,
       createdAt: message.createdAt,
-    });
+    };
+
+    if (!message.is_internal) {
+      this.gateway.emitNewMessage(ticketId, ticket.user_id, replyPayload);
+    }
+
+    return new ApiResponseDto(true, 'Reply sent', replyPayload);
   }
 
   // ──────────────────────────────────────────────────────────
@@ -402,10 +410,17 @@ export class AdminSupportService {
     const updated = await this.prisma.supportTicket.update({
       where: { id: ticketId },
       data: updateData,
-      select: TICKET_LIST_SELECT,
+      select: { ...TICKET_LIST_SELECT, user_id: true },
     });
 
     this.stats.onTicketStatusChanged(oldStatus, dto.status);
+
+    this.gateway.emitTicketStatusChanged(ticketId, updated.user_id, {
+      old_status: oldStatus,
+      new_status: dto.status,
+      ticket_number: ticket.ticket_number,
+      resolution_notes: dto.resolution_notes,
+    });
 
     this.auditLogService.logAdmin(
       AuditAction.SUPPORT_TICKET_UPDATE,
@@ -448,6 +463,12 @@ export class AdminSupportService {
       where: { id: ticketId },
       data: { assigned_to: dto.assigned_to },
       select: TICKET_LIST_SELECT,
+    });
+
+    this.gateway.emitTicketAssigned(ticketId, {
+      ticket_number: ticket.ticket_number,
+      assigned_to: dto.assigned_to,
+      assigned_admin_name: `${assignee.first_name} ${assignee.last_name}`.trim(),
     });
 
     this.auditLogService.logAdmin(

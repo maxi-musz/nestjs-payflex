@@ -27,6 +27,8 @@ import { AdminUsersModule } from './admin/unified-admin/users/admin-users.module
 import { AdminTransactionsModule } from './admin/unified-admin/transactions/admin-transactions.module';
 import { AdminSupportModule } from './admin/unified-admin/support/admin-support.module';
 import { AdminAuditLogsModule } from './admin/unified-admin/audit-logs/admin-audit-logs.module';
+import { ReferralModule } from './referral/referral.module';
+import { AdminReferralsModule } from './admin/unified-admin/referrals/admin-referrals.module';
 
 @Module({
   imports: [
@@ -34,15 +36,17 @@ import { AdminAuditLogsModule } from './admin/unified-admin/audit-logs/admin-aud
       isGlobal: true
     }),
     CommonModule,
-    StatsModule, // Global pre-aggregated stats (DailyStats + SystemStats)
+    StatsModule,
     AuditLogModule,
     NewAuthModule,
     PermissionsModule,
-    DashboardModule, // Admin dashboard (reads from stats tables)
-    AdminUsersModule, // Admin user management (list, search, status, role, tier)
-    AdminTransactionsModule, // Admin transaction management (list, detail, stats, timeline, flag)
-    AdminSupportModule, // Admin support ticket management (list, detail, reply, status, assign, priority)
-    AdminAuditLogsModule, // Admin audit log management (list, detail, flag, review, user logs)
+    DashboardModule,
+    AdminUsersModule,
+    AdminTransactionsModule,
+    AdminSupportModule,
+    AdminAuditLogsModule,
+    AdminReferralsModule,
+    ReferralModule,
     UserModule, 
     BookmarkModule, 
     PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule, WebhooksModule, UtilityServicesModule, PushNotificationModule, SupportModule, EmailModule

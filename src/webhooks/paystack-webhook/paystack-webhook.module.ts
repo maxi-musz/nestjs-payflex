@@ -4,9 +4,10 @@ import { PrismaModule } from 'src/prisma/prisma.module';
 import { EmailModule } from 'src/common/mailer/email.module';
 import { PushNotificationModule } from 'src/push-notification/push-notification.module';
 import { PaystackWebhookService } from './paystack-webhook.service';
+import { ReferralModule } from '../../referral/referral.module';
 
 @Module({
-  imports: [ConfigModule, PrismaModule, EmailModule, PushNotificationModule],
+  imports: [ConfigModule, PrismaModule, EmailModule, PushNotificationModule, ReferralModule],
   providers: [PaystackWebhookService],
   exports: [PaystackWebhookService],
 })

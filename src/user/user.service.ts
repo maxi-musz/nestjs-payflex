@@ -426,7 +426,8 @@ function getUserTier(user: any): TierInfo {
                     kyc_verification: true,
                     cards: true,
                     wallet: true,
-                    accounts: true
+                    accounts: true,
+                    tier: true,
                 }
             })
 
@@ -480,7 +481,23 @@ function getUserTier(user: any): TierInfo {
                     isActive: fullUserDetails?.wallet?.isActive,
                     createdAt: fullUserDetails?.wallet?.createdAt,
                     updatedAt: formatDate(fullUserDetails?.wallet?.updatedAt ?? new Date()),
-                }
+                },
+
+                current_tier: fullUserDetails?.tier ? {
+                    tier: fullUserDetails.tier.tier,
+                    name: fullUserDetails.tier.name,
+                    description: fullUserDetails.tier.description || "",
+                    requirements: (fullUserDetails.tier.requirements as string[]) || [],
+                    limits: {
+                        singleTransaction: fullUserDetails.tier.single_transaction_limit,
+                        daily: fullUserDetails.tier.daily_limit,
+                        monthly: fullUserDetails.tier.monthly_limit,
+                        airtimeDaily: fullUserDetails.tier.airtime_daily_limit,
+                    },
+                    is_active: fullUserDetails.tier.is_active,
+                } : null,
+
+                available_tiers: await this.getAvailableTiers(fullUserDetails?.tier_id),
             }
 
             return new ApiResponseDto(
@@ -493,6 +510,29 @@ function getUserTier(user: any): TierInfo {
             console.log(colors.red(`Error fetching user details: ${error}`))
             throw new HttpException("Error fetching user details", HttpStatus.SERVICE_UNAVAILABLE, {cause: new Error()})   
         }
+    }
+
+    private async getAvailableTiers(currentTierId?: string | null) {
+        const tiers = await this.prisma.tier.findMany({
+            where: { is_active: true },
+            orderBy: { order: 'asc' },
+        });
+
+        return tiers.map(t => ({
+            id: t.id,
+            tier: t.tier,
+            name: t.name,
+            description: t.description || "",
+            order: t.order,
+            requirements: (t.requirements as string[]) || [],
+            limits: {
+                singleTransaction: t.single_transaction_limit,
+                daily: t.daily_limit,
+                monthly: t.monthly_limit,
+                airtimeDaily: t.airtime_daily_limit,
+            },
+            is_current: t.id === currentTierId,
+        }));
     }
 
     async fetchUserProfile(userPayload: any) {

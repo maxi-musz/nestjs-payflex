@@ -13,6 +13,7 @@ import { ConfigService } from '@nestjs/config';
 import { error } from 'console';
 import { BankProviderFactory } from './bank-providers/bank-provider.factory';
 import { StatsService } from 'src/common/stats/stats.service';
+import { ReferralService } from '../referral/referral.service';
 
 // Determine Paystack environment key
 const paystackKey =
@@ -42,6 +43,7 @@ export class BankingService {
         private readonly prisma: PrismaService,
         private readonly bankProviderFactory: BankProviderFactory,
         private readonly stats: StatsService,
+        private readonly referralService: ReferralService,
     ) {
         this.apiUrl = 'https://api.flutterwave.com/v3';
         this.secretKey = this.configService.get<string>('FLW_SECRET_KEY') || '';
@@ -421,6 +423,7 @@ export class BankingService {
             console.log(colors.green(`Payment verified successfully. New balance: ${updatedWallet.current_balance}`));
             this.stats.onTransactionStatusChanged('pending', 'success', existingTransaction.amount || 0);
             this.stats.onWalletFunded(existingTransaction.amount || 0);
+            this.referralService.checkAndTriggerReward(existingTransaction.user_id, existingTransaction.amount || 0);
 
               const formattedResponse = {
                 id: updatedTx.id,

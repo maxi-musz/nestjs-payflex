@@ -7,9 +7,10 @@ import { DvaProviderFactory } from './dva-providers/dva-provider.factory';
 import { BankProviderFactory } from './bank-providers/bank-provider.factory';
 import { PrismaModule } from 'src/prisma/prisma.module';
 import { CommonModule } from 'src/common/common.module';
+import { ReferralModule } from '../referral/referral.module';
 
 @Module({
-  imports: [PaystackModule, SmipayModule, PrismaModule, CommonModule],
+  imports: [PaystackModule, SmipayModule, PrismaModule, CommonModule, ReferralModule],
   providers: [BankingService, DvaProviderFactory, BankProviderFactory],
   controllers: [BankingController],
   exports: [BankingService, DvaProviderFactory, BankProviderFactory],

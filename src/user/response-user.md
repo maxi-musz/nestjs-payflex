@@ -1,143 +1,143 @@
-<!-- This is the file that will hold response structure for all the endpoints inside users module -->
+# User Module — Frontend API Documentation
 
-# User Module Response Structures
+**Base Path:** `/api/v1/user`
+**Auth:** JWT Bearer token required on all endpoints
 
-## GET `/user/fetch-user-profile`
+---
 
-**Endpoint:** `GET /user/fetch-user-profile`  
-**Guard:** `AuthGuard('jwt')` - Requires JWT authentication  
-**Description:** Fetches the complete user profile including personal information, address, and KYC verification data.
+## 1. App Homepage Data
 
-### Response Structure
+**GET** `/user/fetch-app-homepage-details`
 
-All responses follow the `ApiResponseDto` format:
+Returns everything the app homepage needs: user info, wallet, accounts (DVA), recent transactions, KYC status, and current tier.
 
-```typescript
-{
-  success: boolean;
-  message: string;
-  data?: T;
-}
-```
-
-### Success Response
-
-**Status Code:** `200 OK`
+### Response
 
 ```json
 {
   "success": true,
-  "message": "User profile successfully fetched",
+  "message": "User data john@example.com for app homepage successfully retrieved",
   "data": {
-    "profile_data": {
-      "id": "string (UUID)",
-      "first_name": "string | empty string",
-      "middle_name": "string | empty string",
-      "last_name": "string | empty string",
-      "email": "string",
-      "phone_number": "string | empty string",
-      "smipay_tag": "string | empty string (unique user tag/username)",
-      "gender": "string | empty string (enum: 'male' | 'female')",
-      "role": "string | empty string (enum: 'user' | 'admin' | 'super_admin')",
-      "date_of_birth": "string (ISO date) | empty string",
-      "email_verification": "boolean",
-      "phone_verification": "boolean",
-      "is_friendly": "boolean",
-      "referral_code": "string | empty string",
-      "account_status": "string | empty string (enum: 'active' | 'suspended')",
-      "agree_to_terms": "boolean",
-      "updates_opt_in": "boolean",
-      "profile_image": "string (secure_url) | empty string",
-      "joined": "string (formatted date) | 'N/A'",
-      "updated_at": "string (formatted date) | 'N/A'"
+    "user": {
+      "id": "uuid",
+      "smipay_tag": "johndoe",
+      "name": "John Doe",
+      "isTransactionPinSetup": true,
+      "phone_number": "+2341234567890",
+      "first_name": "John",
+      "last_name": "Doe",
+      "email": "john@example.com",
+      "role": "user",
+      "profile_image": "https://res.cloudinary.com/...",
+      "is_email_verified": true
     },
-    "address": {
-      "id": "string (UUID) | null",
-      "house_no": "string | null",
-      "city": "string | null",
-      "state": "string | null",
-      "country": "string | null",
-      "house_address": "string | null",
-      "postal_code": "string | null"
+
+    "accounts": [
+      {
+        "id": "uuid",
+        "account_holder_name": "JOHN DOE",
+        "account_number": "0123456789",
+        "bank_name": "Wema Bank",
+        "currency": "ngn",
+        "balance": "₦5,000.00",
+        "isActive": true,
+        "createdAt": "15 Jan 2026",
+        "updatedAt": "20 Jan 2026"
+      }
+    ],
+
+    "wallet_card": {
+      "id": "uuid",
+      "current_balance": "₦5,000.00",
+      "all_time_fuunding": "₦50,000.00",
+      "all_time_withdrawn": "₦20,000.00",
+      "owned_currencies": ["ngn"],
+      "isActive": true,
+      "createdAt": "2026-01-15T00:00:00.000Z",
+      "updatedAt": "20 Jan 2026"
     },
-    "user_kyc_data": {
-      "id": "string (UUID) | empty string",
-      "user_id": "string (UUID) | empty string",
-      "is_verified": "boolean",
-      "status": "string | empty string (enum: 'pending' | 'approved' | 'rejected')",
-      "id_type": "string | empty string (enum: 'NIGERIAN_BVN_VERIFICATION' | 'NIGERIAN_NIN' | 'NIGERIAN_INTERNATIONAL_PASSPORT' | 'NIGERIAN_PVC' | 'NIGERIAN_DRIVERS_LICENSE')",
-      "id_number": "string | empty string",
-      "bvn": "string | empty string",
-      "bvn_verified": "boolean",
-      "watchlisted": "boolean",
-      "initiated_at": "string (formatted date) | empty string",
-      "approved_at": "string (formatted date) | empty string",
-      "failure_reason": "string | empty string"
+
+    "transaction_history": [
+      {
+        "id": "uuid",
+        "amount": 1000,
+        "type": "wallet_funding",
+        "provider": "paystack",
+        "description": "Wallet funding via card",
+        "credit_debit": "credit",
+        "status": "successful",
+        "date": "20 Jan 2026",
+        "sender": null,
+        "icon": "https://res.cloudinary.com/..."
+      }
+    ],
+
+    "kyc_verification": {
+      "id": "uuid",
+      "is_verified": true,
+      "status": "approved",
+      "id_type": "NIGERIAN_BVN_VERIFICATION",
+      "id_no": "12345678901",
+      "bvn": "12345678901",
+      "bvn_verified": true,
+      "watchlisted": false,
+      "initiated_at": "16 Jan 2026",
+      "approved_at": "17 Jan 2026",
+      "failure_reason": ""
     },
-    "account_tier": {
-      "current_tier": {
-        "tier": "string (enum: 'UNVERIFIED' | 'VERIFIED' | 'PREMIUM')",
-        "name": "string",
-        "description": "string",
-        "requirements": "string[]",
-        "limits": {
-          "singleTransaction": "number (in NGN)",
-          "daily": "number (in NGN)",
-          "monthly": "number (in NGN)",
-          "airtimeDaily": "number (in NGN)"
-        }
+
+    "current_tier": {
+      "tier": "VERIFIED",
+      "name": "Verified Tier",
+      "description": "KYC verified account with increased limits",
+      "requirements": ["Phone verification", "Email verification", "KYC (BVN/NIN)"],
+      "limits": {
+        "singleTransaction": 100000,
+        "daily": 500000,
+        "monthly": 5000000,
+        "airtimeDaily": 50000
       },
-      "available_tiers": [
-        {
-          "tier": "string",
-          "name": "string",
-          "description": "string",
-          "requirements": "string[]",
-          "limits": {
-            "singleTransaction": "number",
-            "daily": "number",
-            "monthly": "number",
-            "airtimeDaily": "number"
-          },
-          "is_current": "boolean"
-        }
-      ]
+      "is_active": true
     }
   }
 }
 ```
 
-### Example Response
+---
+
+## 2. User Profile Page
+
+**GET** `/user/fetch-user-profile`
+*(Also available at `/user/app-user-profile-page` — same response)*
+
+Returns user profile, address, KYC, wallet, **current tier**, and **all available tiers** so the user can see upgrade paths.
+
+### Response
 
 ```json
 {
   "success": true,
   "message": "User profile successfully fetched",
   "data": {
-    "profile_data": {
-      "id": "550e8400-e29b-41d4-a716-446655440000",
+    "user": {
+      "id": "uuid",
+      "name": "John Doe",
       "first_name": "John",
-      "middle_name": "Michael",
       "last_name": "Doe",
-      "email": "john.doe@example.com",
+      "email": "john@example.com",
+      "is_verified": true,
       "phone_number": "+2341234567890",
-      "smipay_tag": "@johndoe",
+      "profile_image": "https://res.cloudinary.com/...",
       "gender": "male",
-      "role": "user",
       "date_of_birth": "1990-01-15T00:00:00.000Z",
-      "email_verification": true,
-      "phone_verification": true,
-      "is_friendly": false,
-      "referral_code": "JOHN2024",
-      "account_status": "active",
-      "agree_to_terms": true,
-      "updates_opt_in": true,
-      "profile_image": "https://cloudinary.com/image.jpg",
-      "joined": "2024-01-15",
-      "updated_at": "2024-01-20"
+      "joined": "15 Jan 2026",
+      "totalCards": 2,
+      "totalAccounts": 1,
+      "wallet_balance": 5000
     },
+
     "address": {
-      "id": "660e8400-e29b-41d4-a716-446655440000",
+      "id": "uuid",
       "house_no": "123",
       "city": "Lagos",
       "state": "Lagos",
@@ -145,25 +145,70 @@ All responses follow the `ApiResponseDto` format:
       "house_address": "123 Main Street, Victoria Island",
       "postal_code": "101241"
     },
-    "user_kyc_data": {
-      "id": "770e8400-e29b-41d4-a716-446655440000",
-      "user_id": "550e8400-e29b-41d4-a716-446655440000",
-      "is_verified": true,
+
+    "kyc_verification": {
+      "id": "uuid",
+      "is_active": true,
       "status": "approved",
       "id_type": "NIGERIAN_BVN_VERIFICATION",
-      "id_number": "12345678901",
-      "bvn": "12345678901",
-      "bvn_verified": true,
-      "watchlisted": false,
-      "initiated_at": "2024-01-16",
-      "approved_at": "2024-01-17",
-      "failure_reason": ""
+      "id_number": "12345678901"
     },
-    "account_tier": {
-      "current_tier": {
+
+    "wallet_card": {
+      "id": "uuid",
+      "current_balance": "₦5,000.00",
+      "all_time_fuunding": "₦50,000.00",
+      "all_time_withdrawn": "₦20,000.00",
+      "isActive": true,
+      "createdAt": "2026-01-15T00:00:00.000Z",
+      "updatedAt": "20 Jan 2026"
+    },
+
+    "current_tier": {
+      "tier": "VERIFIED",
+      "name": "Verified Tier",
+      "description": "KYC verified account with increased limits",
+      "requirements": [
+        "Phone number verification",
+        "Email verification",
+        "KYC verification (BVN/NIN)",
+        "Face verification",
+        "Address verification"
+      ],
+      "limits": {
+        "singleTransaction": 100000,
+        "daily": 500000,
+        "monthly": 5000000,
+        "airtimeDaily": 50000
+      },
+      "is_active": true
+    },
+
+    "available_tiers": [
+      {
+        "id": "uuid",
+        "tier": "UNVERIFIED",
+        "name": "Basic Tier",
+        "description": "New account with basic transaction limits",
+        "order": 1,
+        "requirements": [
+          "Phone number verification",
+          "Email verification"
+        ],
+        "limits": {
+          "singleTransaction": 50000,
+          "daily": 200000,
+          "monthly": 1000000,
+          "airtimeDaily": 20000
+        },
+        "is_current": false
+      },
+      {
+        "id": "uuid",
         "tier": "VERIFIED",
         "name": "Verified Tier",
-        "description": "KYC verified account with increased transaction limits",
+        "description": "KYC verified account with increased limits",
+        "order": 2,
         "requirements": [
           "Phone number verification",
           "Email verification",
@@ -176,74 +221,38 @@ All responses follow the `ApiResponseDto` format:
           "daily": 500000,
           "monthly": 5000000,
           "airtimeDaily": 50000
-        }
+        },
+        "is_current": true
       },
-      "available_tiers": [
-        {
-          "tier": "UNVERIFIED",
-          "name": "Basic Tier",
-          "description": "Phone verified account with basic transaction limits",
-          "requirements": [
-            "Phone number verification",
-            "Email verification (optional)"
-          ],
-          "limits": {
-            "singleTransaction": 50000,
-            "daily": 200000,
-            "monthly": 1000000,
-            "airtimeDaily": 20000
-          },
-          "is_current": false
+      {
+        "id": "uuid",
+        "tier": "PREMIUM",
+        "name": "Premium Tier",
+        "description": "Fully verified account with maximum transaction limits",
+        "order": 3,
+        "requirements": [
+          "Phone number verification",
+          "Email verification",
+          "KYC verification (BVN/NIN)",
+          "Face verification",
+          "Address verification",
+          "BVN verification",
+          "Additional documentation (if required)"
+        ],
+        "limits": {
+          "singleTransaction": 500000,
+          "daily": 2000000,
+          "monthly": 10000000,
+          "airtimeDaily": 100000
         },
-        {
-          "tier": "VERIFIED",
-          "name": "Verified Tier",
-          "description": "KYC verified account with increased transaction limits",
-          "requirements": [
-            "Phone number verification",
-            "Email verification",
-            "KYC verification (BVN/NIN)",
-            "Face verification",
-            "Address verification"
-          ],
-          "limits": {
-            "singleTransaction": 100000,
-            "daily": 500000,
-            "monthly": 5000000,
-            "airtimeDaily": 50000
-          },
-          "is_current": true
-        },
-        {
-          "tier": "PREMIUM",
-          "name": "Premium Tier",
-          "description": "Fully verified account with maximum transaction limits",
-          "requirements": [
-            "Phone number verification",
-            "Email verification",
-            "KYC verification (BVN/NIN)",
-            "Face verification",
-            "Address verification",
-            "BVN verification",
-            "Additional documentation (if required)"
-          ],
-          "limits": {
-            "singleTransaction": 500000,
-            "daily": 2000000,
-            "monthly": 10000000,
-            "airtimeDaily": 100000
-          },
-          "is_current": false
-        }
-      ]
-    }
+        "is_current": false
+      }
+    ]
   }
 }
 ```
 
 ### Error Response
-
-**Status Code:** `503 Service Unavailable`
 
 ```json
 {
@@ -253,36 +262,105 @@ All responses follow the `ApiResponseDto` format:
 }
 ```
 
-### Notes
+---
 
-- **Profile Data:**
-  - String fields default to empty strings (`""`) if not present
-  - Boolean fields (`email_verification`, `phone_verification`, `is_friendly`, `agree_to_terms`, `updates_opt_in`) default to `false`
-  - `smipay_tag` is a unique user identifier/tag (similar to username)
-  - `account_status` can be `"active"` or `"suspended"`
-  - `profile_image` contains the secure URL from Cloudinary or empty string if not set
-  - `joined` and `updated_at` are formatted date strings or `"N/A"` if dates are not available
+## 3. User KYC Data
 
-- **Address:**
-  - All fields can be `null` if the user hasn't set up their address
-  - Address is optional and may not exist for all users
+**GET** `/user/fetch-user-kyc`
 
-- **KYC Data:**
-  - String fields default to empty strings (`""`) if KYC verification hasn't been completed
-  - Boolean fields (`is_verified`, `bvn_verified`, `watchlisted`) default to `false`
-  - `initiated_at` and `approved_at` are formatted date strings or empty strings if not available
-  - `failure_reason` contains the reason for KYC rejection if status is `"rejected"`, otherwise empty string
-  - `bvn` is only populated if the user used BVN verification method
+Returns the user's KYC verification details.
 
-- **Account Tier:**
-  - **Current Tier:** Determined automatically based on user's verification status:
-    - `UNVERIFIED`: Phone verified only (basic tier)
-    - `VERIFIED`: KYC verified with all required verifications
-    - `PREMIUM`: Fully verified including BVN verification
-  - **Available Tiers:** Returns all three tiers with their requirements and limits
-  - Each tier in `available_tiers` has an `is_current` flag indicating if it's the user's current tier
-  - Transaction limits are in NGN (Nigerian Naira)
-  - Tier determination logic:
-    - Premium: KYC verified + BVN verified + phone verified + email verified + address exists
-    - Verified: KYC verified + phone verified + email verified + address exists (BVN not required)
-    - Unverified: Only phone or email verified (default)
+---
+
+## 4. Update Profile
+
+**PUT** `/user/update-profile`
+
+Updates user profile fields (name, gender, date of birth, etc.).
+
+---
+
+## Field Notes
+
+### User
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string (UUID) | User's unique ID |
+| `smipay_tag` | string | Unique username tag (e.g. `johndoe`) |
+| `isTransactionPinSetup` | boolean | Whether user has set a transaction PIN |
+| `is_email_verified` | boolean | Email verification status |
+| `profile_image` | string | Cloudinary URL or `""` |
+| `wallet_balance` | number | Raw balance (profile endpoint only) |
+
+### Current Tier
+| Field | Type | Notes |
+|---|---|---|
+| `tier` | string | Tier code (e.g. `UNVERIFIED`, `VERIFIED`, `PREMIUM`) |
+| `name` | string | Display name |
+| `description` | string | Human-readable description |
+| `requirements` | string[] | List of what the user needs to reach this tier |
+| `limits.singleTransaction` | number | Max ₦ per single transaction |
+| `limits.daily` | number | Max ₦ per day |
+| `limits.monthly` | number | Max ₦ per month |
+| `limits.airtimeDaily` | number | Max ₦ airtime per day |
+| `is_active` | boolean | Whether this tier is active in the system |
+
+### Available Tiers (Profile endpoint only)
+Same fields as `current_tier`, plus:
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string (UUID) | Tier ID |
+| `order` | number | Sort order (1 = lowest tier, higher = better) |
+| `is_current` | boolean | `true` if this is the user's current tier |
+
+### Tier Upgrade UI Suggestion
+
+Use `available_tiers` to build an "Account Tiers" or "Upgrade Account" screen:
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Account Tiers                                        │
+│                                                       │
+│  ┌──────────────────────────────────────────────┐     │
+│  │  ✓  Basic Tier (Current)                     │     │
+│  │      ₦50,000/tx · ₦200,000/day              │     │
+│  └──────────────────────────────────────────────┘     │
+│                                                       │
+│  ┌──────────────────────────────────────────────┐     │
+│  │  ★  Verified Tier                            │     │
+│  │      ₦100,000/tx · ₦500,000/day             │     │
+│  │                                              │     │
+│  │  Requirements:                               │     │
+│  │  ✓ Phone verification                        │     │
+│  │  ✓ Email verification                        │     │
+│  │  ✗ KYC verification (BVN/NIN)               │     │
+│  │  ✗ Face verification                         │     │
+│  │  ✗ Address verification                      │     │
+│  │                                              │     │
+│  │           [ Start Upgrade →]                 │     │
+│  └──────────────────────────────────────────────┘     │
+│                                                       │
+│  ┌──────────────────────────────────────────────┐     │
+│  │  ◆  Premium Tier                             │     │
+│  │      ₦500,000/tx · ₦2,000,000/day           │     │
+│  │                                              │     │
+│  │  Requirements:                               │     │
+│  │  ✓ Phone verification                        │     │
+│  │  ✓ Email verification                        │     │
+│  │  ✗ KYC + BVN verification                   │     │
+│  │  ✗ Face verification                         │     │
+│  │  ✗ Address + additional docs                 │     │
+│  │                                              │     │
+│  │            [ Locked 🔒 ]                     │     │
+│  └──────────────────────────────────────────────┘     │
+└──────────────────────────────────────────────────────┘
+```
+
+**Tips:**
+- Sort tiers by `order` (ascending)
+- Highlight the `is_current: true` tier
+- Cross-reference requirements with `kyc_verification` data to show ✓/✗
+- Only show "Start Upgrade" on the **next** tier above current
+- Show "Locked" on tiers that are 2+ levels above current
+- All limit amounts are in ₦ (Nigerian Naira)
