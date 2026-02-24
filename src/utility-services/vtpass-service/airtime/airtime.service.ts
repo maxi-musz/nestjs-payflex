@@ -194,11 +194,17 @@ export class AirtimeService {
         const existing = await tx.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
         if (existing) return existing;
 
-        const wallet = await tx.wallet.findUnique({ where: { user_id: userPayload.sub } });
+        const wallet = await tx.wallet.findFirst({ where: { user_id: userPayload.sub } });
         const amountNum = Number(dto.amount);
+
+        this.logger.log(`Wallet lookup for user ${userPayload.sub}: ${wallet ? `found (id: ${wallet.id}, balance: ${wallet.current_balance})` : 'NOT FOUND'}`);
+
         if (!wallet) {
-          throw new HttpException('Wallet not found', HttpStatus.BAD_REQUEST);
+          this.logger.error(`User wallet not found for user ${userPayload.sub}`);
+          throw new HttpException('User wallet not found in database', HttpStatus.BAD_REQUEST);
         }
+
+        this.logger.log(`Balance check: ${wallet.current_balance} >= ${amountNum} → ${Number(wallet.current_balance) >= amountNum ? 'OK' : 'INSUFFICIENT'}`);
         validateWalletBalance(Number(wallet.current_balance), amountNum);
 
         const balance_before = Number(wallet.current_balance);
@@ -306,43 +312,63 @@ export class AirtimeService {
     } catch (error: any) {
       this.logger.error(`Error purchasing airtime: ${error.message}`);
       
-      // Update transaction status to failed and refund (idempotent - safe to retry)
+      // Record failure + refund if wallet was debited
       try {
-        await this.prisma.$transaction(async (tx) => {
-          await tx.transactionHistory.update({
-            where: { transaction_reference: request_id },
-            data: { 
-              status: 'failed', 
-              meta_data: { 
-                request_id, 
-                payload: {
-                  request_id,
-                  serviceID: dto.serviceID,
-                  amount: dto.amount,
-                  phone: dto.phone,
-                },
-                vtpass_error: error.response?.data || error.message || 'Unknown error'
-              } 
-            }
-          });
-          await tx.wallet.update({
-            where: { user_id: userPayload.sub },
-            data: { current_balance: { increment: Number(dto.amount) } }
-          });
+        const existingTx = await this.prisma.transactionHistory.findUnique({
+          where: { transaction_reference: request_id },
         });
+
+        const errorMeta = {
+          request_id,
+          payload: { request_id, serviceID: dto.serviceID, amount: dto.amount, phone: dto.phone },
+          vtpass_error: error.response?.data || error.message || 'Unknown error',
+        };
+
+        if (existingTx) {
+          // Transaction was created (wallet was debited) — mark failed + refund
+          await this.prisma.$transaction(async (tx) => {
+            await tx.transactionHistory.update({
+              where: { transaction_reference: request_id },
+              data: { status: 'failed', meta_data: errorMeta },
+            });
+            await tx.wallet.update({
+              where: { user_id: userPayload.sub },
+              data: { current_balance: { increment: Number(dto.amount) } },
+            });
+          });
+          this.logger.log(`Transaction ${request_id} marked as failed, wallet refunded`);
+        } else {
+          // Transaction was never created (error before DB commit) — create a failed record
+          await this.prisma.transactionHistory.create({
+            data: {
+              user_id: userPayload.sub,
+              amount: Number(dto.amount),
+              provider: dto.serviceID,
+              transaction_type: 'airtime',
+              credit_debit: 'debit',
+              description: `VTU ${dto.serviceID.toUpperCase()} to ${dto.phone}`,
+              status: 'failed',
+              recipient_mobile: dto.phone,
+              payment_method: 'wallet',
+              payment_channel: 'other',
+              transaction_reference: request_id,
+              balance_before: 0,
+              balance_after: 0,
+              meta_data: errorMeta,
+            },
+          });
+          this.logger.log(`Failed transaction ${request_id} recorded (no wallet debit occurred)`);
+        }
       } catch (updateError: any) {
-        // Transaction might not exist if error occurred before creation
-        this.logger.warn(`Could not update transaction status: ${updateError.message}`);
+        this.logger.error(`Failed to record transaction failure: ${updateError.message}`);
       }
 
-      if (error.response) {
-        this.logger.error('VTpass API Error Response:', JSON.stringify({
-          status: error.response.status,
-          statusText: error.response.statusText,
-          data: error.response.data,
-        }, null, 2));
+      // Axios errors (actual VTpass API responses) have error.response.status (number)
+      const isAxiosError = error.response && typeof error.response.status === 'number';
 
-        // Handle authentication errors with detailed logging
+      if (isAxiosError) {
+        this.logger.error(`VTpass API Error Response: ${error.response.status} ${error.response.statusText}`, JSON.stringify(error.response.data, null, 2));
+
         if (error.response.status === 401) {
           const authError = handleAuthenticationError(
             error,
@@ -354,17 +380,20 @@ export class AirtimeService {
             },
             this.logger,
           );
-          if (authError) {
-            throw authError;
-          }
+          if (authError) throw authError;
         }
 
         const message = error.response.data?.response_description || error.response.data?.message || 'Failed to purchase airtime';
         throw new HttpException(message, error.response.status || HttpStatus.BAD_REQUEST);
       }
+
       if (error.request) {
         this.logger.error('VTpass API Request Error: network/request issue — no response received');
       }
+
+      // Re-throw HttpExceptions as-is (internal errors like insufficient balance)
+      if (error instanceof HttpException) throw error;
+
       throw new HttpException('Failed to purchase airtime', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
