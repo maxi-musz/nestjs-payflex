@@ -274,7 +274,8 @@ export class AirtimeService {
         });
         
         if (shouldThrow) {
-        throw new HttpException(errorMessage, HttpStatus.BAD_REQUEST);
+          this.logger.error(`VTpass response: code=${responseCode}, status=${txStatus}, description="${responseDescription}"`);
+          throw new HttpException(`Provider error: ${errorMessage}`, HttpStatus.BAD_REQUEST);
         }
       }
 
@@ -310,7 +311,8 @@ export class AirtimeService {
       }
       return new ApiResponseDto(true, 'Airtime purchase successful', formattedResponse);
     } catch (error: any) {
-      this.logger.error(`Error purchasing airtime: ${error.message}`);
+      const isVtpassError = error.response && typeof error.response.status === 'number';
+      this.logger.error(`Error purchasing airtime: ${isVtpassError ? '[VTpass] ' : ''}${error.message}`);
       
       // Record failure + refund if wallet was debited
       try {
@@ -383,8 +385,8 @@ export class AirtimeService {
           if (authError) throw authError;
         }
 
-        const message = error.response.data?.response_description || error.response.data?.message || 'Failed to purchase airtime';
-        throw new HttpException(message, error.response.status || HttpStatus.BAD_REQUEST);
+        const rawMessage = error.response.data?.response_description || error.response.data?.message || 'Failed to purchase airtime';
+        throw new HttpException(`Provider error: ${rawMessage}`, error.response.status || HttpStatus.BAD_REQUEST);
       }
 
       if (error.request) {
