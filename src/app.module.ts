@@ -23,6 +23,8 @@ import { NewAuthModule } from './new-auth/new-auth.module';
 import { PermissionsModule } from './admin/unified-admin/permissions/permissions.module';
 import { StatsModule } from './common/stats/stats.module';
 import { DashboardModule } from './admin/unified-admin/dashboard/dashboard.module';
+import { AdminUsersModule } from './admin/unified-admin/users/admin-users.module';
+import { AdminTransactionsModule } from './admin/unified-admin/transactions/admin-transactions.module';
 
 @Module({
   imports: [
@@ -35,6 +37,8 @@ import { DashboardModule } from './admin/unified-admin/dashboard/dashboard.modul
     NewAuthModule,
     PermissionsModule,
     DashboardModule, // Admin dashboard (reads from stats tables)
+    AdminUsersModule, // Admin user management (list, search, status, role, tier)
+    AdminTransactionsModule, // Admin transaction management (list, detail, stats, timeline, flag)
     UserModule, 
     BookmarkModule, 
     PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule, WebhooksModule, UtilityServicesModule, PushNotificationModule, SupportModule, EmailModule

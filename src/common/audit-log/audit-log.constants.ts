@@ -140,6 +140,8 @@ export const ACTION_CATEGORY_MAP: Record<AuditAction, AuditCategory> = {
   TIER_LIST: AuditCategory.ADMIN,
   USER_SUSPEND: AuditCategory.ADMIN,
   USER_ACTIVATE: AuditCategory.ADMIN,
+  USER_ROLE_CHANGE: AuditCategory.ADMIN,
+  USER_TIER_CHANGE: AuditCategory.ADMIN,
   USER_VIEW: AuditCategory.ADMIN,
   ADMIN_LOGIN: AuditCategory.ADMIN,
   AUDIT_LOG_VIEW: AuditCategory.ADMIN,
@@ -228,6 +230,8 @@ export const ACTION_SEVERITY_MAP: Partial<Record<AuditAction, AuditSeverity>> = 
   WEBHOOK_FLUTTERWAVE: AuditSeverity.MEDIUM,
   WEBHOOK_VTPASS: AuditSeverity.MEDIUM,
   USER_ACTIVATE: AuditSeverity.MEDIUM,
+  USER_ROLE_CHANGE: AuditSeverity.HIGH,
+  USER_TIER_CHANGE: AuditSeverity.MEDIUM,
 };
 
 /**
@@ -370,6 +374,8 @@ export const ACTION_DESCRIPTION_MAP: Record<AuditAction, string> = {
   TIER_LIST: 'Account tiers listed',
   USER_SUSPEND: 'User account suspended',
   USER_ACTIVATE: 'User account activated',
+  USER_ROLE_CHANGE: 'User role changed',
+  USER_TIER_CHANGE: 'User tier changed',
   USER_VIEW: 'User details viewed',
   ADMIN_LOGIN: 'Admin logged in',
   AUDIT_LOG_VIEW: 'Audit logs viewed',
