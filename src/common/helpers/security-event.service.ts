@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { StatsService } from '../stats/stats.service';
 import { formatTimeDuration } from '../helper_functions/time-formatter';
 import * as colors from 'colors';
 
@@ -7,7 +8,10 @@ import * as colors from 'colors';
 export class SecurityEventService {
   private readonly logger = new Logger(SecurityEventService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private stats: StatsService,
+  ) {}
 
   async logEvent(data: {
     eventType: string;
@@ -40,6 +44,8 @@ export class SecurityEventService {
           metadata: data.metadata || null,
         },
       });
+
+      this.stats.onSecurityEvent();
 
       const logMessage = `[${data.severity.toUpperCase()}] ${data.eventType}: ${data.description}`;
 

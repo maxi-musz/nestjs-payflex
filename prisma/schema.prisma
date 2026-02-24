@@ -1147,6 +1147,85 @@ model Permission {
   @@map("permissions")
 }
 
+// ============================================================================
+// DASHBOARD STATS — Pre-aggregated counters (avoid heavy queries)
+// ============================================================================
+
+model DailyStats {
+  id   String   @id @default(uuid())
+  date DateTime @unique @db.Date
+
+  // Users
+  new_users Int @default(0)
+
+  // Transactions
+  transactions_count   Int   @default(0)
+  transactions_volume  Float @default(0)
+  transactions_success Int   @default(0)
+  transactions_failed  Int   @default(0)
+
+  // Wallets
+  funded_amount Float @default(0)
+
+  // KYC
+  kyc_approved Int @default(0)
+  kyc_rejected Int @default(0)
+
+  // Cards
+  cards_issued Int @default(0)
+
+  // Referrals
+  referrals_count Int @default(0)
+
+  // Revenue (markup)
+  markup_revenue Float @default(0)
+
+  // Security
+  security_events Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([date])
+  @@map("daily_stats")
+}
+
+model SystemStats {
+  id String @id @default("system")
+
+  // Users
+  total_users     Int @default(0)
+  active_users    Int @default(0)
+  suspended_users Int @default(0)
+
+  // Wallets
+  total_wallet_balance Float @default(0)
+
+  // Cards
+  total_active_cards Int @default(0)
+
+  // Support
+  open_tickets      Int @default(0)
+  pending_tickets   Int @default(0)
+  escalated_tickets Int @default(0)
+
+  // KYC
+  pending_kyc Int @default(0)
+
+  // Compliance
+  flagged_audit_logs Int @default(0)
+
+  // Transactions in pending state
+  pending_transactions Int @default(0)
+
+  // Tier distribution (JSON: {"UNVERIFIED": 200, "VERIFIED": 800})
+  tier_distribution Json @default("{}")
+
+  updatedAt DateTime @updatedAt
+
+  @@map("system_stats")
+}
+
 // Resources that can be permission-gated
 enum PermissionResource {
   DASHBOARD

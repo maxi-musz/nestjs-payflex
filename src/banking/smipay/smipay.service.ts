@@ -4,6 +4,7 @@ import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import { FindUserByTagDto, SendMoneyByTagDto } from './dto/smipay-transfer.dto';
 import { generateSessionId, generateUniqueTransactionReference } from 'src/common/helper_functions/generators';
 import * as colors from 'colors/safe';
+import { StatsService } from 'src/common/stats/stats.service';
 
 @Injectable()
 export class SmipayService {
@@ -11,6 +12,7 @@ export class SmipayService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly stats: StatsService,
   ) {}
 
   /**
@@ -294,9 +296,15 @@ export class SmipayService {
 
         this.logger.log(
           colors.green(
-            `✅ Transfer successful: ${sender.smipay_tag} → ${recipient.smipay_tag} | Amount: ${dto.amount} NGN | Reference: ${transactionReference}`
+            `Transfer successful: ${sender.smipay_tag} -> ${recipient.smipay_tag} | Amount: ${dto.amount} NGN | Reference: ${transactionReference}`
           )
         );
+
+        // 2 transactions (sender debit + recipient credit), both success
+        this.stats.onTransactionCreated(dto.amount, 'success');
+        this.stats.onTransactionCreated(dto.amount, 'success');
+        this.stats.onWalletDebited(dto.amount);
+        this.stats.onWalletFunded(dto.amount);
 
         return new ApiResponseDto(
           true,

@@ -78,9 +78,9 @@ src/admin/
 
 ## 3. Endpoints
 
-### 3A. Dashboard Overview — `GET /admin/dashboard`
+### 3A. Dashboard Overview — `GET /unified-admin/dashboard`
 
-Returns quick stats for the admin homepage.
+Returns quick stats for the admin homepage. **Reads from pre-aggregated `DailyStats` + `SystemStats` tables** (3 lightweight queries, no heavy COUNT/SUM on main tables).
 
 **Response payload:**
 
@@ -111,34 +111,55 @@ Returns quick stats for the admin homepage.
     "wallets": {
       "total_balance_all_users": 125000000.00,
       "total_funded_today": 3200000.00
-    }
+    },
+    "kyc": {
+      "pending": 12,
+      "approved_today": 8,
+      "approved_this_week": 45,
+      "rejected": 3
+    },
+    "compliance": {
+      "flagged_audit_logs": 3,
+      "security_events_today": 2
+    },
+    "cards": {
+      "total_active": 1500,
+      "issued_today": 5
+    },
+    "referrals": {
+      "today": 4,
+      "this_week": 28
+    },
+    "tier_distribution": {
+      "UNVERIFIED": 200,
+      "VERIFIED": 800,
+      "PREMIUM": 250
+    },
+    "revenue": {
+      "markup_today": 125000.00,
+      "markup_this_week": 850000.00
+    },
+    "action_items": [
+      { "type": "escalated_tickets", "count": 1 },
+      { "type": "flagged_audits", "count": 3 },
+      { "type": "pending_kyc", "count": 12 },
+      { "type": "pending_transactions", "count": 5 }
+    ]
   }
 }
 ```
 
-**Service method:**
+**How it works (no heavy queries):**
 
-```ts
-async getDashboardStats(): Promise<ApiResponseDto<any>>
-```
-
-**Queries needed:**
-
-| Stat | Prisma Query |
+| Source | What it reads |
 |---|---|
-| Total users | `prisma.user.count()` |
-| New today | `prisma.user.count({ where: { createdAt: { gte: startOfToday } } })` |
-| New this week | `prisma.user.count({ where: { createdAt: { gte: startOfWeek } } })` |
-| Active users | `prisma.user.count({ where: { account_status: 'active' } })` |
-| Suspended users | `prisma.user.count({ where: { account_status: 'suspended' } })` |
-| Today's transactions | `prisma.transactionHistory.count({ where: { createdAt: { gte: startOfToday } } })` |
-| Today's volume | `prisma.transactionHistory.aggregate({ _sum: { amount: true }, where: { createdAt: { gte: startOfToday }, status: 'success' } })` |
-| Pending txns | `prisma.transactionHistory.count({ where: { status: 'pending' } })` |
-| Failed txns today | `prisma.transactionHistory.count({ where: { status: 'failed', createdAt: { gte: startOfToday } } })` |
-| Open tickets | `prisma.supportTicket.count({ where: { status: { in: ['pending', 'in_progress'] } } })` |
-| Total wallet balance | `prisma.wallet.aggregate({ _sum: { current_balance: true } })` |
+| `SystemStats` (singleton row) | Running totals: total_users, active, suspended, wallet balance, open/pending/escalated tickets, pending KYC, flagged audits, pending txns, tier distribution, total active cards |
+| `DailyStats` (today's row) | Today's counters: new_users, transactions, funded, KYC approved/rejected, cards issued, referrals, markup revenue, security events |
+| `DailyStats` (last 7 rows) | Weekly sums: new_users, KYC approved, referrals, markup revenue |
 
-Run all in `Promise.all()` for speed.
+Stats are updated incrementally by `StatsService` hooks called from existing services when events happen (user registration, transaction creation, wallet funding, ticket creation, etc.).
+
+**Recalculate endpoint:** `POST /unified-admin/dashboard/recalculate` — re-syncs stats from actual DB data. Run once after first deploy or if stats drift.
 
 ---
 

@@ -8,6 +8,7 @@ import { formatAmount, formatDate } from "src/common/helper_functions/formatter"
 import { first } from "rxjs";
 import * as bcrypt from "bcrypt";
 import { DvaProviderFactory } from "src/banking/dva-providers/dva-provider.factory";
+import { StatsService } from "src/common/stats/stats.service";
 
 function maskAccountNumber(accountNumber: string): string {
     if (!accountNumber) return "";
@@ -118,6 +119,7 @@ function getUserTier(user: any): TierInfo {
         private prisma: PrismaService,
         private configService: ConfigService,
         private dvaProviderFactory: DvaProviderFactory,
+        private stats: StatsService,
     ) {}
 
     async fetchUserDashboard(userPayload: any) {
@@ -815,7 +817,8 @@ function getUserTier(user: any): TierInfo {
                 }
             });
     
-            console.log(colors.magenta("User KYC verification submitted successfully"))
+            console.log(colors.magenta("User KYC verification submitted successfully"));
+            this.stats.onKycApproved();
             return new ApiResponseDto(
                 true, 
                 "KYC verification submitted successfully", 

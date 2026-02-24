@@ -14,6 +14,7 @@ import { PhoneValidator } from '../common/helpers/phone.validator';
 import { generateTicketNumber } from 'src/common/helper_functions/generators';
 import { EmailService } from 'src/common/mailer/email.service';
 import * as colors from 'colors';
+import { StatsService } from 'src/common/stats/stats.service';
 
 @Injectable()
 export class SupportService {
@@ -22,6 +23,7 @@ export class SupportService {
   constructor(
     private prisma: PrismaService,
     private emailService: EmailService,
+    private stats: StatsService,
   ) {}
 
   /**
@@ -335,6 +337,8 @@ export class SupportService {
           `Support ticket created successfully. Ticket: ${ticketNumber} for ${formattedPhone || 'no phone'}`,
         ),
       );
+
+      this.stats.onTicketCreated('pending');
 
       // 9. Send confirmation email to user
       try {

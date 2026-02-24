@@ -21,16 +21,20 @@ import { EmailModule } from './common/mailer/email.module';
 import { AuditLogModule } from './common/audit-log/audit-log.module';
 import { NewAuthModule } from './new-auth/new-auth.module';
 import { PermissionsModule } from './admin/unified-admin/permissions/permissions.module';
+import { StatsModule } from './common/stats/stats.module';
+import { DashboardModule } from './admin/unified-admin/dashboard/dashboard.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true
     }),
-    CommonModule, // Global guards available to all modules
-    AuditLogModule, // Global audit logging available to all modules
+    CommonModule,
+    StatsModule, // Global pre-aggregated stats (DailyStats + SystemStats)
+    AuditLogModule,
     NewAuthModule,
-    PermissionsModule, // Admin permissions CRUD
+    PermissionsModule,
+    DashboardModule, // Admin dashboard (reads from stats tables)
     UserModule, 
     BookmarkModule, 
     PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule, WebhooksModule, UtilityServicesModule, PushNotificationModule, SupportModule, EmailModule

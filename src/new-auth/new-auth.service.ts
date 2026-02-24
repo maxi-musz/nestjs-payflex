@@ -16,6 +16,7 @@ import { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../common/mailer/email.service';
 import { AuditLogService } from '../common/audit-log/audit-log.service';
+import { StatsService } from '../common/stats/stats.service';
 import { ApiResponseDto } from '../common/dto/api-response.dto';
 import { formatDate } from '../common/helper_functions/formatter';
 import { generateSmipayTag } from '../common/helper_functions/generators';
@@ -36,6 +37,7 @@ export class NewAuthService {
     private readonly config: ConfigService,
     private readonly emailService: EmailService,
     private readonly audit: AuditLogService,
+    private readonly stats: StatsService,
   ) {}
 
   // ──────────────────────────────────────────────────────────
@@ -374,6 +376,9 @@ export class NewAuthService {
         isActive: true,
       },
     });
+
+    this.stats.onUserCreated(tierWithOrderOne.tier);
+    if (dto.referral_code) this.stats.onReferralCreated();
 
     await this.audit.logAuth(AuditAction.REGISTER_COMPLETE, AuditStatus.SUCCESS, req, {
       user_id: newUser.id,

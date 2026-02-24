@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { AuditAction, AuditActorType, AuditSeverity, AuditStatus, Prisma } from '@prisma/client';
 import * as geoip from 'geoip-lite';
 import { PrismaService } from '../../prisma/prisma.service';
+import { StatsService } from '../stats/stats.service';
 import {
   ACTION_CATEGORY_MAP,
   ACTION_SEVERITY_MAP,
@@ -18,7 +19,10 @@ import {
 export class AuditLogService {
   private readonly logger = new Logger(AuditLogService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly stats: StatsService,
+  ) {}
 
   // ──────────────────────────────────────────────────────────
   // CORE METHOD
@@ -331,7 +335,7 @@ export class AuditLogService {
    */
   async flag(logId: string, reason: string, flaggedBy: string) {
     try {
-      return await this.prisma.auditLog.update({
+      const result = await this.prisma.auditLog.update({
         where: { id: logId },
         data: {
           is_flagged: true,
@@ -339,6 +343,8 @@ export class AuditLogService {
           reviewed_by: flaggedBy,
         },
       });
+      this.stats.onAuditLogFlagged();
+      return result;
     } catch (error) {
       this.logger.error(`Failed to flag audit log ${logId}: ${error.message}`);
       throw error;
@@ -350,7 +356,7 @@ export class AuditLogService {
    */
   async review(logId: string, reviewedBy: string, notes: string, resolve: boolean) {
     try {
-      return await this.prisma.auditLog.update({
+      const result = await this.prisma.auditLog.update({
         where: { id: logId },
         data: {
           reviewed_by: reviewedBy,
@@ -359,6 +365,8 @@ export class AuditLogService {
           ...(resolve && { is_flagged: false }),
         },
       });
+      if (resolve) this.stats.onAuditLogUnflagged();
+      return result;
     } catch (error) {
       this.logger.error(`Failed to review audit log ${logId}: ${error.message}`);
       throw error;

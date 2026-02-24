@@ -12,6 +12,7 @@ import { CreateVirtualAccountDto, InitiateTransferDto, VerifyAccountNumberDto } 
 import { ConfigService } from '@nestjs/config';
 import { error } from 'console';
 import { BankProviderFactory } from './bank-providers/bank-provider.factory';
+import { StatsService } from 'src/common/stats/stats.service';
 
 // Determine Paystack environment key
 const paystackKey =
@@ -40,6 +41,7 @@ export class BankingService {
         private readonly configService: ConfigService,
         private readonly prisma: PrismaService,
         private readonly bankProviderFactory: BankProviderFactory,
+        private readonly stats: StatsService,
     ) {
         this.apiUrl = 'https://api.flutterwave.com/v3';
         this.secretKey = this.configService.get<string>('FLW_SECRET_KEY') || '';
@@ -169,8 +171,8 @@ export class BankingService {
                 },
             });
 
-            // Verify what was saved
             console.log(colors.green(`Transaction saved successfully. ID: ${createdTransaction.id}`));
+            this.stats.onTransactionCreated(dto.amount, 'pending');
             
             // // Double-check by querying back from DB
             // const verifySaved = await this.prisma.transactionHistory.findUnique({
@@ -417,6 +419,8 @@ export class BankingService {
             });
 
             console.log(colors.green(`Payment verified successfully. New balance: ${updatedWallet.current_balance}`));
+            this.stats.onTransactionStatusChanged('pending', 'success', existingTransaction.amount || 0);
+            this.stats.onWalletFunded(existingTransaction.amount || 0);
 
               const formattedResponse = {
                 id: updatedTx.id,
