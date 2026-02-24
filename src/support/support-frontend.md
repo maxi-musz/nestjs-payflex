@@ -76,6 +76,8 @@ Creates a new ticket OR adds a message to an existing ticket (if `ticket_number`
       "email": "john@example.com",
       "phone_number": "+2348012345678",
       "related_transaction_id": "tx-uuid-here",
+      "satisfaction_rating": null,
+      "feedback": null,
       "created_at": "2026-02-24T10:30:00.000Z",
       "updated_at": "2026-02-24T10:30:00.000Z",
       "last_response_at": null,
@@ -174,6 +176,8 @@ Returns the full ticket with all messages in chronological order.
       "email": "john@example.com",
       "phone_number": "+2348012345678",
       "related_transaction_id": "tx-uuid",
+      "satisfaction_rating": null,
+      "feedback": null,
       "created_at": "2026-02-24T10:30:00.000Z",
       "updated_at": "2026-02-24T11:15:00.000Z",
       "last_response_at": "2026-02-24T11:15:00.000Z",
@@ -284,37 +288,83 @@ Allows the user to submit a satisfaction rating after a ticket is resolved or cl
 ### Connection
 
 ```
-Namespace: /support
-URL: wss://your-server.com/support
+Namespace:  /support
+Local URL:  http://localhost:1500/support
+Prod URL:   https://smipay.com/support
+Server:     socket.io v4.8.3
+Client:     socket.io-client v4.x (npm install socket.io-client)
 ```
 
+**The frontend MUST install `socket.io-client` v4.x** to match the server. The connection URL is the backend base URL + `/support` (the namespace). Socket.IO uses `/socket.io/` as the default transport path under the hood — do NOT change it.
+
 #### Authentication
-Pass JWT token on connect:
+Pass the user's JWT token in `auth.token` on connect:
 
 ```javascript
 import { io } from 'socket.io-client';
 
-const socket = io('wss://your-api-domain.com/support', {
+// Use your backend base URL + /support namespace
+// Local:  http://localhost:1500/support
+// Prod:   https://smipay.com/support
+const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:1500';
+
+const socket = io(`${SOCKET_URL}/support`, {
   auth: {
-    token: 'your-jwt-token-here'
+    token: userJwtToken,  // The same JWT used for REST API calls
   },
-  transports: ['websocket'],
+  transports: ['websocket'],  // Skip long-polling, go straight to WebSocket
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
 });
 
 socket.on('connect', () => {
-  console.log('Connected to support chat');
+  console.log('✅ Connected to support chat, socket id:', socket.id);
+  // If user was viewing a ticket, re-join the room
+  if (currentTicketId) {
+    socket.emit('join_ticket', { ticket_id: currentTicketId });
+  }
 });
 
 socket.on('disconnect', (reason) => {
-  console.log('Disconnected:', reason);
+  console.log('❌ Disconnected:', reason);
 });
 
 socket.on('connect_error', (error) => {
-  console.log('Connection failed:', error.message);
+  console.error('🚨 Socket connection failed:', error.message);
+  // Common causes: invalid/expired JWT, wrong URL, server down
 });
 ```
 
-If the token is invalid or missing, the connection will be rejected immediately.
+#### How to Know It's Working
+
+When the connection succeeds, the **backend logs**:
+```
+🔌 USER connected — user@example.com [socket: abc123] → joined room: user:uuid
+🔌 Total active connections: 1
+```
+
+If you see NOTHING in backend logs when the frontend loads, the frontend is **not connecting at all**.
+
+If the token is invalid or missing, the backend logs:
+```
+🔌 Connection REJECTED — no token provided (socket: abc123)
+🔌 Connection REJECTED — invalid/expired token (socket: abc123)
+```
+
+#### Quick Test (Browser Console)
+
+To verify the backend socket is reachable, paste this in the browser console:
+```javascript
+const s = io('http://localhost:1500/support', {
+  auth: { token: 'YOUR_JWT_TOKEN_HERE' },
+  transports: ['websocket'],
+});
+s.on('connect', () => console.log('CONNECTED:', s.id));
+s.on('connect_error', (e) => console.log('FAILED:', e.message));
+```
+If this prints `CONNECTED: ...`, the backend is working. If it prints `FAILED: ...`, check the error message.
 
 ---
 
@@ -542,9 +592,12 @@ Use these in the `support_type` field when creating a ticket:
 - `socket.emit('stop_typing', { ticket_id })` on 3s idle
 - Show "Support is typing..." when receiving `typing` event from admin
 
-**When ticket is resolved:**
-- Show satisfaction rating UI (1-5 stars + optional feedback)
-- Call `POST /support/ticket/:ticketNumber/rate`
+**When ticket is resolved — Rating UI:**
+- Check `ticket.satisfaction_rating` from the ticket response
+- If `satisfaction_rating` is `null` AND status is `resolved` or `closed` → show the rating form (1-5 stars + optional feedback)
+- If `satisfaction_rating` is NOT null → the user already rated. **Hide the rating form.** Optionally show "You rated this X/5" as read-only.
+- Call `POST /support/ticket/:ticketNumber/rate` to submit
+- After successful submission, hide the form immediately (don't wait for a re-fetch)
 
 ### Screen: Registration Support (pre-auth)
 

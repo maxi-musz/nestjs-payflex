@@ -146,7 +146,7 @@ export class BankingService {
                     amount: dto.amount,
                     transaction_type: "deposit",
                     credit_debit: "credit",
-                    description: "Wallet Funding Via Gateway",
+                    description: "Wallet Funding",
                     fee: 10,
                     transaction_number: access_code,
                     transaction_reference: reference,
@@ -387,20 +387,39 @@ export class BankingService {
                 return new ApiResponseDto(false, "Payment amount does not match transaction amount. Please contact support.");
             }
 
-            // 12. Use transaction to ensure atomicity of transaction update and wallet update
-            const { updatedTx, updatedWallet } = await this.prisma.$transaction(async (tx) => {
-                // Update transaction status
-                const transaction = await tx.transactionHistory.update({
+            // 12. Atomic compare-and-swap: only claim the transaction if it's still pending.
+            // This prevents double/triple crediting when webhook + verify race.
+            const claimedTx = await this.prisma.transactionHistory.updateMany({
+                where: { transaction_reference: reference, status: { not: 'success' } },
+                data: { status: paystackStatus, updatedAt: new Date() },
+            });
+
+            if (claimedTx.count === 0) {
+                console.log(colors.yellow(`Transaction ${reference} already claimed by webhook, skipping wallet credit`));
+                const alreadyProcessed = await this.prisma.transactionHistory.findUnique({
                     where: { transaction_reference: reference },
-                data: { 
-                  status: paystackStatus,
-                  updatedAt: new Date() 
-                },
-                include: {
-                  sender_details: true,
-                  icon: true
-                }
-              });
+                    include: { sender_details: true, icon: true },
+                });
+                const currentWallet = await this.prisma.wallet.findFirst({ where: { user_id: userId } });
+                return new ApiResponseDto(true, "Payment verified successfully", {
+                    id: alreadyProcessed?.id,
+                    amount: formatAmount(alreadyProcessed?.amount ?? 0),
+                    transaction_type: alreadyProcessed?.transaction_type || "deposit",
+                    credit_debit: alreadyProcessed?.credit_debit || "null",
+                    description: "wallet funding",
+                    status: "success",
+                    payment_method: "paystack",
+                    date: formatDate(alreadyProcessed?.updatedAt ?? new Date()),
+                    balance_after: formatAmount(currentWallet?.current_balance ?? 0),
+                });
+            }
+
+            // We successfully claimed the transaction — now credit the wallet
+            const { updatedTx, updatedWallet } = await this.prisma.$transaction(async (tx) => {
+                const transaction = await tx.transactionHistory.findUnique({
+                    where: { transaction_reference: reference },
+                    include: { sender_details: true, icon: true },
+                });
 
                 // Update wallet balance atomically
                 const transactionAmount = existingTransaction.amount || 0;
@@ -417,7 +436,7 @@ export class BankingService {
                 }
                 });
 
-                return { updatedTx: transaction, updatedWallet: wallet };
+                return { updatedTx: transaction!, updatedWallet: wallet };
             });
 
             console.log(colors.green(`Payment verified successfully. New balance: ${updatedWallet.current_balance}`));

@@ -8,13 +8,23 @@ export class TransactionHistoryController {
 
     @UseGuards(AuthGuard('jwt'))
     @Get('fetch-all-history')
-    fetchTransactionHistory(@Request() req, @Query('page') page: number = 1, @Query('limit') limit: number = 10) {
-        return this.transactionHistoryService.fetchTransactionHistory(req.user, page, limit)
+    fetchTransactionHistory(
+        @Request() req,
+        @Query('page') page: number = 1,
+        @Query('limit') limit: number = 10,
+        @Query('type') type?: string,
+        @Query('status') status?: string,
+        @Query('credit_debit') creditDebit?: string,
+        @Query('search') search?: string,
+    ) {
+        return this.transactionHistoryService.fetchTransactionHistory(
+            req.user, page, limit, { type, status, creditDebit, search },
+        );
     }
 
     @UseGuards(AuthGuard('jwt'))
     @Get(':id')
     fetchTransactionById(@Param('id') transactionId: string, @Request() req) {
-        return this.transactionHistoryService.fetchTransactionById(transactionId, req.user.user_id);
+        return this.transactionHistoryService.fetchTransactionById(transactionId, req.user.sub);
     }
 }

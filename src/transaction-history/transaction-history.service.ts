@@ -1,43 +1,79 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import * as colors from 'colors'
+import { Prisma } from '@prisma/client';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import { formatAmount, formatDate } from 'src/common/helper_functions/formatter';
+import * as colors from 'colors';
+
+interface TransactionFilters {
+    type?: string;
+    status?: string;
+    creditDebit?: string;
+    search?: string;
+}
 
 @Injectable()
 export class TransactionHistoryService {
+    private readonly logger = new Logger(TransactionHistoryService.name);
+
     constructor(
         private prisma: PrismaService
     ) {}
 
-    async fetchTransactionHistory(userPayload: any, page: number = 1, limit: number = 10) {
-        console.log(colors.cyan("Fetching user all transaction history"))
-
+    async fetchTransactionHistory(
+        userPayload: any,
+        page: number = 1,
+        limit: number = 10,
+        filters: TransactionFilters = {},
+    ) {
+        const userId = userPayload.sub;
         const skip = (page - 1) * limit;
 
         try {
-            const transactions =  await this.prisma.transactionHistory.findMany({
-              where: { user_id: userPayload.sub },
-              take: limit,
-              skip: skip,
-              orderBy: {
-                createdAt: 'desc', 
-              },
-              include: {
-                sender_details: true, 
-                icon: true
-              },
-            });
+            const where: Prisma.TransactionHistoryWhereInput = { user_id: userId };
 
-            console.log(colors.magenta("Transactions successsfully retrieved"))
+            if (filters.type) {
+                where.transaction_type = filters.type as any;
+            }
+            if (filters.status) {
+                where.status = filters.status as any;
+            }
+            if (filters.creditDebit) {
+                where.credit_debit = filters.creditDebit as any;
+            }
+            if (filters.search) {
+                const term = filters.search.trim();
+                where.OR = [
+                    { description: { contains: term, mode: 'insensitive' } },
+                    { transaction_reference: { contains: term, mode: 'insensitive' } },
+                    { recipient_mobile: { contains: term } },
+                ];
+            }
 
-            // Map through the transactions to format the response
+            // Run filtered query + count + category counts in parallel
+            const [transactions, totalItems, categoryCounts] = await Promise.all([
+                this.prisma.transactionHistory.findMany({
+                    where,
+                    take: limit,
+                    skip,
+                    orderBy: { createdAt: 'desc' },
+                    include: { sender_details: true, icon: true },
+                }),
+                this.prisma.transactionHistory.count({ where }),
+                this.prisma.transactionHistory.groupBy({
+                    by: ['transaction_type'],
+                    where: { user_id: userId },
+                    _count: true,
+                }),
+            ]);
+
             const formattedResponse = transactions.map(transaction => ({
                 id: transaction.id,
                 amount: formatAmount(transaction.amount ?? 0),
+                raw_amount: transaction.amount ?? 0,
                 type: transaction.transaction_type,
                 credit_debit: transaction.credit_debit,
-                transaction_type: transaction.transaction_type, 
+                transaction_type: transaction.transaction_type,
                 description: transaction.description,
                 status: transaction.status,
                 date: formatDate(transaction.createdAt),
@@ -48,21 +84,26 @@ export class TransactionHistoryService {
                 payment_method: transaction.payment_method,
             }));
 
-            console.log(colors.magenta("Transaction history retrieved"))
+            // Build categories object: { all: 25, deposit: 10, airtime: 8, ... }
+            const categories: Record<string, number> = {
+                all: categoryCounts.reduce((sum, c) => sum + c._count, 0),
+            };
+            for (const group of categoryCounts) {
+                if (group.transaction_type) {
+                    categories[group.transaction_type] = group._count;
+                }
+            }
 
-            return new ApiResponseDto(true, "Transactions successsfully retrieved", {
+            return new ApiResponseDto(true, "Transactions successfully retrieved", {
+                categories,
                 pagination: {
                     currentPage: page,
-                    totalItems: await this.prisma.transactionHistory.count({
-                        where: { user_id: userPayload.user_id }
-                    }),
-                    totalPages: Math.ceil((await this.prisma.transactionHistory.count({
-                        where: { user_id: userPayload.user_id }
-                    })) / limit),
+                    totalItems,
+                    totalPages: Math.ceil(totalItems / limit),
+                    activeFilter: filters.type || 'all',
                 },
                 transactions: formattedResponse,
-            })
-
+            });
         } catch (error) {
             throw new Error('Error fetching transaction history: ' + error.message);
         }
@@ -108,7 +149,7 @@ export class TransactionHistoryService {
             icon: transaction.icon?.secure_url || "",
         }
 
-        console.log(colors.magenta("Single transaction retrieved"))
+        this.logger.log(colors.magenta("Single transaction retrieved"))
         return new ApiResponseDto(true, "Single transaction retrieved", formattedResponse)
     }
 }

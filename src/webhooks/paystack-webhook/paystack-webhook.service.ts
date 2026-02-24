@@ -139,6 +139,18 @@ export class PaystackWebhookService {
         return;
       }
 
+      // Atomic compare-and-swap: only update if status is still 'pending'.
+      // This prevents double/triple crediting when webhook + frontend verify race.
+      const claimedTx = await this.prisma.transactionHistory.updateMany({
+        where: { id: transaction.id, status: { not: 'success' } },
+        data: { status: 'success', updatedAt: new Date() },
+      });
+
+      if (claimedTx.count === 0) {
+        this.logger.log(colors.yellow(`Transaction ${reference} already claimed by another process, skipping wallet credit`));
+        return;
+      }
+
       // Get user wallet
       const wallet = await this.prisma.wallet.findFirst({
         where: { user_id: transaction.user_id }
@@ -149,23 +161,14 @@ export class PaystackWebhookService {
         return;
       }
 
-      // Update transaction status
-      await this.prisma.transactionHistory.update({
-        where: { id: transaction.id },
-        data: {
-          status: 'success',
-          updatedAt: new Date()
-        }
-      });
-
-      // Update wallet balance
+      // Credit wallet using atomic increment (safe even if read was stale)
       const transactionAmount = transaction.amount || 0;
       await this.prisma.wallet.update({
         where: { id: wallet.id },
         data: {
-          current_balance: wallet.current_balance + transactionAmount,
-          all_time_fuunding: wallet.all_time_fuunding + transactionAmount,
-          updatedAt: new Date()
+          current_balance: { increment: transactionAmount },
+          all_time_fuunding: { increment: transactionAmount },
+          updatedAt: new Date(),
         }
       });
 
@@ -251,7 +254,17 @@ export class PaystackWebhookService {
           console.log(colors.yellow(`DVA payment ${reference} already processed successfully`));
           return;
         }
-        console.log(colors.yellow(`DVA payment ${reference} exists but not successful, updating...`));
+
+        // Atomic claim: only proceed if we can flip status from non-success to 'success'
+        const claimed = await this.prisma.transactionHistory.updateMany({
+          where: { id: existingTransaction.id, status: { not: 'success' } },
+          data: { status: 'success', updatedAt: new Date() },
+        });
+        if (claimed.count === 0) {
+          console.log(colors.yellow(`DVA payment ${reference} already claimed by another process`));
+          return;
+        }
+        console.log(colors.yellow(`DVA payment ${reference} claimed for processing`));
       }
 
       // Find user by Paystack customer code
@@ -274,17 +287,17 @@ export class PaystackWebhookService {
       const amountInNgn = amount / 100;
       console.log(colors.cyan(`Processing DVA payment: ${amountInNgn} NGN for user ${user.email}`));
 
-      // Get current wallet balance
-      const balanceBefore = user.wallet.current_balance;
-      const balanceAfter = balanceBefore + amountInNgn;
-
       // Wrap all database operations in a transaction to ensure atomicity
-      // All operations must succeed together or fail together
       const transactionRecord = await this.prisma.$transaction(async (tx) => {
+        // Read wallet balance fresh INSIDE the transaction for accurate before/after
+        const freshWallet = await tx.wallet.findUnique({ where: { id: user.wallet!.id } });
+        const balanceBefore = freshWallet?.current_balance ?? user.wallet!.current_balance;
+        const balanceAfter = balanceBefore + amountInNgn;
+
         let txRecord;
 
         if (existingTransaction) {
-          // Update existing transaction
+          // Update existing transaction (status already claimed above via updateMany)
           txRecord = await tx.transactionHistory.update({
             where: { id: existingTransaction.id },
             data: {
@@ -393,19 +406,17 @@ export class PaystackWebhookService {
           }
         }
 
-        // Update wallet balance (must succeed for transaction to commit)
-        // user.wallet is guaranteed to exist due to check above
+        // Update wallet balance using atomic increment (prevents stale-read issues)
         const walletId = user.wallet!.id;
-        const currentAllTimeFunding = user.wallet!.all_time_fuunding;
         
-        console.log(colors.cyan(`Updating wallet ${walletId}: balance ${balanceBefore} → ${balanceAfter}, funding: ${currentAllTimeFunding} → ${currentAllTimeFunding + amountInNgn}`));
+        console.log(colors.cyan(`Updating wallet ${walletId}: incrementing by ${amountInNgn} NGN`));
         
         const updatedWallet = await tx.wallet.update({
           where: { id: walletId },
           data: {
-            current_balance: balanceAfter,
-            all_time_fuunding: currentAllTimeFunding + amountInNgn,
-            updatedAt: new Date()
+            current_balance: { increment: amountInNgn },
+            all_time_fuunding: { increment: amountInNgn },
+            updatedAt: new Date(),
           }
         });
         
@@ -426,13 +437,8 @@ export class PaystackWebhookService {
         console.log(colors.green(`   Reference: ${reference}`));
         console.log(colors.green(`   User: ${user.email || user.id}`));
         console.log(colors.green(`   Amount: ${amountInNgn} NGN`));
-        console.log(colors.green(`   Balance: ${balanceBefore} → ${balanceAfter} NGN (verified: ${verifyWallet.current_balance})`));
+        console.log(colors.green(`   Verified balance: ${verifyWallet.current_balance} NGN`));
         console.log(colors.green(`   Account: ${authorization?.receiver_bank_account_number || 'N/A'}`));
-        
-        // Warn if balance doesn't match expected value
-        if (Math.abs(verifyWallet.current_balance - balanceAfter) > 0.01) {
-          console.error(colors.red(`⚠️  WALLET BALANCE MISMATCH! Expected: ${balanceAfter}, Actual: ${verifyWallet.current_balance}`));
-        }
       } else {
         console.error(colors.red(`❌ Wallet not found after transaction!`));
       }
@@ -485,7 +491,7 @@ export class PaystackWebhookService {
             user.email,
             user.first_name || 'Valued Customer',
             amountInNgn,
-            balanceAfter,
+            verifyWallet?.current_balance ?? 0,
             reference,
             authorization?.receiver_bank_account_number || 'N/A',
             bankName,

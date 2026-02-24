@@ -450,6 +450,8 @@ export class SupportService {
       email: ticket.email,
       phone_number: ticket.phone_number,
       related_transaction_id: ticket.related_transaction_id ?? null,
+      satisfaction_rating: ticket.satisfaction_rating ?? null,
+      feedback: ticket.feedback ?? null,
       created_at: ticket.createdAt,
       updated_at: ticket.updatedAt,
       last_response_at: ticket.last_response_at ?? null,

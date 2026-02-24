@@ -161,7 +161,6 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
   private async getRoomSize(room: string): Promise<number> {
     try {
       const sockets = await this.server.in(room).fetchSockets();
-      console.log('sockets', sockets);
       return sockets.length;
     } catch {
       return 0;

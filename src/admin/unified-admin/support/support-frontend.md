@@ -601,32 +601,83 @@ seconds >= 86400   → "Xd Yh" (e.g. "1d 4h")
 
 ## Socket.IO — Real-Time Events (Admin Dashboard)
 
-The support system uses Socket.IO for real-time updates. The admin dashboard should connect to receive live events (new tickets, new messages, status changes, assignments) without polling.
+The support system uses Socket.IO for real-time updates. The admin dashboard **MUST** connect to receive live events (new tickets, new messages, status changes, assignments). Without this, the admin dashboard has no real-time updates.
 
 ### Connection
+
+```
+Namespace:  /support
+Local URL:  http://localhost:1500/support
+Prod URL:   https://smipay.com/support
+Server:     socket.io v4.8.3
+Client:     socket.io-client v4.x (npm install socket.io-client)
+```
+
+**Install `socket.io-client` v4.x** to match the server version. The connection URL is the backend base URL + `/support`.
 
 ```javascript
 import { io } from "socket.io-client";
 
-const socket = io("https://your-api-domain.com/support", {
+// Use the same backend base URL used for REST API calls + /support namespace
+// Local:  http://localhost:1500/support
+// Prod:   https://smipay.com/support
+const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:1500";
+
+const socket = io(`${SOCKET_URL}/support`, {
   auth: {
-    token: "admin-jwt-token-here"
+    token: adminJwtToken,  // The same JWT used for REST API calls
   },
-  transports: ["websocket"],
+  transports: ["websocket"],  // Skip long-polling, go straight to WebSocket
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
 });
 
 socket.on("connect", () => {
-  console.log("Connected to support socket");
+  console.log("✅ Connected to support socket, id:", socket.id);
+  // Re-join ticket room if admin was viewing one
+  if (currentTicketId) {
+    socket.emit("join_ticket", { ticket_id: currentTicketId });
+  }
+});
+
+socket.on("disconnect", (reason) => {
+  console.log("❌ Socket disconnected:", reason);
 });
 
 socket.on("connect_error", (err) => {
-  console.error("Socket connection failed:", err.message);
+  console.error("🚨 Socket connection failed:", err.message);
+  // Common causes: invalid/expired JWT, wrong URL, server down
 });
 ```
 
 - **Namespace:** `/support`
-- **Auth:** Pass the admin's JWT token in `auth.token`
+- **Auth:** Pass the admin's JWT token in `auth.token` — the same token used for REST API calls
 - Admin users are **automatically** joined to the `admins` room on connection (the server checks `role === 'admin'` from the JWT)
+
+#### How to Know It's Working
+
+When admin connects, the **backend logs**:
+```
+🔌 ADMIN connected — admin@example.com [socket: abc123] → joined rooms: user:uuid, admins
+🔌 Total active connections: 1
+```
+
+If you see NOTHING in backend logs, the admin dashboard is **not connecting at all**.
+
+#### Quick Test (Browser Console)
+
+To verify the backend socket is reachable, paste this in the browser dev console:
+```javascript
+const s = io('http://localhost:1500/support', {
+  auth: { token: 'YOUR_ADMIN_JWT_TOKEN_HERE' },
+  transports: ['websocket'],
+});
+s.on('connect', () => console.log('CONNECTED:', s.id));
+s.on('connect_error', (e) => console.log('FAILED:', e.message));
+```
+If this prints `CONNECTED: ...`, the backend is working and the admin dashboard just needs to implement this.
 
 ### Events Admin Sends (Emit)
 
