@@ -46,11 +46,13 @@ export class NewAuthService {
     userId: string,
     email: string | null,
     phoneNumber: string | null,
+    role: string | null,
   ): Promise<string> {
     const payload = {
       sub: userId,
       email: email ?? null,
       phone_number: phoneNumber ?? null,
+      role: role ?? 'user',
     };
     const secret = this.config.get('JWT_SECRET');
     const expiresIn = this.config.get('JWT_EXPIRES_IN') || '7d';
@@ -107,6 +109,7 @@ export class NewAuthService {
       user.id,
       user.email,
       user.phone_number,
+      user.role ?? null,
     );
 
     // Login successful

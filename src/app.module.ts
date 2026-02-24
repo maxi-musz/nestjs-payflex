@@ -20,6 +20,7 @@ import { SupportModule } from './support/support.module';
 import { EmailModule } from './common/mailer/email.module';
 import { AuditLogModule } from './common/audit-log/audit-log.module';
 import { NewAuthModule } from './new-auth/new-auth.module';
+import { PermissionsModule } from './admin/unified-admin/permissions/permissions.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { NewAuthModule } from './new-auth/new-auth.module';
     CommonModule, // Global guards available to all modules
     AuditLogModule, // Global audit logging available to all modules
     NewAuthModule,
+    PermissionsModule, // Admin permissions CRUD
     UserModule, 
     BookmarkModule, 
     PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule, WebhooksModule, UtilityServicesModule, PushNotificationModule, SupportModule, EmailModule

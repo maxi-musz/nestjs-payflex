@@ -1,3 +1,4 @@
 {
-    "makefile.configureOnOpen": false
+    "makefile.configureOnOpen": false,
+    "prisma.pinToPrisma6": true
 }

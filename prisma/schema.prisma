@@ -75,6 +75,7 @@ model User {
   supportMessages            SupportMessage[]            @relation("UserSupportMessages")
   paystackTransferRecipients PaystackTransferRecipient[] @relation("PaystackTransferRecipients")
   auditLogs                  AuditLog[]                  @relation("UserAuditLogs")
+  permissions                Permission[]                @relation("UserPermissions")
 }
 
 model ProfileImage {
@@ -129,9 +130,13 @@ model KycVerification {
 }
 
 enum Role {
-  user
-  admin
-  super_admin
+  user // Regular customer
+  agent // Field agent / merchant
+  support // Customer support staff
+  compliance_officer // KYC/AML compliance reviewer
+  finance // Finance team (reconciliation, reports, refunds)
+  operations // Operational management
+  admin // Overall master role — full system access
 }
 
 enum Gender {
@@ -202,7 +207,7 @@ model TransactionHistory {
   account_id       String?
   user_id          String
   amount           Float?
-  provider         String?          // e.g. mtn, glo, airtel, etc. or specific service identifier
+  provider         String? // e.g. mtn, glo, airtel, etc. or specific service identifier
   vtpass_amount    Float? // raw amount sent to VTpass (from variation)
   smipay_amount    Float? // amount charged to customer (after markup)
   markup_percent   Float? // percent applied (general or friendlies)
@@ -819,16 +824,16 @@ model AuditLog {
   id String @id @default(uuid())
 
   // WHO - Actor identification
-  user_id    String?        // The user who performed the action (null for system/webhook)
+  user_id    String? // The user who performed the action (null for system/webhook)
   user       User?          @relation("UserAuditLogs", fields: [user_id], references: [id], onDelete: SetNull)
   actor_type AuditActorType @default(USER) // user, admin, system, webhook, cron
   actor_name String? // Display name at time of action (denormalized for historical accuracy)
   session_id String? // JWT jti or session identifier for tracing
 
   // WHAT - Action details
-  action   AuditAction   // The specific action performed
+  action   AuditAction // The specific action performed
   category AuditCategory // High-level grouping
-  status   AuditStatus   // Outcome of the action
+  status   AuditStatus // Outcome of the action
   severity AuditSeverity @default(LOW) // Risk classification
 
   // TARGET - What resource was affected
@@ -843,8 +848,8 @@ model AuditLog {
   device_model String? // e.g., "iPhone 14 Pro"
   platform     String? // ios, android, web
   geo_location String? // Country/city if resolved from IP
-  latitude     Float?  // GPS latitude from client or IP geolocation
-  longitude    Float?  // GPS longitude from client or IP geolocation
+  latitude     Float? // GPS latitude from client or IP geolocation
+  longitude    Float? // GPS longitude from client or IP geolocation
 
   // HOW - Request context
   http_method String? // GET, POST, PUT, DELETE
@@ -1103,4 +1108,59 @@ enum AuditSeverity {
   MEDIUM
   HIGH
   CRITICAL
+}
+
+// ============================================================================
+// PERMISSION SYSTEM — Granular Access Control for Admin/Staff Roles
+// ============================================================================
+
+model Permission {
+  id String @id @default(uuid())
+
+  // Display name (e.g. "Manage users")
+  name String
+
+  // Programmatic key (e.g. "manage_users") — used in code and for assignment
+  key String
+
+  // Resource label (e.g. "Users")
+  resource String
+
+  // Optional description of what this permission allows
+  description String?
+
+  // Who this permission is assigned to (null = permission definition/template)
+  user_id String?
+  user    User?  @relation("UserPermissions", fields: [user_id], references: [id], onDelete: Cascade)
+
+  // Who granted this permission
+  granted_by String?
+  notes      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([user_id, key]) // One entry per user per permission key
+  @@index([user_id])
+  @@index([key])
+  @@index([resource])
+  @@map("permissions")
+}
+
+// Resources that can be permission-gated
+enum PermissionResource {
+  DASHBOARD
+  USERS
+  TRANSACTIONS
+  SUPPORT_TICKETS
+  AUDIT_LOGS
+  WALLETS
+  KYC_VERIFICATION
+  TIERS
+  ROLES
+  PERMISSIONS
+  VIRTUAL_CARDS
+  ACCOUNTS
+  PUSH_NOTIFICATIONS
+  SETTINGS
 }
