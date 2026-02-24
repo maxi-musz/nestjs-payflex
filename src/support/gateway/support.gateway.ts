@@ -155,22 +155,50 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
   }
 
   // ──────────────────────────────────────────────────────────
+  // ROOM DIAGNOSTICS — Counts clients in a Socket.IO room
+  // ──────────────────────────────────────────────────────────
+
+  private async getRoomSize(room: string): Promise<number> {
+    try {
+      const sockets = await this.server.in(room).fetchSockets();
+      console.log('sockets', sockets);
+      return sockets.length;
+    } catch {
+      return 0;
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────
   // SERVER-SIDE EMITTERS — Called by services after DB writes
   // ──────────────────────────────────────────────────────────
 
-  emitNewMessage(ticketId: string, ticketOwnerId: string | null, message: any) {
+  async emitNewMessage(ticketId: string, ticketOwnerId: string | null, message: any) {
     const from = message.is_from_user ? 'USER' : 'ADMIN';
     const preview = (message.message || '').substring(0, 80);
-    this.logger.log(`💬 NEW MESSAGE [${from}] → ticket:${ticketId} | "${preview}..."`);
 
-    this.server.to(`ticket:${ticketId}`).emit('new_message', {
+    const ticketRoom = `ticket:${ticketId}`;
+    const ticketRoomSize = await this.getRoomSize(ticketRoom);
+    this.logger.log(`💬 NEW MESSAGE [${from}] → ${ticketRoom} (${ticketRoomSize} client(s) in room) | "${preview}..."`);
+
+    if (ticketRoomSize === 0) {
+      this.logger.warn(`⚠️  NO CLIENTS in room ${ticketRoom} — message will not be delivered in real-time. Frontend must connect to Socket.IO /support namespace and emit join_ticket.`);
+    }
+
+    this.server.to(ticketRoom).emit('new_message', {
       ticket_id: ticketId,
       message,
     });
 
     if (!message.is_from_user && ticketOwnerId) {
-      this.logger.debug(`💬 → Notifying user:${ticketOwnerId} (admin reply)`);
-      this.server.to(`user:${ticketOwnerId}`).emit('ticket_updated', {
+      const userRoom = `user:${ticketOwnerId}`;
+      const userRoomSize = await this.getRoomSize(userRoom);
+      this.logger.debug(`💬 → Notifying ${userRoom} (${userRoomSize} client(s)) — admin reply`);
+
+      if (userRoomSize === 0) {
+        this.logger.warn(`⚠️  NO CLIENTS in room ${userRoom} — user is not connected to Socket.IO. They will only see the message on next page load/refresh.`);
+      }
+
+      this.server.to(userRoom).emit('ticket_updated', {
         ticket_id: ticketId,
         event: 'new_reply',
         message: {
@@ -183,7 +211,13 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
     }
 
     if (message.is_from_user) {
-      this.logger.debug(`💬 → Notifying admins room (new user message)`);
+      const adminsRoomSize = await this.getRoomSize('admins');
+      this.logger.debug(`💬 → Notifying admins room (${adminsRoomSize} admin(s) connected) — new user message`);
+
+      if (adminsRoomSize === 0) {
+        this.logger.warn(`⚠️  NO ADMINS connected to Socket.IO — admin dashboard will not receive real-time update.`);
+      }
+
       this.server.to('admins').emit('ticket_updated', {
         ticket_id: ticketId,
         event: 'new_user_message',
@@ -197,8 +231,9 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
     }
   }
 
-  emitTicketCreated(ticket: any) {
-    this.logger.log(`🎫 NEW TICKET → admins | ${ticket.ticket_number} [${ticket.support_type}/${ticket.priority}] — "${ticket.subject}"`);
+  async emitTicketCreated(ticket: any) {
+    const adminsRoomSize = await this.getRoomSize('admins');
+    this.logger.log(`🎫 NEW TICKET → admins (${adminsRoomSize} admin(s) connected) | ${ticket.ticket_number} [${ticket.support_type}/${ticket.priority}] — "${ticket.subject}"`);
 
     this.server.to('admins').emit('ticket_created', {
       id: ticket.id,
@@ -211,13 +246,14 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
     });
   }
 
-  emitTicketStatusChanged(ticketId: string, ticketOwnerId: string | null, data: {
+  async emitTicketStatusChanged(ticketId: string, ticketOwnerId: string | null, data: {
     old_status: string;
     new_status: string;
     ticket_number: string;
     resolution_notes?: string;
   }) {
-    this.logger.log(`🔄 STATUS CHANGED → ${data.ticket_number} | ${data.old_status} → ${data.new_status}`);
+    const ticketRoomSize = await this.getRoomSize(`ticket:${ticketId}`);
+    this.logger.log(`🔄 STATUS CHANGED → ${data.ticket_number} | ${data.old_status} → ${data.new_status} (${ticketRoomSize} in ticket room)`);
 
     this.server.to(`ticket:${ticketId}`).emit('status_changed', {
       ticket_id: ticketId,
@@ -225,7 +261,8 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
     });
 
     if (ticketOwnerId) {
-      this.logger.debug(`🔄 → Notifying user:${ticketOwnerId}`);
+      const userRoomSize = await this.getRoomSize(`user:${ticketOwnerId}`);
+      this.logger.debug(`🔄 → Notifying user:${ticketOwnerId} (${userRoomSize} client(s))`);
       this.server.to(`user:${ticketOwnerId}`).emit('ticket_updated', {
         ticket_id: ticketId,
         event: 'status_changed',
@@ -234,12 +271,14 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
     }
   }
 
-  emitTicketAssigned(ticketId: string, data: {
+  async emitTicketAssigned(ticketId: string, data: {
     ticket_number: string;
     assigned_to: string;
     assigned_admin_name: string;
   }) {
-    this.logger.log(`👤 TICKET ASSIGNED → ${data.ticket_number} | assigned to: ${data.assigned_admin_name} (${data.assigned_to})`);
+    const ticketRoomSize = await this.getRoomSize(`ticket:${ticketId}`);
+    const adminsRoomSize = await this.getRoomSize('admins');
+    this.logger.log(`👤 TICKET ASSIGNED → ${data.ticket_number} | assigned to: ${data.assigned_admin_name} (${ticketRoomSize} in ticket room, ${adminsRoomSize} admins connected)`);
 
     this.server.to(`ticket:${ticketId}`).emit('ticket_assigned', {
       ticket_id: ticketId,

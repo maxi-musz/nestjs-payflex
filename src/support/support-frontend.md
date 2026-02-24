@@ -584,6 +584,83 @@ App Launch
 
 ---
 
+## ⚠️ CRITICAL: Socket.IO Connection is MANDATORY for Real-Time
+
+**Without Socket.IO, users will NOT receive messages in real-time.** They will only see new messages when they refresh the page. Typing indicators, status change notifications, and live message delivery all depend on an active Socket.IO connection.
+
+### Architecture Recap
+
+```
+┌─────────────────┐       REST POST        ┌─────────────────┐
+│  Admin Dashboard │ ─────────────────────→ │     Backend     │
+│  (sends reply)   │                        │                 │
+└─────────────────┘                        │  1. Save to DB  │
+                                           │  2. Return HTTP │
+                                           │  3. Broadcast   │
+                                           │     via Socket  │
+                                           └────────┬────────┘
+                                                    │
+                                           Socket.IO emit
+                                                    │
+                                           ┌────────▼────────┐
+                                           │   User Mobile   │
+                                           │   (listening)   │
+                                           │                 │
+                                           │  new_message →  │
+                                           │  append to chat │
+                                           └─────────────────┘
+```
+
+**REST API creates messages. Socket.IO delivers them in real-time.** This is the standard pattern (used by Slack, Discord, WhatsApp Web, etc.).
+
+- **If the user's app is NOT connected to Socket.IO** → they will NOT see new messages until they refresh.
+- **Messages are NOT sent through the socket** — they are sent via REST POST, saved to DB, and then the backend broadcasts a `new_message` event to all connected Socket.IO clients in the ticket room.
+- **The frontend MUST connect to Socket.IO on app launch** (when user is logged in) and stay connected.
+
+### How to Verify Socket.IO is Working
+
+When a user connects to the socket, the backend logs:
+```
+🔌 USER connected — user@example.com [socket: abc123] → joined room: user:uuid
+```
+
+When a user joins a ticket room, the backend logs:
+```
+📋 USER uuid joined ticket room: SMI-2026-000001
+```
+
+When a message is emitted, the backend now logs the number of clients in each room:
+```
+💬 NEW MESSAGE [ADMIN] → ticket:uuid (2 client(s) in room) | "Hello..."
+💬 → Notifying user:uuid (1 client(s)) — admin reply
+```
+
+**If you see `(0 client(s) in room)` or the warning `⚠️ NO CLIENTS in room`**, it means the frontend is NOT connected. Fix the frontend Socket.IO connection.
+
+### Frontend Checklist
+
+- [ ] **Connect to `/support` namespace** with JWT on app launch (when logged in)
+- [ ] **Emit `join_ticket`** when opening a ticket conversation
+- [ ] **Listen for `new_message`** and append to chat UI
+- [ ] **Listen for `typing`/`stop_typing`** and show indicator
+- [ ] **Listen for `ticket_updated`** for notification badges
+- [ ] **Listen for `status_changed`** to update ticket status
+- [ ] **Emit `leave_ticket`** when navigating away from conversation
+- [ ] **Emit `typing`/`stop_typing`** when user types (debounced)
+- [ ] **Handle reconnection** — Socket.IO auto-reconnects, but re-emit `join_ticket` on reconnect
+
+### Common Mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Not connecting to Socket.IO at all | No real-time updates, no typing | Connect on login: `io('/support', { auth: { token } })` |
+| Connecting but not emitting `join_ticket` | `ticket_updated` works but `new_message` doesn't | Emit `join_ticket` when opening a conversation |
+| Using wrong namespace | Connection fails | Must be `/support`, not `/` or `/socket.io` |
+| Not passing JWT token | Connection rejected (check backend logs) | Pass in `auth.token` on connect |
+| Not re-joining ticket room on reconnect | Messages stop after temporary disconnect | Listen for `connect` event and re-emit `join_ticket` |
+
+---
+
 ## Error Handling
 
 | Scenario | HTTP Code | Message |

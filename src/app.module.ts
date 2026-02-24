@@ -29,6 +29,7 @@ import { AdminSupportModule } from './admin/unified-admin/support/admin-support.
 import { AdminAuditLogsModule } from './admin/unified-admin/audit-logs/admin-audit-logs.module';
 import { ReferralModule } from './referral/referral.module';
 import { AdminReferralsModule } from './admin/unified-admin/referrals/admin-referrals.module';
+import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { AdminReferralsModule } from './admin/unified-admin/referrals/admin-refe
       isGlobal: true
     }),
     CommonModule,
+    StorageModule,
     StatsModule,
     AuditLogModule,
     NewAuthModule,

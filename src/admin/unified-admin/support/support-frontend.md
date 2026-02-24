@@ -786,3 +786,82 @@ socket.on("stop_typing", (data) => {
 - Use `new_message` only inside the ticket conversation view
 - **Debounce** typing events: emit `typing` on first keystroke, `stop_typing` after 2s of no input
 - Messages sent via the REST API (reply endpoint) are automatically broadcast via Socket.IO — **no need to emit from the client after posting**
+
+---
+
+## ⚠️ CRITICAL: Socket.IO Connection is MANDATORY for Real-Time
+
+**Without Socket.IO, the admin dashboard will NOT receive real-time updates.** New tickets, new user messages, status changes, and typing indicators all depend on an active Socket.IO connection.
+
+### Architecture Recap
+
+```
+Admin sends reply       Backend saves to DB       User receives in real-time
+via REST POST    →     + returns HTTP 201    →    via Socket.IO new_message event
+                                                   (only if user is connected!)
+
+User sends message      Backend saves to DB       Admin receives in real-time
+via REST POST    →     + returns HTTP 201    →    via Socket.IO ticket_updated event
+                                                   (only if admin is connected!)
+```
+
+**REST API creates/persists messages. Socket.IO delivers them to other connected clients.** This is the standard chat architecture.
+
+### Admin Socket Connection — Required Setup
+
+```javascript
+// Connect ONCE when admin dashboard loads
+const socket = io("https://your-api-domain.com/support", {
+  auth: { token: adminJwtToken },
+  transports: ["websocket"],
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
+});
+
+// On reconnect, re-join any ticket room the admin was viewing
+socket.on("connect", () => {
+  console.log("Socket connected");
+  if (currentTicketId) {
+    socket.emit("join_ticket", { ticket_id: currentTicketId });
+  }
+});
+```
+
+### How to Verify Socket.IO is Working
+
+When an admin connects, the backend logs:
+```
+🔌 ADMIN connected — admin@example.com [socket: abc123] → joined rooms: user:uuid, admins
+```
+
+When a message is emitted, the backend logs the room occupancy:
+```
+💬 NEW MESSAGE [USER] → ticket:uuid (1 client(s) in room) | "I need help..."
+💬 → Notifying admins room (2 admin(s) connected) — new user message
+```
+
+**If you see `(0 client(s) in room)` or `⚠️ NO ADMINS connected`**, it means the admin frontend is NOT connected to Socket.IO.
+
+### Admin Dashboard Checklist
+
+- [ ] **Connect to `/support` namespace** with admin JWT on dashboard load
+- [ ] **Listen for `ticket_created`** to show new ticket notifications on the list page
+- [ ] **Listen for `ticket_updated`** to update ticket list badges/rows
+- [ ] **Emit `join_ticket`** when opening a ticket conversation
+- [ ] **Listen for `new_message`** in ticket detail and append to chat
+- [ ] **Listen for `typing`/`stop_typing`** from users
+- [ ] **Emit `typing`/`stop_typing`** when admin types a reply
+- [ ] **Emit `leave_ticket`** when navigating away from ticket detail
+- [ ] **Re-join ticket room on reconnect** (listen for Socket.IO `connect` event)
+
+### Common Mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Not connecting to Socket.IO at all | No real-time updates, user messages only appear on refresh | Connect on dashboard load: `io('/support', { auth: { token } })` |
+| Not emitting `join_ticket` | `ticket_updated` works but `new_message` doesn't in ticket detail | Emit `join_ticket` when opening ticket conversation |
+| Not emitting `typing` events | User sees no "admin is typing..." indicator | Emit `typing` on keypress in reply box (debounced) |
+| Using POST reply but not connecting socket | Admin's own reply appears (from POST response) but other clients don't see it | The POST endpoint broadcasts via socket — other clients need to be connected |
+| Sending messages via socket instead of REST | N/A — this is wrong | Always use `POST /:id/reply` for sending. Socket is receive-only for messages. |
