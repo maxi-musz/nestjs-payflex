@@ -596,3 +596,193 @@ seconds >= 86400   → "Xd Yh" (e.g. "1d 4h")
 - Show as stars (1-5) or numeric with star icon
 - `null` = "Not rated" in muted text
 - Color: 4-5 green, 3 yellow, 1-2 red
+
+---
+
+## Socket.IO — Real-Time Events (Admin Dashboard)
+
+The support system uses Socket.IO for real-time updates. The admin dashboard should connect to receive live events (new tickets, new messages, status changes, assignments) without polling.
+
+### Connection
+
+```javascript
+import { io } from "socket.io-client";
+
+const socket = io("https://your-api-domain.com/support", {
+  auth: {
+    token: "admin-jwt-token-here"
+  },
+  transports: ["websocket"],
+});
+
+socket.on("connect", () => {
+  console.log("Connected to support socket");
+});
+
+socket.on("connect_error", (err) => {
+  console.error("Socket connection failed:", err.message);
+});
+```
+
+- **Namespace:** `/support`
+- **Auth:** Pass the admin's JWT token in `auth.token`
+- Admin users are **automatically** joined to the `admins` room on connection (the server checks `role === 'admin'` from the JWT)
+
+### Events Admin Sends (Emit)
+
+#### `join_ticket` — Join a ticket's live room
+Emit this when admin opens a ticket detail / conversation page.
+
+```javascript
+socket.emit("join_ticket", { ticket_id: "ticket-uuid" });
+```
+
+Once joined, the admin receives `new_message`, `typing`, `stop_typing`, and `status_changed` events for that specific ticket.
+
+#### `leave_ticket` — Leave a ticket room
+Emit when admin navigates away from the ticket detail page.
+
+```javascript
+socket.emit("leave_ticket", { ticket_id: "ticket-uuid" });
+```
+
+#### `typing` — Show typing indicator to user
+Emit while admin is typing a reply.
+
+```javascript
+socket.emit("typing", { ticket_id: "ticket-uuid" });
+```
+
+#### `stop_typing` — Clear typing indicator
+Emit when admin stops typing (debounce ~2 seconds after last keystroke).
+
+```javascript
+socket.emit("stop_typing", { ticket_id: "ticket-uuid" });
+```
+
+### Events Admin Receives (Listen)
+
+#### `ticket_created` — New ticket created by a user
+Received by all admins (via the `admins` room). Use this to show a notification or update the ticket list count.
+
+```javascript
+socket.on("ticket_created", (data) => {
+  // data:
+  // {
+  //   id: "ticket-uuid",
+  //   ticket_number: "SMI-2026-000123",
+  //   subject: "Can't complete my transaction",
+  //   support_type: "TRANSACTION_ISSUE",
+  //   priority: "high",
+  //   email: "user@example.com",
+  //   created_at: "2026-02-24T17:00:00.000Z"
+  // }
+});
+```
+
+**UI:** Show a toast notification: *"New ticket: SMI-2026-000123 — Can't complete my transaction"*. Optionally play a sound. Refresh or prepend to the ticket table.
+
+#### `ticket_updated` — Ticket state changed
+A general-purpose event received by admins for various ticket changes. Check the `event` field to determine what happened.
+
+```javascript
+socket.on("ticket_updated", (data) => {
+  // data.event can be:
+  //   "new_user_message" — user sent a new message
+  //   "assigned"         — ticket was assigned to an admin
+  //   "status_changed"   — ticket status changed
+
+  if (data.event === "new_user_message") {
+    // data: { ticket_id, event, message: { id, preview, sender_name, created_at } }
+    // Show notification: "New message on ticket {ticket_id}"
+    // Update unread count on ticket list
+  }
+
+  if (data.event === "assigned") {
+    // data: { ticket_id, event, ticket_number, assigned_to, assigned_admin_name }
+    // Update ticket row in table
+  }
+
+  if (data.event === "status_changed") {
+    // data: { ticket_id, event, old_status, new_status, ticket_number, resolution_notes? }
+    // Update ticket row status badge
+  }
+});
+```
+
+#### `new_message` — New message in a ticket you're viewing
+Only received when admin has joined a specific ticket room via `join_ticket`. Append the message to the chat thread.
+
+```javascript
+socket.on("new_message", (data) => {
+  // data:
+  // {
+  //   ticket_id: "ticket-uuid",
+  //   message: {
+  //     id: "message-uuid",
+  //     message: "I still can't see my funds...",
+  //     is_from_user: true,
+  //     is_internal: false,
+  //     sender_name: "John Doe",
+  //     sender_email: "john@example.com",
+  //     createdAt: "2026-02-24T17:05:00.000Z"
+  //   }
+  // }
+});
+```
+
+**UI:** Append the message as a chat bubble. User messages on the left, admin messages on the right. Internal notes with a distinct style.
+
+#### `status_changed` — Ticket status changed (in-ticket)
+Received when viewing a specific ticket and its status changes (e.g. another admin resolved it).
+
+```javascript
+socket.on("status_changed", (data) => {
+  // data: { ticket_id, old_status, new_status, ticket_number, resolution_notes? }
+});
+```
+
+**UI:** Update the status badge in the ticket header. Show a system message in the chat: *"Status changed from in_progress to resolved"*.
+
+#### `ticket_assigned` — Ticket assigned (in-ticket)
+Received when viewing a specific ticket and it gets assigned.
+
+```javascript
+socket.on("ticket_assigned", (data) => {
+  // data: { ticket_id, ticket_number, assigned_to, assigned_admin_name }
+});
+```
+
+**UI:** Update the "Assigned to" field in the ticket sidebar.
+
+#### `typing` / `stop_typing` — User is typing
+Received when viewing a specific ticket and the user is composing a message.
+
+```javascript
+socket.on("typing", (data) => {
+  // data: { ticket_id, user_id, is_admin: false }
+  // Show "User is typing..." indicator below chat
+});
+
+socket.on("stop_typing", (data) => {
+  // data: { ticket_id, user_id }
+  // Hide typing indicator
+});
+```
+
+### Admin Socket Integration Summary
+
+| Where | Connect | Events to Listen |
+|---|---|---|
+| **Ticket list page** | On page mount | `ticket_created`, `ticket_updated` |
+| **Ticket detail page** | Emit `join_ticket` on open | `new_message`, `typing`, `stop_typing`, `status_changed`, `ticket_assigned` |
+| **Leave detail page** | Emit `leave_ticket` | — |
+| **Admin typing reply** | Emit `typing` / `stop_typing` | — |
+
+### Best Practices
+- **Connect once** on admin dashboard load, not per-page
+- **Reconnect** on token refresh (disconnect old socket, connect with new token)
+- Use `ticket_updated` on the list page to update badge counts / highlight changed rows
+- Use `new_message` only inside the ticket conversation view
+- **Debounce** typing events: emit `typing` on first keystroke, `stop_typing` after 2s of no input
+- Messages sent via the REST API (reply endpoint) are automatically broadcast via Socket.IO — **no need to emit from the client after posting**

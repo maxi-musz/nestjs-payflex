@@ -10,7 +10,6 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import { CreateSupportTicketDto } from './dto/create-support-ticket.dto';
 import { AddMessageToTicketDto } from './dto/add-message.dto';
-import { PhoneValidator } from '../common/helpers/phone.validator';
 import { generateTicketNumber } from 'src/common/helper_functions/generators';
 import { EmailService } from 'src/common/mailer/email.service';
 import { StatsService } from 'src/common/stats/stats.service';
@@ -37,9 +36,10 @@ export class SupportService {
     dto: CreateSupportTicketDto,
     headers: any,
     ipAddress: string,
+    authenticatedUserId?: string,
   ): Promise<ApiResponseDto<any>> {
     this.logger.log(
-      colors.cyan(`Creating support ticket for ${dto.phone_number || dto.email} [${dto.support_type || 'auto-detect'}]`),
+      colors.cyan(`Creating support ticket for ${dto.email} [${dto.support_type || 'auto-detect'}]`),
     );
 
     try {
@@ -48,9 +48,22 @@ export class SupportService {
         return this.addMessageToExistingTicket(dto, headers, ipAddress);
       }
 
-      const formattedPhone = this.formatPhone(dto.phone_number);
-      const registrationProgress = await this.resolveSession(dto.session_id, formattedPhone);
-      const existingUser = await this.resolveUser(formattedPhone);
+      const registrationProgress = await this.resolveSession(dto.session_id);
+
+      // Resolve user: JWT user ID first, then email lookup
+      let existingUser = authenticatedUserId
+        ? await this.prisma.user.findUnique({
+            where: { id: authenticatedUserId },
+            select: { id: true, email: true, first_name: true, last_name: true, phone_number: true },
+          })
+        : null;
+
+      if (!existingUser && dto.email) {
+        existingUser = await this.prisma.user.findFirst({
+          where: { email: { equals: dto.email, mode: 'insensitive' } },
+          select: { id: true, email: true, first_name: true, last_name: true, phone_number: true },
+        });
+      }
       const ticketNumber = await generateTicketNumber(this.prisma);
       const userAgent = this.extractUserAgent(headers);
       const deviceMetadata = this.extractDeviceMetadata(dto.device_metadata, headers, ipAddress);
@@ -77,7 +90,7 @@ export class SupportService {
         data: {
           ticket_number: ticketNumber,
           user_id: existingUser?.id ?? null,
-          phone_number: formattedPhone,
+          phone_number: existingUser?.phone_number ?? dto.phone_number ?? null,
           email: dto.email,
           subject: dto.subject,
           description: dto.description,
@@ -183,6 +196,8 @@ export class SupportService {
       updated_at: t.updatedAt,
       last_response_at: t.last_response_at,
     }));
+
+    this.logger.debug(`getUserTickets: ${formatted.length} ticket(s) returned for user ${userId}`);
 
     return new ApiResponseDto(true, 'Tickets fetched', {
       tickets: formatted,
@@ -451,18 +466,7 @@ export class SupportService {
     };
   }
 
-  private formatPhone(phone?: string | null): string | null {
-    if (!phone) return null;
-    const formatted = PhoneValidator.formatPhoneToE164(phone);
-    if (!PhoneValidator.validatePhoneNumber(formatted)) {
-      throw new BadRequestException(
-        'Phone number must be in E.164 format (+234XXXXXXXXXX) or a valid Nigerian number',
-      );
-    }
-    return formatted;
-  }
-
-  private async resolveSession(sessionId?: string, formattedPhone?: string | null) {
+  private async resolveSession(sessionId?: string) {
     if (!sessionId) return null;
     const progress = await this.prisma.registrationProgress.findUnique({
       where: { id: sessionId },
@@ -470,18 +474,7 @@ export class SupportService {
     if (!progress) {
       throw new BadRequestException('Invalid session ID');
     }
-    if (formattedPhone && progress.phone_number !== formattedPhone) {
-      throw new BadRequestException('Phone number does not match session');
-    }
     return progress;
-  }
-
-  private async resolveUser(formattedPhone: string | null) {
-    if (!formattedPhone) return null;
-    return this.prisma.user.findFirst({
-      where: { phone_number: formattedPhone },
-      select: { id: true, email: true, first_name: true, last_name: true },
-    });
   }
 
   private extractUserAgent(headers: any): string | null {

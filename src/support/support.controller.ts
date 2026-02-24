@@ -35,6 +35,18 @@ export class SupportController {
     return this.supportService.createSupportTicket(dto, headers, clientIp);
   }
 
+  @Post('create-ticket')
+  @UseGuards(AuthGuard('jwt'))
+  async createTicketAuthenticated(
+    @Body() dto: CreateSupportTicketDto,
+    @Headers() headers: any,
+    @Ip() ipAddress: string,
+    @Req() req: any,
+  ) {
+    const clientIp = req.ip || ipAddress || req.socket.remoteAddress || 'unknown';
+    return this.supportService.createSupportTicket(dto, headers, clientIp, req.user.sub);
+  }
+
   @Get('my-tickets')
   @UseGuards(AuthGuard('jwt'))
   async getMyTickets(@Req() req: any) {

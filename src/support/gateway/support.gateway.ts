@@ -46,7 +46,7 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
         client.handshake.headers?.authorization?.replace('Bearer ', '');
 
       if (!token) {
-        this.logger.warn(`Connection rejected — no token`);
+        this.logger.warn(`🔌 Connection REJECTED — no token provided (socket: ${client.id})`);
         client.disconnect();
         return;
       }
@@ -64,18 +64,23 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
       // Admins join the admin room to receive all ticket events
       if (payload.role === 'admin') {
         client.join('admins');
+        this.logger.log(`🔌 ADMIN connected — ${payload.email || payload.sub} [socket: ${client.id}] → joined rooms: user:${payload.sub}, admins`);
+      } else {
+        this.logger.log(`🔌 USER connected — ${payload.email || payload.sub} [socket: ${client.id}] → joined room: user:${payload.sub}`);
       }
 
-      this.logger.log(`Connected: ${payload.sub} [${payload.role}]`);
+      const sockets = await this.server?.fetchSockets();
+      const connectedCount = sockets?.length ?? 'unknown';
+      this.logger.log(`🔌 Total active connections: ${connectedCount}`);
     } catch {
-      this.logger.warn(`Connection rejected — invalid token`);
+      this.logger.warn(`🔌 Connection REJECTED — invalid/expired token (socket: ${client.id})`);
       client.disconnect();
     }
   }
 
   handleDisconnect(client: AuthenticatedSocket) {
     if (client.userId) {
-      this.logger.log(`Disconnected: ${client.userId}`);
+      this.logger.log(`🔌 DISCONNECTED — ${client.userId} [${client.userRole}] (socket: ${client.id})`);
     }
   }
 
@@ -90,21 +95,26 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
   ) {
     if (!client.userId || !data.ticket_id) return;
 
-    // Verify access: user must own the ticket or be admin
     const ticket = await this.prisma.supportTicket.findUnique({
       where: { id: data.ticket_id },
-      select: { user_id: true },
+      select: { user_id: true, ticket_number: true },
     });
 
-    if (!ticket) return;
+    if (!ticket) {
+      this.logger.warn(`📋 join_ticket DENIED — ticket ${data.ticket_id} not found (user: ${client.userId})`);
+      return;
+    }
 
     const isOwner = ticket.user_id === client.userId;
     const isAdmin = client.userRole === 'admin';
 
-    if (!isOwner && !isAdmin) return;
+    if (!isOwner && !isAdmin) {
+      this.logger.warn(`📋 join_ticket DENIED — ${client.userId} [${client.userRole}] has no access to ${ticket.ticket_number}`);
+      return;
+    }
 
     client.join(`ticket:${data.ticket_id}`);
-    this.logger.log(`${client.userId} joined ticket:${data.ticket_id}`);
+    this.logger.log(`📋 ${client.userRole?.toUpperCase()} ${client.userId} joined ticket room: ${ticket.ticket_number}`);
   }
 
   @SubscribeMessage('leave_ticket')
@@ -114,6 +124,7 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
   ) {
     if (data.ticket_id) {
       client.leave(`ticket:${data.ticket_id}`);
+      this.logger.log(`📋 ${client.userId} left ticket room: ${data.ticket_id}`);
     }
   }
 
@@ -123,6 +134,7 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
     @MessageBody() data: { ticket_id: string },
   ) {
     if (!client.userId || !data.ticket_id) return;
+    this.logger.debug(`⌨️  TYPING — ${client.userRole} ${client.userId} in ticket:${data.ticket_id}`);
     client.to(`ticket:${data.ticket_id}`).emit('typing', {
       ticket_id: data.ticket_id,
       user_id: client.userId,
@@ -147,15 +159,17 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
   // ──────────────────────────────────────────────────────────
 
   emitNewMessage(ticketId: string, ticketOwnerId: string | null, message: any) {
-    // Everyone in the ticket room gets the new message
+    const from = message.is_from_user ? 'USER' : 'ADMIN';
+    const preview = (message.message || '').substring(0, 80);
+    this.logger.log(`💬 NEW MESSAGE [${from}] → ticket:${ticketId} | "${preview}..."`);
+
     this.server.to(`ticket:${ticketId}`).emit('new_message', {
       ticket_id: ticketId,
       message,
     });
 
-    // If admin sent the message, also notify the user's personal room
-    // (in case they're on the ticket list, not inside this ticket)
     if (!message.is_from_user && ticketOwnerId) {
+      this.logger.debug(`💬 → Notifying user:${ticketOwnerId} (admin reply)`);
       this.server.to(`user:${ticketOwnerId}`).emit('ticket_updated', {
         ticket_id: ticketId,
         event: 'new_reply',
@@ -168,8 +182,8 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
       });
     }
 
-    // If user sent the message, notify all admins
     if (message.is_from_user) {
+      this.logger.debug(`💬 → Notifying admins room (new user message)`);
       this.server.to('admins').emit('ticket_updated', {
         ticket_id: ticketId,
         event: 'new_user_message',
@@ -184,6 +198,8 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
   }
 
   emitTicketCreated(ticket: any) {
+    this.logger.log(`🎫 NEW TICKET → admins | ${ticket.ticket_number} [${ticket.support_type}/${ticket.priority}] — "${ticket.subject}"`);
+
     this.server.to('admins').emit('ticket_created', {
       id: ticket.id,
       ticket_number: ticket.ticket_number,
@@ -201,12 +217,15 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
     ticket_number: string;
     resolution_notes?: string;
   }) {
+    this.logger.log(`🔄 STATUS CHANGED → ${data.ticket_number} | ${data.old_status} → ${data.new_status}`);
+
     this.server.to(`ticket:${ticketId}`).emit('status_changed', {
       ticket_id: ticketId,
       ...data,
     });
 
     if (ticketOwnerId) {
+      this.logger.debug(`🔄 → Notifying user:${ticketOwnerId}`);
       this.server.to(`user:${ticketOwnerId}`).emit('ticket_updated', {
         ticket_id: ticketId,
         event: 'status_changed',
@@ -220,6 +239,8 @@ export class SupportGateway implements OnGatewayConnection, OnGatewayDisconnect 
     assigned_to: string;
     assigned_admin_name: string;
   }) {
+    this.logger.log(`👤 TICKET ASSIGNED → ${data.ticket_number} | assigned to: ${data.assigned_admin_name} (${data.assigned_to})`);
+
     this.server.to(`ticket:${ticketId}`).emit('ticket_assigned', {
       ticket_id: ticketId,
       ...data,
