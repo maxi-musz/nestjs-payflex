@@ -25,6 +25,8 @@ import { StatsModule } from './common/stats/stats.module';
 import { DashboardModule } from './admin/unified-admin/dashboard/dashboard.module';
 import { AdminUsersModule } from './admin/unified-admin/users/admin-users.module';
 import { AdminTransactionsModule } from './admin/unified-admin/transactions/admin-transactions.module';
+import { AdminSupportModule } from './admin/unified-admin/support/admin-support.module';
+import { AdminAuditLogsModule } from './admin/unified-admin/audit-logs/admin-audit-logs.module';
 
 @Module({
   imports: [
@@ -39,6 +41,8 @@ import { AdminTransactionsModule } from './admin/unified-admin/transactions/admi
     DashboardModule, // Admin dashboard (reads from stats tables)
     AdminUsersModule, // Admin user management (list, search, status, role, tier)
     AdminTransactionsModule, // Admin transaction management (list, detail, stats, timeline, flag)
+    AdminSupportModule, // Admin support ticket management (list, detail, reply, status, assign, priority)
+    AdminAuditLogsModule, // Admin audit log management (list, detail, flag, review, user logs)
     UserModule, 
     BookmarkModule, 
     PrismaModule, BankingModule, TransactionHistoryModule, VtuModule, CronModule, VirtualCardModule, BridgeCardModule, FlutterwaveModule, VasModule, WebhooksModule, UtilityServicesModule, PushNotificationModule, SupportModule, EmailModule
