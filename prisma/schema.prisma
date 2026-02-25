@@ -243,6 +243,7 @@ enum TransactionType {
   airtime
   data
   cable
+  electricity
   education
   betting
   referral_bonus

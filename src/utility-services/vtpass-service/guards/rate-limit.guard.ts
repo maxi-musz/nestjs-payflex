@@ -21,12 +21,15 @@ export class RateLimitGuard implements CanActivate {
     
     // Detect service type from route path (e.g., /vtpass/airtime, /vtpass/data, /vtpass/cable)
     const routePath = req.url || req.path || '';
-    let serviceType: 'airtime' | 'data' | 'cable' = 'data';
+    let serviceType: 'airtime' | 'data' | 'cable' | 'electricity' = 'data';
     let serviceName = 'utility';
     
     if (routePath.includes('/airtime')) {
       serviceType = 'airtime';
       serviceName = 'airtime';
+    } else if (routePath.includes('/electricity')) {
+      serviceType = 'electricity';
+      serviceName = 'electricity';
     } else if (routePath.includes('/cable')) {
       serviceType = 'cable';
       serviceName = 'cable';

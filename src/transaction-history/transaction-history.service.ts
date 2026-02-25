@@ -114,7 +114,7 @@ export class TransactionHistoryService {
     // Get @/api/v1/history/fetch-single-transaction
     // protected
     async fetchTransactionById(transactionId: string, userId: string) {
-        console.log(`Fetching transaction with ID: ${transactionId}`);
+        this.logger.log(`Fetching transaction: ${transactionId}`);
 
         const transaction = await this.prisma.transactionHistory.findFirst({
             where: {
@@ -123,34 +123,97 @@ export class TransactionHistoryService {
             },
             include: {
                 sender_details: true,
-                icon: true
-            }
+                icon: true,
+            },
         });
 
         if (!transaction) {
-            console.log(`Transaction not found`);
             throw new NotFoundException('Transaction not found');
         }
 
-        console.log(`Transaction successfully retrieved`);
+        const meta = (transaction.meta_data as Record<string, any>) || {};
 
-        const formattedResponse = {
+        const formattedResponse: Record<string, any> = {
             id: transaction.id,
             amount: formatAmount(transaction.amount || 0),
+            raw_amount: transaction.amount ?? 0,
             type: transaction.transaction_type,
+            credit_debit: transaction.credit_debit,
             description: transaction.description,
             provider: transaction.provider,
             status: transaction.status,
             recipient_mobile: transaction.recipient_mobile,
             tx_reference: transaction.transaction_reference,
+            transaction_number: transaction.transaction_number,
+            payment_method: transaction.payment_method,
+            payment_channel: transaction.payment_channel,
+            fee: transaction.fee ?? 0,
+            balance_before: transaction.balance_before,
+            balance_after: transaction.balance_after,
             created_on: formatDate(transaction.createdAt),
             updated_on: formatDate(transaction.updatedAt),
-            // date: formatDate(transaction.createdAt),
-            sender: transaction.sender_details?.sender_name,
-            icon: transaction.icon?.secure_url || "",
+            sender: transaction.sender_details?.sender_name ?? null,
+            icon: transaction.icon?.secure_url || '',
+
+            vtpass_amount: transaction.vtpass_amount ?? null,
+            smipay_amount: transaction.smipay_amount ?? null,
+            markup_percent: transaction.markup_percent ?? null,
+            markup_value: transaction.markup_value ?? null,
+
+            meta: this.buildTypeMeta(transaction.transaction_type, meta),
+        };
+
+        this.logger.log(colors.magenta('Single transaction retrieved'));
+        return new ApiResponseDto(true, 'Single transaction retrieved', formattedResponse);
+    }
+
+    /**
+     * Extracts type-specific fields from meta_data so the frontend can
+     * render the right detail view without parsing raw meta_data itself.
+     */
+    private buildTypeMeta(
+        type: string | null | undefined,
+        meta: Record<string, any>,
+    ): Record<string, any> {
+        const vtpass = meta.vtpass_response || {};
+        const content = vtpass.content || {};
+        const transactions = content.transactions || {};
+
+        const base: Record<string, any> = {};
+
+        switch (type) {
+            case 'electricity': {
+                base.electricity_token = meta.electricity_token || null;
+                base.units = vtpass.units || transactions.units || content.units || null;
+                base.meter_number = meta.payload?.billersCode || null;
+                base.meter_type = meta.payload?.variation_code || null;
+                base.customer_name = vtpass.customerName || content.Customer_Name || null;
+                base.customer_address = vtpass.customerAddress || content.Address || null;
+                base.disco = transactions.product_name || null;
+                break;
+            }
+            case 'cable': {
+                base.smartcard_number = meta.payload?.billersCode || null;
+                base.subscription_type = meta.payload?.subscription_type || null;
+                base.bouquet = transactions.product_name || meta.payload?.variation_code || null;
+                base.customer_name = vtpass.customerName || content.Customer_Name || null;
+                break;
+            }
+            case 'data': {
+                base.phone = meta.payload?.phone || null;
+                base.network = meta.payload?.serviceID || null;
+                base.plan = transactions.product_name || meta.payload?.variation_code || null;
+                break;
+            }
+            case 'airtime': {
+                base.phone = meta.payload?.phone || null;
+                base.network = meta.payload?.serviceID || null;
+                break;
+            }
+            default:
+                break;
         }
 
-        this.logger.log(colors.magenta("Single transaction retrieved"))
-        return new ApiResponseDto(true, "Single transaction retrieved", formattedResponse)
+        return base;
     }
 }

@@ -266,21 +266,24 @@ function getUserTier(user: any): TierInfo {
             const isDva = existingDva && (existingDva.meta_data as any)?.provider;
 
             if (!isDva) {
-                this.logger.log(colors.cyan("User does not have a DVA, auto-assigning..."));
-                try {
-                    const dvaProvider = this.dvaProviderFactory.getProvider();
-                    await dvaProvider.assignDva(
-                        userPayload.sub,
-                        user.email || null,
-                        {
-                            phone_number: user.phone_number || undefined,
-                        }
-                    );
-                    this.logger.log(colors.green("DVA auto-assigned successfully"));
-                } catch (dvaError: any) {
-                    // Log error but don't fail the request
-                    this.logger.error(colors.red(`Failed to auto-assign DVA: ${dvaError.message}`));
-                    // Continue with the request even if DVA assignment fails
+                const isDevelopment = process.env.NODE_ENV === 'development';
+                if (isDevelopment) {
+                    this.logger.log(colors.yellow("Skipping DVA auto-assignment in development mode"));
+                } else {
+                    this.logger.log(colors.cyan("User does not have a DVA, auto-assigning..."));
+                    try {
+                        const dvaProvider = this.dvaProviderFactory.getProvider();
+                        await dvaProvider.assignDva(
+                            userPayload.sub,
+                            user.email || null,
+                            {
+                                phone_number: user.phone_number || undefined,
+                            }
+                        );
+                        this.logger.log(colors.green("DVA auto-assigned successfully"));
+                    } catch (dvaError: any) {
+                        this.logger.error(colors.red(`Failed to auto-assign DVA: ${dvaError.message}`));
+                    }
                 }
             }
 
