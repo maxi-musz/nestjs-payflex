@@ -88,6 +88,12 @@ export class NewAuthController {
     return this.newAuthService.resetPassword(dto, req);
   }
 
+  @Post('complete-onboarding')
+  @UseGuards(AuthGuard('jwt'))
+  completeOnboarding(@Req() req: any) {
+    return this.newAuthService.completeOnboarding(req.user.sub);
+  }
+
   @Post('logout')
   @UseGuards(AuthGuard('jwt'))
   logout(@Req() req: Request) {

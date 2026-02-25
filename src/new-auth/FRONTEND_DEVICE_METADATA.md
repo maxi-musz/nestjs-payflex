@@ -313,11 +313,14 @@ Call this after the user enters the OTP they received. On success, the email is 
       "profile_image": null,
       "kyc_verified": false,
       "isTransactionPinSetup": false,
+      "has_completed_onboarding": false,
       "created_at": "Feb 25, 2026, 10:30 AM"
     }
   }
 }
 ```
+
+> **NOTE:** `has_completed_onboarding` will always be `false` for a freshly registered user. This is when you show the onboarding walkthrough (see Section 3.10).
 
 > **IMPORTANT — Frontend behavior change:** The register endpoint now returns `access_token` and `user` (identical to sign-in). After a successful register call:
 > 1. Store the `access_token` exactly as you would after sign-in.
@@ -404,11 +407,16 @@ Used in flows where a **user already exists** and has an OTP stored (e.g. legacy
       "profile_image": null,
       "kyc_verified": false,
       "isTransactionPinSetup": false,
+      "has_completed_onboarding": false,
       "created_at": "Feb 17, 2026, 10:30 AM"
     }
   }
 }
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `has_completed_onboarding` | boolean | `false` = show the onboarding walkthrough. `true` = user has already seen it, skip it. |
 
 **Error response:**
 
@@ -537,7 +545,63 @@ On success, all existing sessions (refresh tokens) for the user are invalidated;
 
 ---
 
-### 3.9 Logout
+### 3.9 Complete Onboarding
+
+**Endpoint:** `POST /new-auth/complete-onboarding`
+
+**Auth:** `Authorization: Bearer <access_token>` (required)
+
+Call this **once** after the user finishes the onboarding walkthrough (all steps dismissed). This ensures the onboarding is never shown again, even if the user signs in on a different device.
+
+**Request body:** None.
+
+**Example request:**
+
+```bash
+POST /api/v1/new-auth/complete-onboarding
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Success response (200):**
+
+```json
+{
+  "success": true,
+  "message": "Onboarding completed",
+  "data": {
+    "has_completed_onboarding": true
+  }
+}
+```
+
+If already completed (idempotent):
+
+```json
+{
+  "success": true,
+  "message": "Onboarding already completed",
+  "data": {
+    "has_completed_onboarding": true
+  }
+}
+```
+
+#### Frontend onboarding flow
+
+1. **On sign-in or register response:** check `user.has_completed_onboarding`.
+2. **If `false`:** show the onboarding walkthrough on the dashboard:
+   - **Step 1 — Welcome banner:** Professional welcome bar at the top with a close button.
+   - **Step 2 — Wallet card tooltip:** Highlight the wallet balance area → "This is your account balance. Tap **Add Money** to fund your wallet."
+   - **Step 3 — Quick links tooltip:** Shift highlight to Quick Links → "Buy airtime, data, and more from here."
+   - **Step 4 — Support icon tooltip:** Shift highlight to the support icon → "Need help? Contact our support team here."
+   - **On dismiss / final step:** Call `POST /new-auth/complete-onboarding`.
+3. **If `true`:** Skip all of the above. Show the dashboard normally.
+
+> The flag is stored server-side, so it persists across devices and reinstalls. Call the endpoint once when the user completes (or skips) the walkthrough.
+
+---
+
+### 3.10 Logout
 
 **Endpoint:** `POST /new-auth/logout`
 
@@ -602,6 +666,7 @@ The backend captures the user's location through a **two-layer approach**:
 | Item | Requirement |
 |------|-------------|
 | **Registration** | 1) Request email verification → 2) Verify email for registration (OTP) → 3) Register with full payload → **user is auto-signed-in** (response includes `access_token`). Navigate to dashboard, not sign-in. |
+| **Onboarding** | After sign-in or register, check `user.has_completed_onboarding`. If `false`, show the walkthrough. When user finishes, call `POST /new-auth/complete-onboarding`. |
 | **Device headers** | Send `x-device-id` (and optional headers from Section 1.1) on **every** request. |
 | **Geolocation** | Send `x-latitude` / `x-longitude` headers for precise location tracking. If omitted, the backend falls back to IP-based city-level geolocation. |
 | **Body** | Do not send device metadata in the request body. |
@@ -610,5 +675,5 @@ The backend captures the user's location through a **two-layer approach**:
 
 ---
 
-**Document version:** 1.5  
+**Document version:** 1.6  
 **Last updated:** 2026-02-25

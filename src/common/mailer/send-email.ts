@@ -1,5 +1,5 @@
 import * as nodemailer from 'nodemailer';
-import { SentMessageInfo } from 'nodemailer';
+// import { SentMessageInfo } from 'nodemailer';
 import { otpVerificationCodeTemplate, depositNotificationTemplate, cablePurchaseSuccessTemplate } from './email.template';
 
 export const sendOTPByEmail = async (email: string, otp: string): Promise<void> => {
@@ -26,7 +26,7 @@ export const sendOTPByEmail = async (email: string, otp: string): Promise<void> 
 
         const mailOptions = {
             from: {
-                name: "SmiPay MFB",
+                name: "SmiPay",
                 address: process.env.EMAIL_USER as string,
             },
             to: email,
@@ -90,7 +90,7 @@ export const sendDepositNotificationEmail = async (
 
         const mailOptions = {
             from: {
-                name: "SmiPay MFB",
+                name: "SmiPay",
                 address: process.env.EMAIL_USER as string,
             },
             to: email,
@@ -150,7 +150,7 @@ export const sendCablePurchaseSuccessEmail = async (
 
         const mailOptions = {
             from: {
-                name: "SmiPay MFB",
+                name: "SmiPay",
                 address: process.env.EMAIL_USER as string,
             },
             to: email,

@@ -145,6 +145,7 @@ export class NewAuthService {
       profile_image: user.profile_image?.secure_url ?? null,
       kyc_verified: user.kyc_verification?.is_verified ?? false,
       isTransactionPinSetup: !!user.transactionPinHash,
+      has_completed_onboarding: user.has_completed_onboarding,
       created_at: formatDate(user.createdAt),
     };
 
@@ -447,6 +448,7 @@ export class NewAuthService {
       profile_image: fullUser?.profile_image?.secure_url ?? null,
       kyc_verified: fullUser?.kyc_verification?.is_verified ?? false,
       isTransactionPinSetup: false,
+      has_completed_onboarding: false,
       created_at: formatDate(newUser.createdAt),
     };
 
@@ -709,6 +711,41 @@ export class NewAuthService {
     });
 
     return new ApiResponseDto(true, 'Password reset successfully');
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // COMPLETE ONBOARDING
+  // ──────────────────────────────────────────────────────────
+
+  async completeOnboarding(userId: string) {
+    this.logger.log(`Completing onboarding for user ${userId}`);
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, has_completed_onboarding: true },
+    });
+
+    if (!user) {
+      this.logger.error(`User not found for onboarding completion: ${userId}`);
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.has_completed_onboarding) {
+      this.logger.log(`Onboarding already completed for user ${userId}`);
+      return new ApiResponseDto(true, 'Onboarding already completed', {
+        has_completed_onboarding: true,
+      });
+    }
+
+    this.logger.log(`Updating user ${userId} to mark onboarding as completed`);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { has_completed_onboarding: true },
+    });
+
+    this.logger.log(`Onboarding completed for user ${userId}`);
+    return new ApiResponseDto(true, 'Onboarding completed', {
+      has_completed_onboarding: true,
+    });
   }
 
   // ──────────────────────────────────────────────────────────

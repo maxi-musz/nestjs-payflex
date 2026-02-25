@@ -57,7 +57,7 @@ export class GmailSmtpProvider implements IEmailProvider {
     to: string,
     subject: string,
     htmlContent: string,
-    fromName: string = 'SmiPay MFB',
+    fromName: string = 'SmiPay',
     fromEmail?: string,
   ): Promise<void> {
     try {

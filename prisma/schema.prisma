@@ -54,6 +54,7 @@ model User {
   refreshToken                 RefreshToken?
   paystack_customer_code       String?          @unique
   account_status               AccountStatus?   @default(active)
+  has_completed_onboarding     Boolean          @default(false)
   password_attempts            Int              @default(0)
   password_attempts_started_at DateTime?
   tier_id                      String?
