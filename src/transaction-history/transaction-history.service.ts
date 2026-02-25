@@ -75,6 +75,7 @@ export class TransactionHistoryService {
                 credit_debit: transaction.credit_debit,
                 transaction_type: transaction.transaction_type,
                 description: transaction.description,
+                provider: transaction.provider ?? null,
                 status: transaction.status,
                 date: formatDate(transaction.createdAt),
                 reference: transaction.transaction_reference,
