@@ -1,46 +1,54 @@
-# Cable TV Subscription API Documentation
+# Cable TV Subscription — Frontend API Documentation
+
+> **Version:** 2.0 &nbsp;|&nbsp; **Last Updated:** Feb 25, 2026
 
 ## Overview
-This API enables users to purchase and renew cable TV subscriptions (DSTV, GOTV, Startimes, Showmax) through the SmiPay platform. All endpoints require JWT authentication.
+
+This API enables users to purchase and renew cable TV subscriptions (DSTV, GOTV, Startimes, Showmax) through the SmiPay platform.
 
 **Base URL:** `/api/v1/vtpass/cable`
 
-**Authentication:** Include JWT token in the `Authorization` header:
+**Authentication:** Every request requires a JWT token:
+
 ```
-Authorization: Bearer {your_jwt_token}
+Authorization: Bearer <access_token>
 ```
 
 ---
 
 ## Table of Contents
-1. [Get Service IDs](#1-get-service-ids)
-2. [Get Variation Codes](#2-get-variation-codes)
-3. [Verify Smartcard](#3-verify-smartcard)
-4. [Purchase Cable Subscription](#4-purchase-cable-subscription)
-5. [Transaction Status Handling](#transaction-status-handling)
-6. [Error Handling](#error-handling)
-7. [Best Practices](#best-practices)
+
+| # | Endpoint | Method | Description |
+|---|----------|--------|-------------|
+| 1 | [Get Service IDs](#1-get-service-ids) | `GET` | List cable providers |
+| 2 | [Get Variation Codes](#2-get-variation-codes) | `GET` | Plans / bouquets for a provider |
+| 3 | [Verify Smartcard](#3-verify-smartcard) | `POST` | Validate smartcard & get customer info |
+| 4 | [Purchase](#4-purchase-cable-subscription) | `POST` | Buy or renew a subscription |
+| 5 | [Query Transaction](#5-query-transaction-status) | `POST` | Check status of a pending transaction |
+
+### Provider Quick Reference
+
+| Provider | serviceID | Verify? | subscription_type? | billersCode | Special |
+|----------|-----------|---------|---------------------|-------------|---------|
+| DSTV | `dstv` | Yes | **Required** (`change` or `renew`) | Smartcard number | — |
+| GOTV | `gotv` | Yes | **Required** (`change` or `renew`) | Smartcard number | — |
+| Startimes | `startimes` | Yes (optional) | **Do NOT send** | Smartcard or eWallet number | — |
+| Showmax | `showmax` | **No** | **Do NOT send** | Phone number (11 digits) | Returns voucher code |
 
 ---
 
 ## 1. Get Service IDs
 
-Returns a list of available cable TV providers.
+Returns available cable TV providers.
 
-### Endpoint
 ```
 GET /api/v1/vtpass/cable/service-ids
 ```
 
-### Headers
-```
-Authorization: Bearer {jwt_token}
-```
+**Headers:** `Authorization: Bearer <token>`
 
-### Request
-No request body required.
+### Success Response (200)
 
-### Response Success (200 OK)
 ```json
 {
   "success": true,
@@ -48,38 +56,22 @@ No request body required.
   "data": [
     {
       "name": "DSTV Subscription",
-      "identifier": "tv-subscription",
       "serviceID": "dstv",
-      "category": "tv-subscription",
-      "commission": "1.5",
-      "minimum_amount": "0",
-      "maximum_amount": "0"
+      "identifier": "tv-subscription"
     },
     {
       "name": "GOTV Subscription",
-      "serviceID": "gotv",
-      ...
+      "serviceID": "gotv"
     },
     {
       "name": "Startimes Subscription",
-      "serviceID": "startimes",
-      ...
+      "serviceID": "startimes"
     },
     {
-      "name": "Showmax Subscription",
-      "serviceID": "showmax",
-      ...
+      "name": "ShowMax",
+      "serviceID": "showmax"
     }
   ]
-}
-```
-
-### Response Error (400/500)
-```json
-{
-  "statusCode": 400,
-  "message": "Failed to fetch cable service IDs",
-  "error": "Bad Request"
 }
 ```
 
@@ -87,29 +79,20 @@ No request body required.
 
 ## 2. Get Variation Codes
 
-Returns available subscription plans (bouquets) for a specific provider.
+Returns subscription plans (bouquets) for a provider.
 
-### Endpoint
-```
-GET /api/v1/vtpass/cable/variation-codes?serviceID={serviceID}
-```
-
-### Headers
-```
-Authorization: Bearer {jwt_token}
-```
-
-### Query Parameters
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| serviceID | string | Yes | Provider ID (e.g., "dstv", "gotv", "startimes", "showmax") |
-
-### Request Example
 ```
 GET /api/v1/vtpass/cable/variation-codes?serviceID=dstv
 ```
 
-### Response Success (200 OK)
+**Headers:** `Authorization: Bearer <token>`
+
+| Query Param | Type | Required | Description |
+|-------------|------|----------|-------------|
+| `serviceID` | string | Yes | `dstv`, `gotv`, `startimes`, or `showmax` |
+
+### Success Response (200)
+
 ```json
 {
   "success": true,
@@ -119,6 +102,12 @@ GET /api/v1/vtpass/cable/variation-codes?serviceID=dstv
     "serviceID": "dstv",
     "convinience_fee": "N0",
     "variations": [
+      {
+        "variation_code": "dstv-padi",
+        "name": "DStv Padi N1,850",
+        "variation_amount": "1850.00",
+        "fixedPrice": "Yes"
+      },
       {
         "variation_code": "dstv-confam",
         "name": "Dstv Confam N4,615",
@@ -131,55 +120,45 @@ GET /api/v1/vtpass/cable/variation-codes?serviceID=dstv
         "variation_amount": "18400.00",
         "fixedPrice": "Yes"
       }
-    ],
-    "varations": [
-      // Same as variations array above
     ]
   }
 }
 ```
 
-### Response Error (400/500)
-```json
-{
-  "statusCode": 400,
-  "message": "Failed to fetch variation codes",
-  "error": "Bad Request"
-}
-```
+> **Frontend tip:** Use the `variations` array (not `varations` — VTpass returns both but `variations` is canonical). Display `name` to the user and keep `variation_code` + `variation_amount` for the purchase call.
+
+> **Startimes note:** The variation `"ewallet"` has `variation_amount: "0.00"`. For this variation, the user **must** type in a custom amount. Do not allow submitting without an amount.
 
 ---
 
 ## 3. Verify Smartcard
 
-Verifies a smartcard number and retrieves customer information, current bouquet, and renewal amount.
+Validates a smartcard number and returns customer info (name, current bouquet, renewal amount).
 
-### Endpoint
 ```
 POST /api/v1/vtpass/cable/verify
 ```
 
-### Headers
-```
-Authorization: Bearer {jwt_token}
-Content-Type: application/json
-```
+**Headers:** `Authorization: Bearer <token>` &nbsp;|&nbsp; `Content-Type: application/json`
 
-### Request Body
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `billersCode` | string | Yes | Smartcard number |
+| `serviceID` | string | Yes | `dstv`, `gotv`, or `startimes` |
+
+> **Showmax is NOT supported.** Calling verify with `serviceID: "showmax"` returns a `400` error. Skip this step for Showmax and go straight to purchase.
+
+### Request
+
 ```json
 {
-  "billersCode": "1212121212",
+  "billersCode": "7012345678",
   "serviceID": "dstv"
 }
 ```
 
-### Request Parameters
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| billersCode | string | Yes | Smartcard number (10 digits for DSTV/GOTV) |
-| serviceID | string | Yes | Provider ID (dstv, gotv, startimes, showmax) |
+### Success Response (200) — DSTV / GOTV
 
-### Response Success (200 OK)
 ```json
 {
   "success": true,
@@ -189,39 +168,51 @@ Content-Type: application/json
     "content": {
       "Customer_Name": "JOHN DOE",
       "Status": "ACTIVE",
-      "Due_Date": "2025-02-06T00:00:00",
+      "Due_Date": "2026-04-06T00:00:00",
       "Customer_Number": "8061522780",
       "Customer_Type": "DSTV",
       "Current_Bouquet": "DStv Compact",
-      "Renewal_Amount": "7900.00",
-      "commission_details": {
-        "amount": null,
-        "rate": "1.50",
-        "rate_type": "percent",
-        "computation_type": "default"
-      }
+      "Renewal_Amount": "7900.00"
     }
   }
 }
 ```
 
-### Response Error (400/500)
+### Success Response (200) — Startimes
+
 ```json
 {
-  "statusCode": 400,
-  "message": "Failed to verify smartcard",
-  "error": "Bad Request"
+  "success": true,
+  "message": "Smartcard verified successfully",
+  "data": {
+    "code": "000",
+    "content": {
+      "Customer_Name": "JANE DOE",
+      "Balance": 54.82,
+      "Smartcard_Number": "1212121212"
+    }
+  }
 }
 ```
 
-### Important Notes
-- **Renewal_Amount**: Use this amount when making a renewal purchase (subscription_type: "renew")
-- **Current_Bouquet**: Shows the customer's current subscription plan
-- **Due_Date**: Subscription expiration date
-- **Provider Support**: 
-  - ✅ **DSTV & GOTV**: Support verify endpoint
-  - ✅ **Startimes**: Supports verify endpoint
-  - ❌ **Showmax**: Does NOT support verify endpoint (skip this step for Showmax)
+### Frontend behaviour after verify
+
+| Provider | What to display | What to do next |
+|----------|----------------|-----------------|
+| DSTV / GOTV | `Customer_Name`, `Current_Bouquet`, `Renewal_Amount`, `Due_Date` | Ask user: **Renew** current bouquet at `Renewal_Amount` **or** **Change** to a different bouquet (show variation list) |
+| Startimes | `Customer_Name`, `Balance` | Proceed to purchase with selected variation |
+
+> **Important:** For DSTV/GOTV renewal, always use the `Renewal_Amount` from this response — it may differ from the catalogue price due to promos.
+
+### Error Responses
+
+```json
+{ "success": false, "message": "Showmax does not support smartcard verification. Proceed directly to purchase using the customer phone number as billersCode." }
+```
+
+```json
+{ "success": false, "message": "Failed to verify smartcard" }
+```
 
 ---
 
@@ -229,149 +220,132 @@ Content-Type: application/json
 
 Purchases a new subscription or renews an existing one.
 
-### ⚠️ Provider-Specific Requirements
-
-Different providers have different requirements:
-
-| Provider | Verify Endpoint | Subscription Types | Required Fields | billersCode Type |
-|----------|----------------|-------------------|-----------------|------------------|
-| **DSTV** | ✅ Supported | `change` or `renew` (required) | `subscription_type`, `variation_code` (for change), `amount` (for renew) | Smartcard number (10 digits) |
-| **GOTV** | ✅ Supported | `change` or `renew` (required) | `subscription_type`, `variation_code` (for change), `amount` (for renew) | Smartcard number (10 digits) |
-| **Startimes** | ✅ Supported | Purchase only (no `subscription_type`) | `variation_code` (always required) | Smartcard number or eWallet |
-| **Showmax** | ❌ Not supported | Purchase only (no `subscription_type`) | `variation_code` (always required) | Phone number (11 digits) |
-
-**Important Notes:**
-- **DSTV/GOTV**: Must include `subscription_type` field with value "change" or "renew"
-- **Startimes/Showmax**: Must NOT include `subscription_type` field (omit it entirely)
-- **Startimes/Showmax**: Always require `variation_code` in the purchase request
-- If you send `subscription_type` for Startimes/Showmax, you will get an "INVALID ARGUMENTS" error from VTpass
-
-### Endpoint
 ```
 POST /api/v1/vtpass/cable/purchase
 ```
 
-### Headers
-```
-Authorization: Bearer {jwt_token}
-Content-Type: application/json
-```
+**Headers:** `Authorization: Bearer <token>` &nbsp;|&nbsp; `Content-Type: application/json`
 
-### Request Body
+### Request Fields
 
-#### For DSTV/GOTV - Bouquet Change (New Subscription)
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `serviceID` | string | **Yes** | `dstv`, `gotv`, `startimes`, or `showmax` |
+| `billersCode` | string | **Yes** | **DSTV/GOTV/Startimes:** Smartcard number. **Showmax:** Phone number (11 digits) |
+| `subscription_type` | string | **DSTV/GOTV only** | `"change"` (new/different bouquet) or `"renew"` (same bouquet). **Do NOT send for Startimes/Showmax.** |
+| `variation_code` | string | Conditional | Required for `change` (DSTV/GOTV) and **always** required for Startimes/Showmax |
+| `amount` | number | Conditional | Required for `renew` (DSTV/GOTV — use `Renewal_Amount` from verify). Optional otherwise (auto-resolved from variation price) |
+| `phone` | string | No | Customer phone. Falls back to registered phone number if omitted |
+| `quantity` | number | No | Months to subscribe (DSTV/GOTV only, default 1) |
+| `request_id` | string | No | Idempotency key. Auto-generated if omitted. **Always store this — you need it for query** |
+
+---
+
+### 4a. DSTV / GOTV — Bouquet Change
+
+User wants a different bouquet or is a new subscriber.
+
 ```json
 {
-  "request_id": "optional-unique-id",
   "serviceID": "dstv",
-  "billersCode": "1212121212",
-  "variation_code": "dstv-confam",
-  "phone": "08030000000",
+  "billersCode": "7012345678",
   "subscription_type": "change",
-  "quantity": 1
+  "variation_code": "dstv-confam",
+  "phone": "08012345678"
 }
 ```
 
-#### For DSTV/GOTV - Bouquet Renewal
+### 4b. DSTV / GOTV — Bouquet Renewal
+
+User renews their current bouquet at the price from verify.
+
 ```json
 {
-  "request_id": "optional-unique-id",
-  "serviceID": "dstv",
-  "billersCode": "1212121212",
-  "amount": 4615,
-  "phone": "08030000000",
+  "serviceID": "gotv",
+  "billersCode": "7012345678",
   "subscription_type": "renew",
-  "quantity": 1
+  "amount": 3600,
+  "phone": "08012345678"
 }
 ```
 
-#### For Startimes - Purchase (No subscription_type)
+### 4c. Startimes — Purchase
+
+No `subscription_type`. Always requires `variation_code`.
+
 ```json
 {
-  "request_id": "optional-unique-id",
   "serviceID": "startimes",
-  "billersCode": "1212121212",
+  "billersCode": "0212345678",
   "variation_code": "nova",
-  "amount": 900,
-  "phone": "08030000000"
+  "phone": "08012345678"
 }
 ```
 
-#### For Showmax - Purchase (No subscription_type, uses phone as billersCode)
+### 4d. Showmax — Purchase
+
+No `subscription_type`. No verify step. `billersCode` is the **phone number**.
+
 ```json
 {
-  "request_id": "optional-unique-id",
   "serviceID": "showmax",
-  "billersCode": "08011111111",
+  "billersCode": "08012345678",
   "variation_code": "full_3",
-  "amount": 8400,
-  "phone": "08011111111"
+  "phone": "08012345678"
 }
 ```
 
-### Request Parameters
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| request_id | string | No | Unique transaction ID (auto-generated if not provided) |
-| serviceID | string | Yes | Provider ID (dstv, gotv, startimes, showmax) |
-| billersCode | string | Yes | **DSTV/GOTV/Startimes**: Smartcard number (10 digits)<br>**Showmax**: Phone number (11 digits) |
-| variation_code | string | Conditional | **DSTV/GOTV**: Required for `subscription_type: "change"`<br>**Startimes/Showmax**: Always required |
-| amount | number | Conditional | **DSTV/GOTV**: Required for `subscription_type: "renew"` (use Renewal_Amount from verify)<br>**Startimes/Showmax**: Optional (will use variation_code price if not provided) |
-| phone | string | No | Customer phone number. If not provided, uses user's registered phone number |
-| subscription_type | string | Conditional | **DSTV/GOTV only**: Required - either "change" or "renew"<br>**Startimes/Showmax**: Not used (omit this field) |
-| quantity | number | No | Number of months (default: 1). Only applicable for DSTV/GOTV |
+---
 
-### Response Success (200 OK)
+### Purchase Success Response — DSTV / GOTV / Startimes (200)
 
-#### Transaction Delivered (Immediate Success)
-
-**DSTV/GOTV/Startimes:**
 ```json
 {
   "success": true,
   "message": "Cable purchase successful",
   "data": {
-    "id": "transaction_id",
+    "id": "clx123-uuid",
     "code": "000",
     "response_description": "TRANSACTION SUCCESSFUL",
-    "requestId": "2025031011029125930",
+    "requestId": "202602251430abcd1234",
     "amount": 4615,
-    "transaction_date": "2025-03-10T10:02:57.000000Z",
+    "transaction_date": "2026-02-25T14:30:02.000000Z",
     "content": {
       "transactions": {
         "status": "delivered",
         "product_name": "DSTV Subscription",
-        "unique_element": "1212121212",
+        "unique_element": "7012345678",
         "unit_price": "4615",
         "quantity": 1,
-        "transactionId": "17416009779459629327738818",
-        "commission": 69.225,
-        "total_amount": 4545.775
+        "transactionId": "17416009779459629327738818"
       }
     }
   }
 }
 ```
 
-**Showmax (includes voucher code):**
+### Purchase Success Response — Showmax (200)
+
 ```json
 {
   "success": true,
   "message": "Cable purchase successful",
   "data": {
-    "id": "transaction_id",
+    "id": "clx456-uuid",
     "code": "000",
     "response_description": "TRANSACTION SUCCESSFUL",
-    "requestId": "2025031013486732084",
+    "requestId": "202602251445efgh5678",
     "amount": 8400,
-    "transaction_date": "2025-03-10T12:48:57.000000Z",
+    "transaction_date": "2026-02-25T14:45:57.000000Z",
     "purchased_code": "SHMVHXQ9L3RXGPU",
     "Voucher": ["SHMVHXQ9L3RXGPU"],
+    "voucher_code": "SHMVHXQ9L3RXGPU",
+    "voucher_codes": ["SHMVHXQ9L3RXGPU"],
     "content": {
       "transactions": {
         "status": "delivered",
         "product_name": "ShowMax",
-        "unique_element": "08011111111",
+        "unique_element": "08012345678",
         "unit_price": "8400",
         "quantity": 1,
         "transactionId": "17416109379361776858305486"
@@ -381,20 +355,20 @@ Content-Type: application/json
 }
 ```
 
-**Note:** For Showmax purchases, always display the `purchased_code` (voucher code) to the user as they need it to activate their subscription.
+> **CRITICAL (Showmax only):** The `voucher_code` field contains the activation code the user needs. **You MUST display this prominently** (e.g. in a success modal with a copy button). Without it, the user cannot activate their Showmax subscription.
 
-#### Transaction Processing (Pending)
+### Purchase Processing Response (200 — Pending)
+
 ```json
 {
   "success": true,
   "message": "Transaction is being processed",
   "data": {
-    "id": "transaction_id",
+    "id": "clx789-uuid",
     "code": "000",
-    "response_description": "TRANSACTION PROCESSED",
+    "requestId": "202602251500ijkl9012",
     "status": "processing",
-    "message": "Transaction is being processed. Status will be updated via webhook.",
-    "requestId": "2025031011029125930",
+    "message": "Transaction is being processed. Use the query endpoint with request_id to check status.",
     "content": {
       "transactions": {
         "status": "pending",
@@ -405,466 +379,474 @@ Content-Type: application/json
 }
 ```
 
-### Response Error (400)
-```json
-{
-  "statusCode": 400,
-  "message": "Insufficient wallet balance",
-  "error": "Bad Request"
-}
-```
+> When you receive `"status": "processing"`, store the `requestId` and poll [Query Transaction](#5-query-transaction-status) every 30–60 seconds.
 
-### Other Error Examples
-```json
-{
-  "statusCode": 400,
-  "message": "variation_code is required for subscription_type=change",
-  "error": "Bad Request"
-}
-```
+### Purchase Error Responses
 
-**Note:** This error only applies to DSTV/GOTV. Startimes and Showmax always require `variation_code` but don't use `subscription_type`.
-
-```json
-{
-  "statusCode": 400,
-  "message": "amount is required for subscription_type=renew (use Renewal_Amount from verify response)",
-  "error": "Bad Request"
-}
-```
-
-**Note:** This error only applies to DSTV/GOTV renewals. Startimes and Showmax don't use `subscription_type`.
-
-```json
-{
-  "statusCode": 400,
-  "message": "Invalid serviceID. Must be one of: dstv, gotv, startimes, showmax",
-  "error": "Bad Request"
-}
-```
-
-```json
-{
-  "statusCode": 400,
-  "message": "subscription_type must be either change or renew",
-  "error": "Bad Request"
-}
-```
-
-**Note:** This validation only applies to DSTV/GOTV. For Startimes and Showmax, omit the `subscription_type` field entirely.
-
-```json
-{
-  "statusCode": 400,
-  "message": "subscription_type is not used for Startimes/Showmax. Omit this field.",
-  "error": "Bad Request"
-}
-```
-
-**Note:** This error occurs when `subscription_type` is provided for Startimes or Showmax purchases. Simply omit the field.
-
-```json
-{
-  "statusCode": 400,
-  "message": "variation_code is required for Startimes/Showmax purchases",
-  "error": "Bad Request"
-}
-```
-
-**Note:** Startimes and Showmax always require `variation_code` in the purchase request.
+| HTTP | message | When |
+|------|---------|------|
+| 400 | `Insufficient wallet balance` | Not enough funds |
+| 400 | `subscription_type must be either change or renew for DSTV/GOTV` | Missing/invalid subscription_type for DSTV/GOTV |
+| 400 | `subscription_type is not used for Startimes/Showmax. Omit this field.` | subscription_type sent for Startimes/Showmax |
+| 400 | `variation_code is required for subscription_type=change` | DSTV/GOTV change without variation_code |
+| 400 | `amount is required for renew subscription_type (use Renewal_Amount from verify)` | DSTV/GOTV renew without amount |
+| 400 | `variation_code is required for Startimes/Showmax purchases` | Missing variation_code |
+| 400 | `Amount must be greater than zero...` | Startimes eWallet variation without explicit amount |
+| 400 | `Invalid serviceID. Must be one of: dstv, gotv, startimes, showmax` | Bad serviceID |
+| 403 | `Daily cable purchase count limit reached` | Exceeded daily tx count |
+| 403 | `Daily cable purchase amount limit exceeded` | Exceeded daily amount cap |
+| 429 | `Too Many Requests` | Rate-limited |
 
 ---
 
-## Transaction Status Handling
+## 5. Query Transaction Status
 
-### ⚠️ CRITICAL: Understanding Pending vs Failed Transactions
+Check the final status of a pending transaction. Also auto-updates the transaction record and refunds the wallet if the transaction ultimately failed.
 
-**IMPORTANT:** The mobile app must NOT treat transactions as failed when they are actually pending. This is crucial for preventing incorrect refunds and user confusion.
-
-### Transaction Status Indicators
-
-#### ✅ Success Indicators
-- `code: "000"` AND `content.transactions.status: "delivered"`
-- Response message: "Cable purchase successful"
-- `success: true` in response
-
-#### ⏳ Pending Indicators (DO NOT TREAT AS FAILED)
-- `code: "000"` AND `content.transactions.status: "pending"` or `"initiated"`
-- `code: "099"` (TRANSACTION IS PROCESSING)
-- `response_description` contains "PROCESSING" or "PENDING"
-- Response message: "Transaction is being processed"
-- `status: "processing"` in response data
-- **Timeout or No Response**: If the API times out or returns no response, treat as pending
-- **Unexpected Response**: Any response code not explicitly listed as failed should be treated as pending
-
-#### ❌ Failed Indicators (Only these should be treated as failed)
-- `code: "016"` (TRANSACTION FAILED)
-- `code: "000"` AND `content.transactions.status: "failed"`
-- `code: "040"` (TRANSACTION REVERSAL)
-- Response message contains "failed" or "reversed" and `success: false`
-- Explicit validation errors (e.g., "Insufficient wallet balance")
-- `statusCode: 400` or `statusCode: 403` with error message
-
-### Handling Pending Transactions
-
-When a transaction is pending:
-
-1. **Show User-Friendly Message**
-   ```
-   "Your subscription is being processed. Please wait a few minutes and check your decoder."
-   ```
-
-2. **Store Transaction Reference**
-   - Save the `requestId` from the response
-   - Store transaction status as "pending" in local database/cache
-
-3. **Implement Polling/Requery**
-   - Poll the transaction status every 30-60 seconds for up to 5 minutes
-   - Or implement a webhook listener to receive status updates
-   - Use the `requestId` to query status
-
-4. **User Experience**
-   - Show a "Processing" indicator
-   - Allow user to check transaction history
-   - Provide option to refresh status manually
-   - Do NOT show as "Failed" or trigger refunds
-
-5. **Auto-Update After Delay**
-   - After 5-10 minutes, automatically refresh transaction status
-   - Update UI based on final status
-
-### Response Codes Reference
-
-| Code | Meaning | Action Required |
-|------|---------|----------------|
-| 000 + status: "delivered" | Success | Show success message |
-| 000 + status: "pending"/"initiated" | Processing | Wait and requery |
-| 099 | Processing | Wait and requery |
-| 016 | Failed | Show error, refund if needed |
-| 040 | Reversed | Show error, refund issued |
-| Timeout/No Response | Unknown | Treat as pending, requery |
-
----
-
-## Error Handling
-
-### Standard Error Response Format
-All errors follow NestJS HttpException format:
-```json
-{
-  "statusCode": 400,
-  "message": "Error description",
-  "error": "Bad Request"
-}
+```
+POST /api/v1/vtpass/cable/query
 ```
 
-### Common Error Scenarios
+**Headers:** `Authorization: Bearer <token>` &nbsp;|&nbsp; `Content-Type: application/json`
 
-#### 1. Validation Errors (400)
-
-**DSTV/GOTV - Missing variation_code for change:**
-```json
-{
-  "statusCode": 400,
-  "message": "variation_code is required for subscription_type=change",
-  "error": "Bad Request"
-}
-```
-
-**Startimes/Showmax - Missing variation_code:**
-```json
-{
-  "statusCode": 400,
-  "message": "variation_code is required for Startimes/Showmax purchases",
-  "error": "Bad Request"
-}
-```
-
-**Startimes/Showmax - subscription_type provided (should be omitted):**
-```json
-{
-  "statusCode": 400,
-  "message": "subscription_type is not used for Startimes/Showmax. Omit this field.",
-  "error": "Bad Request"
-}
-```
-
-**Note:** 
-- DSTV/GOTV require `subscription_type` (either "change" or "renew")
-- Startimes/Showmax should NOT include `subscription_type` in the request
-- Startimes/Showmax always require `variation_code`
-
-#### 2. Insufficient Balance (400)
-```json
-{
-  "statusCode": 400,
-  "message": "Insufficient wallet balance",
-  "error": "Bad Request"
-}
-```
-
-#### 3. Rate Limiting (429)
-```json
-{
-  "statusCode": 429,
-  "message": "Too Many Requests",
-  "error": "Too Many Requests"
-}
-```
-
-#### 4. Daily Limit Exceeded (403)
-```json
-{
-  "statusCode": 403,
-  "message": "Daily cable purchase count limit reached",
-  "error": "Forbidden"
-}
-```
+### Request
 
 ```json
 {
-  "statusCode": 403,
-  "message": "Daily cable purchase amount limit exceeded",
-  "error": "Forbidden"
+  "request_id": "202602251500ijkl9012"
 }
 ```
 
-#### 5. Invalid Arguments (400) - Startimes/Showmax
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `request_id` | string | **Yes** | The `requestId` returned from the purchase call |
+
+### Success Response (200) — Delivered
+
 ```json
 {
-  "statusCode": 400,
-  "message": "INVALID ARGUMENTS",
-  "error": "Bad Request"
-}
-```
-
-**Note:** This error typically occurs when:
-- `subscription_type` is included in the request for Startimes/Showmax (should be omitted)
-- Required fields are missing (e.g., `variation_code` for Startimes/Showmax)
-- Invalid `billersCode` format
-
-**Solution:** For Startimes/Showmax, ensure:
-- Do NOT include `subscription_type` field
-- Always include `variation_code`
-- Use correct `billersCode` format (smartcard for Startimes, phone for Showmax)
-
-#### 6. Network/Server Errors (500)
-```json
-{
-  "statusCode": 500,
-  "message": "Failed to purchase cable",
-  "error": "Internal Server Error"
-}
-```
-
----
-
-## Best Practices
-
-### 1. Transaction Flow
-
-#### For DSTV/GOTV:
-1. **Get Service IDs** → User selects provider
-2. **Get Variation Codes** → Show available plans
-3. **Verify Smartcard** → Validate customer info and get renewal amount
-4. **Show Options**:
-   - Display current bouquet and renewal amount
-   - Show all available plans
-   - Let user choose: Renew current or Change bouquet
-5. **Purchase** → Execute transaction with appropriate `subscription_type`
-
-#### For Startimes:
-1. **Get Service IDs** → User selects provider
-2. **Get Variation Codes** → Show available plans
-3. **Verify Smartcard** (Optional but recommended) → Validate customer info
-4. **Purchase** → Execute transaction (no `subscription_type` field)
-
-#### For Showmax:
-1. **Get Service IDs** → User selects provider
-2. **Get Variation Codes** → Show available plans
-3. **Purchase** → Execute transaction (no verify step)
-   - **Required**: `serviceID`, `billersCode` (phone number), `variation_code`, `phone`
-   - **Do NOT include**: `subscription_type` field
-   - **Optional**: `amount` (will use variation_code price if omitted)
-
-### 2. Idempotency
-- Always provide `request_id` when retrying failed requests
-- The API will return the existing transaction result if `request_id` already exists
-- Generate unique IDs: `YYYYMMDDHHMMSS{random}`
-
-### 3. Error Recovery
-- For network errors: Retry up to 3 times with exponential backoff
-- For validation errors: Show clear message, don't retry
-- For pending transactions: Implement requery mechanism
-
-### 4. User Experience
-- Show loading states during API calls
-- Display clear success/error messages
-- For pending transactions: Show "Processing" status with refresh option
-- Store transaction history locally for offline access
-
-### 5. Security
-- Never log or expose JWT tokens
-- Validate all user inputs before sending to API
-- Implement proper error logging (without sensitive data)
-
-### 6. Testing
-- Test with sufficient and insufficient wallet balance
-- Test with valid and invalid smartcard numbers
-- Test network timeout scenarios
-- Test pending transaction handling
-
----
-
-## Sample Integration Flow
-
-```javascript
-// Example 1: DSTV/GOTV Purchase Flow
-// 1. Get available providers
-const providers = await fetch('/api/v1/vtpass/cable/service-ids', {
-  headers: { 'Authorization': `Bearer ${token}` }
-});
-
-// 2. Get plans for selected provider
-const plans = await fetch('/api/v1/vtpass/cable/variation-codes?serviceID=dstv', {
-  headers: { 'Authorization': `Bearer ${token}` }
-});
-
-// 3. Verify smartcard (for DSTV/GOTV)
-const verification = await fetch('/api/v1/vtpass/cable/verify', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${token}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    billersCode: '1212121212',
-    serviceID: 'dstv'
-  })
-});
-
-// 4. Purchase - Renewal (DSTV/GOTV)
-const purchase = await fetch('/api/v1/vtpass/cable/purchase', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${token}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    serviceID: 'dstv',
-    billersCode: '1212121212',
-    amount: verification.data.content.Renewal_Amount,
-    phone: '08030000000',
-    subscription_type: 'renew'
-  })
-});
-
-// Example 2: Startimes Purchase Flow
-const startimesPurchase = await fetch('/api/v1/vtpass/cable/purchase', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${token}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    serviceID: 'startimes',
-    billersCode: '1212121212',
-    variation_code: 'nova',
-    phone: '08030000000'
-    // Note: No subscription_type field
-  })
-});
-
-// Example 3: Showmax Purchase Flow
-const showmaxPurchase = await fetch('/api/v1/vtpass/cable/purchase', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${token}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    serviceID: 'showmax',
-    billersCode: '08011111111', // Phone number, not smartcard
-    variation_code: 'full_3',
-    phone: '08011111111'
-    // Note: No subscription_type field, no verify step
-  })
-});
-
-// 5. Handle response
-const purchaseData = await purchase.json();
-if (purchaseData.success) {
-  if (purchaseData.data.status === 'processing') {
-    // Show pending status, implement requery
-    showPendingTransaction(purchaseData.data.requestId);
-  } else {
-    // Show success
-    showSuccessMessage();
+  "success": true,
+  "message": "Transaction status retrieved successfully",
+  "data": {
+    "code": "000",
+    "response_description": "TRANSACTION SUCCESSFUL",
+    "content": {
+      "transactions": {
+        "status": "delivered",
+        "product_name": "DSTV Subscription",
+        "unique_element": "7012345678",
+        "unit_price": 4615,
+        "quantity": 1,
+        "transactionId": "17416009779459629327738818",
+        "amount": 4615
+      }
+    },
+    "requestId": "202602251500ijkl9012",
+    "amount": 4615,
+    "transaction_date": "2026-02-25T15:00:02.000000Z"
   }
-} else {
-  // Show error
-  showErrorMessage(purchaseData.message);
 }
+```
+
+### Success Response (200) — Still Pending
+
+```json
+{
+  "success": true,
+  "message": "Transaction status retrieved successfully",
+  "data": {
+    "code": "099",
+    "response_description": "TRANSACTION IS PROCESSING",
+    "content": {
+      "transactions": {
+        "status": "pending"
+      }
+    }
+  }
+}
+```
+
+### Success Response (200) — Failed
+
+```json
+{
+  "success": true,
+  "message": "Transaction status retrieved successfully",
+  "data": {
+    "code": "016",
+    "response_description": "TRANSACTION FAILED",
+    "content": {
+      "transactions": {
+        "status": "failed"
+      }
+    }
+  }
+}
+```
+
+> When the query returns `"status": "failed"`, the backend **automatically** refunds the user's wallet. You do **not** need to call a separate refund endpoint.
+
+### Error Response
+
+```json
+{ "success": false, "message": "Transaction not found" }
 ```
 
 ---
 
-## Support
+## 6. Transaction Status Handling
 
-For issues or questions:
-- Check transaction status using the `requestId`
-- Review error messages for specific guidance
-- Contact backend team with transaction reference
+### Status Decision Table
+
+| `code` | `transactions.status` | Meaning | UI Action |
+|--------|-----------------------|---------|-----------|
+| `000` | `delivered` | **Success** | Show success screen |
+| `000` | `pending` / `initiated` | Processing | Show spinner, poll query endpoint |
+| `099` | any | Processing | Show spinner, poll query endpoint |
+| `016` | any | **Failed** | Show error, wallet auto-refunded |
+| `040` | `reversed` | **Reversed** | Show error, wallet auto-refunded |
+| Timeout / no response | — | Unknown | Treat as pending, poll query endpoint |
+
+### Polling Strategy for Pending Transactions
+
+```
+1. Store the `requestId` immediately after purchase.
+2. Wait 15 seconds, then call POST /query with the request_id.
+3. If still pending, wait 30 seconds and retry.
+4. Continue polling every 30-60 seconds for up to 5 minutes.
+5. After 5 minutes with no resolution, show:
+   "Your transaction is still processing. Please check back shortly."
+6. Allow manual "Refresh Status" button at any time.
+```
+
+### What to show the user
+
+| Status | Message | UI |
+|--------|---------|-----|
+| Success | "Your {provider} subscription has been activated!" | Success screen with transaction details |
+| Success (Showmax) | "Your Showmax subscription is ready! Use voucher code: {code}" | Success screen + prominent voucher display with copy button |
+| Processing | "Your subscription is being processed. Please wait..." | Spinner / loading indicator with auto-refresh |
+| Failed | "Transaction failed. Your wallet has been refunded." | Error screen |
+| Insufficient balance | "Insufficient wallet balance. Please top up." | Error with link to top-up |
 
 ---
 
-**Last Updated:** 2026-01-27
-**Version:** 1.1
+## 7. Complete Integration Flows
 
-## Important Notes
+### Flow A: DSTV / GOTV
 
-### Daily Limits
-- **Daily transaction count limit**: Default 20 transactions per day (configurable via `CABLE_DAILY_COUNT_LIMIT`)
-- **Daily transaction amount limit**: Default ₦500,000 per day (configurable via `CABLE_DAILY_AMOUNT_LIMIT`)
-- Exceeding limits will return a 403 Forbidden error
+```
+┌─────────────────────┐
+│  1. GET service-ids  │  → User picks DSTV or GOTV
+└──────────┬──────────┘
+           ▼
+┌───────────────────────────────────┐
+│  2. GET variation-codes?serviceID │  → Show bouquet list
+└──────────┬────────────────────────┘
+           ▼
+┌──────────────────────┐
+│  3. POST verify      │  → Show customer name, current bouquet, renewal amount
+└──────────┬───────────┘
+           ▼
+┌──────────────────────────────────────────────────┐
+│  4. User chooses: RENEW current or CHANGE bouquet │
+└──────────┬───────────────────────────────────────┘
+           ▼
+┌──────────────────────┐
+│  5. POST purchase    │
+│                      │
+│  RENEW: send         │  ← subscription_type: "renew"
+│    amount from       │  ← amount: Renewal_Amount
+│    verify response   │
+│                      │
+│  CHANGE: send        │  ← subscription_type: "change"
+│    variation_code    │  ← variation_code from step 2
+└──────────┬───────────┘
+           ▼
+┌──────────────────────────┐
+│  6. Handle response      │
+│  - delivered → success   │
+│  - pending → poll query  │
+│  - failed → show error   │
+└──────────────────────────┘
+```
 
-### Phone Number
-- The `phone` field is optional
-- If not provided, the system uses the user's registered phone number
-- In development environment, a test phone number may be used automatically
+### Flow B: Startimes
 
-### Provider-Specific Details
+```
+┌─────────────────────┐
+│  1. GET service-ids  │  → User picks Startimes
+└──────────┬──────────┘
+           ▼
+┌──────────────────────────────────────────┐
+│  2. GET variation-codes?serviceID=startimes │  → Show plan list
+└──────────┬───────────────────────────────┘
+           ▼
+┌──────────────────────────────┐
+│  3. POST verify (optional)   │  → Confirm smartcard / eWallet
+└──────────┬───────────────────┘
+           ▼
+┌──────────────────────┐
+│  4. POST purchase    │  ← variation_code (always required)
+│  (NO subscription_   │  ← NO subscription_type field
+│   type field!)       │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────────┐
+│  5. Handle response      │
+└──────────────────────────┘
+```
 
-#### DSTV & GOTV
-- Use smartcard number (10 digits) as `billersCode`
-- Support both `change` and `renew` subscription types
-- Verify endpoint provides `Renewal_Amount` for renewals
-- Example smartcard: `1212121212`
+> **Startimes eWallet:** If user selects the `ewallet` variation, you **must** show a text input for the amount (since the variation price is ₦0). Validate that amount > 0 before calling purchase.
 
-#### Startimes
-- Use smartcard number or eWallet number as `billersCode`
-- **Do NOT include `subscription_type` field** in the request
-- Always requires `variation_code` in the purchase request
-- Verify endpoint is available but optional
-- Example smartcard: `1212121212`
-- **Common Error**: If you include `subscription_type`, VTpass will return "INVALID ARGUMENTS"
+### Flow C: Showmax
 
-#### Showmax
-- Use phone number (11 digits) as `billersCode`
-- **Do NOT include `subscription_type` field** in the request
-- Always requires `variation_code` in the purchase request
-- **No verify endpoint** - skip verification step
-- Example phone: `08011111111`
-- Response includes `purchased_code` (voucher code) that should be displayed to user
-- **Common Error**: If you include `subscription_type`, VTpass will return "INVALID ARGUMENTS"
+```
+┌─────────────────────┐
+│  1. GET service-ids  │  → User picks Showmax
+└──────────┬──────────┘
+           ▼
+┌──────────────────────────────────────────┐
+│  2. GET variation-codes?serviceID=showmax │  → Show plan list
+└──────────┬───────────────────────────────┘
+           ▼
+┌──────────────────────┐
+│  3. POST purchase    │  ← billersCode = PHONE NUMBER (not smartcard)
+│  (NO verify step!)   │  ← variation_code (always required)
+│  (NO subscription_   │  ← NO subscription_type field
+│   type field!)       │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────────────────────────────┐
+│  4. Handle response                          │
+│  - On success: display voucher_code to user  │
+│    with copy-to-clipboard button             │
+└──────────────────────────────────────────────┘
+```
 
-### Product Whitelisting
-**Important:** Products must be whitelisted in the VTpass account before they can be purchased. If you receive a "PRODUCT IS NOT WHITELISTED ON YOUR ACCOUNT" error:
+---
 
-1. Log into your VTpass profile:
+## 8. Idempotency
+
+- You can optionally provide `request_id` in the purchase payload.
+- If omitted, the backend auto-generates one and returns it as `requestId`.
+- If you retry with the **same** `request_id`, the backend returns the cached result instead of charging the wallet again.
+- **Always store the `requestId`** from the response — you need it for the query endpoint.
+
+**Recommended format:** `YYYYMMDDHHmm` + 8 random alphanumeric characters.
+
+---
+
+## 9. Daily Limits
+
+| Limit | Default | Env Variable |
+|-------|---------|-------------|
+| Max transactions per day | 20 | `CABLE_DAILY_COUNT_LIMIT` |
+| Max amount per day | ₦500,000 | `CABLE_DAILY_AMOUNT_LIMIT` |
+
+Exceeding either limit returns `403 Forbidden`.
+
+---
+
+## 10. Product Whitelisting
+
+If you receive `"PRODUCT IS NOT WHITELISTED ON YOUR ACCOUNT"`:
+
+1. Log into VTpass profile:
    - Sandbox: https://sandbox.vtpass.com/profile
    - Live: https://www.vtpass.com/profile
-2. Go to the **Product Settings** tab
-3. Select the products you want to vend (e.g., DSTV, GOTV)
+2. Go to **Product Settings** tab
+3. Enable the products you want to vend (DSTV, GOTV, Startimes, Showmax)
 4. Click **Submit**
 
+---
+
+## 11. Error Reference
+
+### Validation Errors (400)
+
+| Error Message | Cause | Fix |
+|---------------|-------|-----|
+| `serviceID query parameter is required` | Missing serviceID on variation-codes | Add `?serviceID=dstv` to the URL |
+| `Invalid serviceID. Must be one of: dstv, gotv, startimes, showmax` | Unrecognized serviceID | Use exact lowercase IDs |
+| `subscription_type must be either change or renew for DSTV/GOTV` | DSTV/GOTV purchase without subscription_type | Add `subscription_type: "change"` or `"renew"` |
+| `subscription_type is not used for Startimes/Showmax. Omit this field.` | subscription_type sent for Startimes/Showmax | Remove the field entirely |
+| `variation_code is required for subscription_type=change` | DSTV/GOTV bouquet change without variation_code | Include the `variation_code` from the plans list |
+| `variation_code is required for Startimes/Showmax purchases` | Missing variation_code | Always include for Startimes/Showmax |
+| `amount is required for renew subscription_type (use Renewal_Amount from verify)` | DSTV/GOTV renewal without amount | Use `Renewal_Amount` from verify response |
+| `Amount must be greater than zero...` | Startimes eWallet variation without explicit amount | Ask user to enter amount |
+| `Showmax does not support smartcard verification...` | Called verify with serviceID=showmax | Skip verify for Showmax |
+| `Insufficient wallet balance` | User doesn't have enough funds | Prompt to top up wallet |
+
+### Rate / Limit Errors (403 / 429)
+
+| Error Message | Cause |
+|---------------|-------|
+| `Daily cable purchase count limit reached` | Exceeded daily transaction count |
+| `Daily cable purchase amount limit exceeded` | Exceeded daily amount cap |
+| `Too Many Requests` | Too many API calls in short time |
+
+### VTpass Response Codes
+
+| Code | Meaning | Action |
+|------|---------|--------|
+| `000` + `delivered` | Success | Show success |
+| `000` + `pending`/`initiated` | Processing | Poll query endpoint |
+| `099` | Processing | Poll query endpoint |
+| `016` | Failed | Show error (wallet auto-refunded) |
+| `040` | Reversed | Show error (wallet auto-refunded) |
+| `015` | Invalid request ID (requery) | The request_id was not found |
+| Timeout / No response | Unknown | Treat as pending, poll query |
+
+---
+
+## 12. Sample Integration (React Native / JavaScript)
+
+```javascript
+const BASE = '/api/v1/vtpass/cable';
+const headers = (token) => ({
+  'Authorization': `Bearer ${token}`,
+  'Content-Type': 'application/json',
+});
+
+// ── Step 1: Get providers ──
+const providers = await fetch(`${BASE}/service-ids`, { headers: headers(token) }).then(r => r.json());
+// providers.data = [{ serviceID: 'dstv', name: 'DSTV Subscription' }, ...]
+
+// ── Step 2: Get plans ──
+const plans = await fetch(`${BASE}/variation-codes?serviceID=dstv`, { headers: headers(token) }).then(r => r.json());
+// plans.data.variations = [{ variation_code: 'dstv-padi', name: 'DStv Padi N1,850', variation_amount: '1850.00' }, ...]
+
+// ── Step 3: Verify smartcard (skip for Showmax) ──
+const verify = await fetch(`${BASE}/verify`, {
+  method: 'POST',
+  headers: headers(token),
+  body: JSON.stringify({ billersCode: '7012345678', serviceID: 'dstv' }),
+}).then(r => r.json());
+// verify.data.content = { Customer_Name, Current_Bouquet, Renewal_Amount, Due_Date }
+
+// ── Step 4a: Purchase — DSTV/GOTV Renewal ──
+const renewal = await fetch(`${BASE}/purchase`, {
+  method: 'POST',
+  headers: headers(token),
+  body: JSON.stringify({
+    serviceID: 'dstv',
+    billersCode: '7012345678',
+    subscription_type: 'renew',
+    amount: Number(verify.data.content.Renewal_Amount),
+    phone: '08012345678',
+  }),
+}).then(r => r.json());
+
+// ── Step 4b: Purchase — DSTV/GOTV Change ──
+const change = await fetch(`${BASE}/purchase`, {
+  method: 'POST',
+  headers: headers(token),
+  body: JSON.stringify({
+    serviceID: 'dstv',
+    billersCode: '7012345678',
+    subscription_type: 'change',
+    variation_code: 'dstv-confam',
+    phone: '08012345678',
+  }),
+}).then(r => r.json());
+
+// ── Step 4c: Purchase — Startimes (no subscription_type) ──
+const startimes = await fetch(`${BASE}/purchase`, {
+  method: 'POST',
+  headers: headers(token),
+  body: JSON.stringify({
+    serviceID: 'startimes',
+    billersCode: '0212345678',
+    variation_code: 'nova',
+    phone: '08012345678',
+  }),
+}).then(r => r.json());
+
+// ── Step 4d: Purchase — Showmax (no verify, no subscription_type) ──
+const showmax = await fetch(`${BASE}/purchase`, {
+  method: 'POST',
+  headers: headers(token),
+  body: JSON.stringify({
+    serviceID: 'showmax',
+    billersCode: '08012345678',  // phone number, NOT smartcard
+    variation_code: 'full_3',
+    phone: '08012345678',
+  }),
+}).then(r => r.json());
+
+// ── Step 5: Handle response ──
+function handlePurchaseResponse(result) {
+  if (!result.success) {
+    showError(result.message);
+    return;
+  }
+
+  const data = result.data;
+
+  // Check if Showmax — display voucher
+  if (data.voucher_code) {
+    showVoucherModal(data.voucher_code);
+    return;
+  }
+
+  // Check if pending
+  if (data.status === 'processing') {
+    startPolling(data.requestId);
+    return;
+  }
+
+  // Success
+  showSuccess(data);
+}
+
+// ── Step 6: Poll pending transactions ──
+async function startPolling(requestId) {
+  showProcessingIndicator();
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await sleep(attempt === 0 ? 15000 : 30000);
+
+    const result = await fetch(`${BASE}/query`, {
+      method: 'POST',
+      headers: headers(token),
+      body: JSON.stringify({ request_id: requestId }),
+    }).then(r => r.json());
+
+    const status = result.data?.content?.transactions?.status;
+    const code = result.data?.code;
+
+    if (code === '000' && status === 'delivered') {
+      hideProcessingIndicator();
+      showSuccess(result.data);
+      return;
+    }
+
+    if (code === '016' || code === '040' || status === 'failed' || status === 'reversed') {
+      hideProcessingIndicator();
+      showError('Transaction failed. Your wallet has been refunded.');
+      return;
+    }
+
+    // Still pending — continue polling
+  }
+
+  hideProcessingIndicator();
+  showMessage('Transaction is still processing. Please check back shortly or contact support.');
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+```
+
+---
+
+## Summary
+
+| Action | Endpoint | DSTV/GOTV | Startimes | Showmax |
+|--------|----------|-----------|-----------|---------|
+| List providers | `GET /service-ids` | Yes | Yes | Yes |
+| List plans | `GET /variation-codes` | Yes | Yes | Yes |
+| Verify customer | `POST /verify` | **Required** | Optional | **Not supported** |
+| Purchase | `POST /purchase` | `subscription_type` required | No `subscription_type` | No `subscription_type`, billersCode = phone |
+| Check pending tx | `POST /query` | Yes | Yes | Yes |
+| Voucher in response | — | No | No | **Yes** — display to user |

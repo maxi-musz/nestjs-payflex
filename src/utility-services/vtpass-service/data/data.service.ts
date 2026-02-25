@@ -438,6 +438,7 @@ export class DataService {
           ...response.data,
           status: 'processing',
           message: 'Transaction is being processed. Status will be updated via webhook.',
+          wallet_balance: Number(createdTx.balance_after),
         };
         return new ApiResponseDto(true, 'Transaction is being processed', formattedResponse);
       }
@@ -445,6 +446,7 @@ export class DataService {
       const formattedResponse = {
         id: createdTx.id,
         ...response.data,
+        wallet_balance: Number(createdTx.balance_after),
       };
 
       this.logger.log('Data purchase request completed successfully');

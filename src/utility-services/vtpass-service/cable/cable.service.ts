@@ -136,16 +136,21 @@ export class CableService {
   }
 
   async verifySmartcard(dto: VerifySmartcardDto) {
+    if (dto.serviceID === 'showmax') {
+      throw this.buildApiError(
+        'Showmax does not support smartcard verification. Proceed directly to purchase using the customer phone number as billersCode.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     const url = `${this.getBaseUrl()}/merchant-verify`;
     this.logger.log(`Verifying smartcard billersCode='${dto.billersCode}' serviceID='${dto.serviceID}'`);
     try {
       const payload = { billersCode: dto.billersCode, serviceID: dto.serviceID };
       const response = await axios.post(url, payload, { headers: this.getPostHeaders() });
-      
-      // Remove commission_details from response
+
       const responseData = { ...response.data };
-      console.log(JSON.stringify(response.data));
-      
+
       return new ApiResponseDto(true, 'Smartcard verified successfully', responseData);
     } catch (error: any) {
       this.logger.error(`Error verifying smartcard: ${error.message}`);
@@ -157,12 +162,83 @@ export class CableService {
     }
   }
 
+  async queryTransaction(userPayload: any, request_id: string) {
+    const url = `${this.getBaseUrl()}/requery`;
+    this.logger.log(`Querying cable transaction: request_id=${request_id}`);
+
+    const existingTx = await this.prisma.transactionHistory.findUnique({
+      where: { transaction_reference: request_id },
+    });
+
+    if (existingTx && existingTx.user_id !== userPayload.sub) {
+      throw this.buildApiError('Transaction not found', HttpStatus.NOT_FOUND);
+    }
+
+    try {
+      const payload = { request_id };
+      const response = await axios.post(url, payload, { headers: this.getPostHeaders() });
+
+      const txContent = response.data?.content?.transactions || {};
+      const responseCode = response.data?.code || '';
+      const txStatus = txContent.status?.toLowerCase() || '';
+
+      if (existingTx && existingTx.status === 'pending') {
+        let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
+        if (responseCode === '000' && txStatus === 'delivered') {
+          finalStatus = 'success';
+        } else if (
+          responseCode === '016' ||
+          responseCode === '040' ||
+          txStatus === 'failed' ||
+          txStatus === 'reversed'
+        ) {
+          finalStatus = 'failed';
+        }
+
+        if (finalStatus !== 'pending') {
+          await this.prisma.transactionHistory.update({
+            where: { transaction_reference: request_id },
+            data: {
+              status: finalStatus,
+              transaction_number: txContent.transactionId?.toString() || existingTx.transaction_number,
+              meta_data: {
+                ...(existingTx.meta_data as any),
+                vtpass_requery: response.data,
+                vtpass_status: txStatus,
+                vtpass_code: responseCode,
+              },
+            },
+          });
+
+          if (finalStatus === 'failed') {
+            await this.prisma.wallet.update({
+              where: { user_id: userPayload.sub },
+              data: { current_balance: { increment: Number(existingTx.amount) } },
+            });
+            this.logger.log(`Refunded ${existingTx.amount} for failed cable tx ${request_id}`);
+          }
+        }
+      }
+
+      return new ApiResponseDto(true, 'Transaction status retrieved successfully', response.data);
+    } catch (error: any) {
+      this.logger.error(`Error querying cable transaction: ${error.message}`);
+      if (error.response) {
+        const message =
+          error.response.data?.response_description ||
+          error.response.data?.message ||
+          'Failed to query transaction';
+        throw this.buildApiError(message, error.response.status || HttpStatus.BAD_REQUEST);
+      }
+      throw this.buildApiError('Failed to query transaction status', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
   async purchase(userPayload: any, dto: PurchaseCableDto) {
     const request_id = dto.request_id || this.generateVtpassRequestId();
     const url = `${this.getBaseUrl()}/pay`;
     this.logger.log(`Purchasing cable: serviceID=${dto.serviceID}, billersCode=${dto.billersCode}, type=${dto.subscription_type}, request_id=${request_id}`);
 
-    // Idempotency check
     const existingTx = await this.prisma.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
     if (existingTx) {
       if (existingTx.status === 'success') {
@@ -175,19 +251,16 @@ export class CableService {
 
     let vtpassAmount = 0;
     try {
-      // Determine amount based on service type
       const isDstvOrGotv = dto.serviceID === 'dstv' || dto.serviceID === 'gotv';
       const isStartimesOrShowmax = dto.serviceID === 'startimes' || dto.serviceID === 'showmax';
 
       if (isDstvOrGotv) {
-        // DSTV/GOTV logic
         if (dto.subscription_type === 'renew') {
           if (!dto.amount) {
             throw this.buildApiError('amount is required for renew subscription_type (use Renewal_Amount from verify)', HttpStatus.BAD_REQUEST);
           }
           vtpassAmount = Number(dto.amount);
         } else {
-          // change: use variation_code amount if not provided
           if (!dto.variation_code) {
             throw this.buildApiError('variation_code is required for change subscription_type', HttpStatus.BAD_REQUEST);
           }
@@ -202,7 +275,6 @@ export class CableService {
           }
         }
       } else if (isStartimesOrShowmax) {
-        // Startimes/Showmax: always require variation_code
         if (!dto.variation_code) {
           throw this.buildApiError('variation_code is required for Startimes/Showmax purchases', HttpStatus.BAD_REQUEST);
         }
@@ -219,13 +291,19 @@ export class CableService {
         throw this.buildApiError(`Invalid serviceID: ${dto.serviceID}`, HttpStatus.BAD_REQUEST);
       }
 
-      // Determine phone in dev vs prod
+      if (vtpassAmount <= 0) {
+        throw this.buildApiError(
+          'Amount must be greater than zero. For Startimes eWallet top-ups, please provide the amount field explicitly.',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
       let phone: string;
-      if (process.env.NODE_ENV === 'development') {
-        phone = "201000000000";
+      if (this.isDevelopment) {
+        phone = '08011111111';
       } else {
         const existingUser = await this.prisma.user.findUnique({ where: { id: userPayload.sub } });
-        phone = existingUser?.phone_number?.trim() || '';
+        phone = dto.phone?.trim() || existingUser?.phone_number?.trim() || '';
       }
 
       const payload: any = {
@@ -236,23 +314,18 @@ export class CableService {
         phone,
       };
 
-      // Only include subscription_type for DSTV/GOTV
       if (isDstvOrGotv && dto.subscription_type) {
         payload.subscription_type = dto.subscription_type;
-        // For change, include variation_code
         if (dto.subscription_type === 'change') {
           payload.variation_code = dto.variation_code;
         }
-      } else {
-        // For Startimes/Showmax, always include variation_code (no subscription_type)
-        if (dto.variation_code) {
-          payload.variation_code = dto.variation_code;
+        if (dto.quantity) {
+          payload.quantity = dto.quantity;
         }
+      } else {
+        payload.variation_code = dto.variation_code;
       }
 
-      if (dto.quantity) payload.quantity = dto.quantity;
-
-      // Wallet hold + pending tx
       const description = `${dto.serviceID.toUpperCase()} TV`;
       const amountNum = Number(vtpassAmount);
       const createdTx = await this.prisma.$transaction(async (tx) => {
@@ -310,14 +383,13 @@ export class CableService {
 
       if (isDelivered) {
         finalStatus = 'success';
-        
-        // Send success email notification
+
         try {
           const user = await this.prisma.user.findUnique({
             where: { id: userPayload.sub },
             select: { email: true, first_name: true }
           });
-          
+
           if (user?.email) {
             const serviceName = dto.serviceID.toUpperCase();
             const productName = txContent.product_name || undefined;
@@ -325,7 +397,7 @@ export class CableService {
               dateStyle: 'long',
               timeStyle: 'short'
             });
-            
+
             await this.emailService.sendCablePurchaseSuccessEmail(
               user.email,
               user.first_name || 'Valued Customer',
@@ -340,7 +412,6 @@ export class CableService {
           }
         } catch (emailError: any) {
           this.logger.error(`Failed to send cable purchase success email: ${emailError.message}`);
-          // Don't throw - email failure shouldn't break transaction
         }
       } else if (isReversed) {
         finalStatus = 'failed';
@@ -383,11 +454,17 @@ export class CableService {
       }
 
       if (isProcessing) {
-        const formattedResponse = { id: createdTx.id, ...response.data, status: 'processing', message: 'Transaction is being processed. Status will be updated via webhook.' };
+        const formattedResponse = { id: createdTx.id, ...response.data, status: 'processing', message: 'Transaction is being processed. Use the query endpoint with request_id to check status.', wallet_balance: Number(createdTx.balance_after) };
         return new ApiResponseDto(true, 'Transaction is being processed', formattedResponse);
       }
 
-      const formattedResponse = { id: createdTx.id, ...response.data };
+      const formattedResponse: any = { id: createdTx.id, ...response.data, wallet_balance: Number(createdTx.balance_after) };
+
+      if (dto.serviceID === 'showmax') {
+        formattedResponse.voucher_code = response.data?.purchased_code || null;
+        formattedResponse.voucher_codes = response.data?.Voucher || [];
+      }
+
       this.logger.log('Cable purchase request completed');
       return new ApiResponseDto(true, 'Cable purchase successful', formattedResponse);
     } catch (error: any) {
@@ -406,7 +483,6 @@ export class CableService {
       } catch (updateError: any) {
         this.logger.warn(`Could not update transaction status: ${updateError.message || updateError}`);
       }
-      // Preserve domain errors like Insufficient wallet balance
       if (error instanceof HttpException) {
         throw error;
       }
@@ -418,4 +494,3 @@ export class CableService {
     }
   }
 }
-

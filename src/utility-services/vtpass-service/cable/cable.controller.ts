@@ -34,5 +34,11 @@ export class CableController {
   purchase(@Body() dto: PurchaseCableDto, @Request() req) {
     return this.cableService.purchase(req.user, dto);
   }
-}
 
+  @UseGuards(AuthGuard('jwt'), RateLimitGuard)
+  @Post('query')
+  queryTransaction(@Body('request_id') requestId: string, @Request() req) {
+    if (!requestId) throw new BadRequestException('request_id is required');
+    return this.cableService.queryTransaction(req.user, requestId);
+  }
+}

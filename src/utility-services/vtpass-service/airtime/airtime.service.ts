@@ -215,6 +215,9 @@ export class AirtimeService {
           data: { current_balance: balance_after }
         });
 
+        // I want to log wallet balance before and after
+        this.logger.log(`Wallet balance before: ${balance_before}, after: ${balance_after}`);
+
         return await tx.transactionHistory.create({
           data: {
             user_id: userPayload.sub,
@@ -286,6 +289,7 @@ export class AirtimeService {
           ...response.data,
           status: 'processing',
           message: 'Transaction is being processed. Status will be updated via webhook.',
+          wallet_balance: Number(createdTx.balance_after),
         };
         return new ApiResponseDto(true, 'Transaction is being processed', formattedResponse);
       }
@@ -293,6 +297,7 @@ export class AirtimeService {
       const formattedResponse = {
         id: createdTx.id,
         ...response.data,
+        wallet_balance: Number(createdTx.balance_after),
       };
 
       this.logger.log('Airtime purchase request completed successfully');
