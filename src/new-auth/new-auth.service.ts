@@ -405,13 +405,55 @@ export class NewAuthService {
       ...this.deviceFields(req),
     });
 
-    return new ApiResponseDto(true, 'Account created successfully. You can sign in.', {
-      user: {
-        id: newUser.id,
-        email: newUser.email,
-        first_name: newUser.first_name,
-        last_name: newUser.last_name,
+    // Auto-sign-in: fetch user with relations (same as signin) and issue token
+    const fullUser = await this.prisma.user.findUnique({
+      where: { id: newUser.id },
+      include: { profile_image: true, kyc_verification: true },
+    });
+
+    const access_token = await this.signToken(
+      newUser.id,
+      newUser.email,
+      newUser.phone_number,
+      fullUser?.role ?? 'user',
+    );
+
+    this.audit.logAuth(AuditAction.LOGIN, AuditStatus.SUCCESS, req, {
+      user_id: newUser.id,
+      actor_name: `${dto.first_name} ${dto.last_name}`,
+      description: `User ${dto.email} auto-signed-in after registration`,
+      resource_type: 'User',
+      resource_id: newUser.id,
+      metadata: {
+        email: dto.email,
+        is_email_verified: true,
+        role: fullUser?.role ?? 'user',
+        auto_signin: true,
       },
+      ...this.deviceFields(req),
+    });
+
+    const formattedUser = {
+      id: newUser.id,
+      email: newUser.email,
+      name: `${dto.first_name} ${dto.last_name}`.trim(),
+      first_name: dto.first_name,
+      last_name: dto.last_name,
+      phone_number: newUser.phone_number ?? null,
+      is_email_verified: true,
+      role: fullUser?.role ?? 'user',
+      gender: gender ?? null,
+      date_of_birth: null as string | null,
+      profile_image: fullUser?.profile_image?.secure_url ?? null,
+      kyc_verified: fullUser?.kyc_verification?.is_verified ?? false,
+      isTransactionPinSetup: false,
+      created_at: formatDate(newUser.createdAt),
+    };
+
+    return new ApiResponseDto(true, 'Account created successfully', {
+      access_token,
+      refresh_token: null as string | null,
+      user: formattedUser,
     });
   }
 

@@ -166,9 +166,11 @@ Registration is a **three-step** flow. The backend requires the email to be veri
 |------|-----------|----------|---------|
 | 1 | User enters email and clicks **Verify email** | `POST /new-auth/request-email-verification` | Check email is new, send OTP to email |
 | 2 | User enters OTP received by email | `POST /new-auth/verify-email-for-registration` | Confirm OTP and mark email as verified |
-| 3 | User submits full form (name, phone, password, etc.) | `POST /new-auth/register` | Create account (email must already be verified) |
+| 3 | User submits full form (name, phone, password, etc.) | `POST /new-auth/register` | Create account **and auto-sign-in** (returns `access_token`) |
 
 Email verification expires after **30 minutes**. If the user delays, they must run steps 1 and 2 again.
+
+> **After step 3 succeeds, the user is signed in.** The register response includes `access_token` and `user` — same shape as the sign-in response. Navigate the user directly to the dashboard. **Do not** redirect to sign-in.
 
 ---
 
@@ -288,22 +290,40 @@ Call this after the user enters the OTP they received. On success, the email is 
 }
 ```
 
-**Success response (200):** Account created. User is assigned the tier with **order 1** and can sign in immediately (no post-registration OTP).
+**Success response (200):** Account created and **user is automatically signed in**. The response has the **same shape as the sign-in endpoint** — it includes `access_token` and the full user object. **Do NOT redirect the user to the sign-in page.** Navigate them straight to the dashboard / home screen.
 
 ```json
 {
   "success": true,
-  "message": "Account created successfully. You can sign in.",
+  "message": "Account created successfully",
   "data": {
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refresh_token": null,
     "user": {
       "id": "uuid",
       "email": "user@example.com",
+      "name": "Jane Doe",
       "first_name": "Jane",
-      "last_name": "Doe"
+      "last_name": "Doe",
+      "phone_number": "2348012345678",
+      "is_email_verified": true,
+      "role": "user",
+      "gender": null,
+      "date_of_birth": null,
+      "profile_image": null,
+      "kyc_verified": false,
+      "isTransactionPinSetup": false,
+      "created_at": "Feb 25, 2026, 10:30 AM"
     }
   }
 }
 ```
+
+> **IMPORTANT — Frontend behavior change:** The register endpoint now returns `access_token` and `user` (identical to sign-in). After a successful register call:
+> 1. Store the `access_token` exactly as you would after sign-in.
+> 2. Store the `user` object in your auth state / context.
+> 3. Navigate the user directly to the **dashboard / home screen** — **NOT** the sign-in page.
+> 4. The user is fully authenticated and ready to use the app.
 
 **Error responses:**
 
@@ -581,7 +601,7 @@ The backend captures the user's location through a **two-layer approach**:
 
 | Item | Requirement |
 |------|-------------|
-| **Registration** | 1) Request email verification → 2) Verify email for registration (OTP) → 3) Register with full payload. Email must be verified before register. |
+| **Registration** | 1) Request email verification → 2) Verify email for registration (OTP) → 3) Register with full payload → **user is auto-signed-in** (response includes `access_token`). Navigate to dashboard, not sign-in. |
 | **Device headers** | Send `x-device-id` (and optional headers from Section 1.1) on **every** request. |
 | **Geolocation** | Send `x-latitude` / `x-longitude` headers for precise location tracking. If omitted, the backend falls back to IP-based city-level geolocation. |
 | **Body** | Do not send device metadata in the request body. |
@@ -590,5 +610,5 @@ The backend captures the user's location through a **two-layer approach**:
 
 ---
 
-**Document version:** 1.4  
-**Last updated:** 2026-02
+**Document version:** 1.5  
+**Last updated:** 2026-02-25

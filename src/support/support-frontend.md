@@ -1,15 +1,25 @@
-# User Support API & Real-Time Chat
+# User Support — Live Chat & Conversations API
 
 ## Overview
 
-This is the **user-facing** support system. Users create tickets, send messages, and receive real-time replies via Socket.IO. The admin-facing counterpart lives at `/unified-admin/support/`.
+This is the **user-facing** support system, redesigned as a **live-chat-first** experience. Users can start chatting immediately — no need to create a ticket first. If the issue is complex, the support agent can optionally create a formal ticket from the conversation.
+
+**Key changes from the old ticket-first system:**
+
+| Before | Now |
+|---|---|
+| User must create a ticket (subject, description, type) before chatting | User just sends a message — conversation created automatically |
+| Everything is a ticket | Conversations are the primary entity; tickets are optional |
+| User sees a list of tickets | User sees a list of conversations (some may have tickets) |
+| No agent identity visible | User sees the name of the support agent handling their chat |
+| Anyone can respond | Exclusive ownership — only the assigned agent can reply |
 
 **Architecture:**
 
 | Layer | Who | Purpose |
 |---|---|---|
-| REST API (`/api/v1/support/*`) | Users (mobile app) | Create tickets, view tickets, send messages, rate |
-| REST API (`/api/v1/unified-admin/support/*`) | Admins (dashboard) | List, reply, assign, change status/priority |
+| REST API (`/api/v1/support/*`) | Users (mobile app) | Send messages, view conversations, rate |
+| REST API (`/api/v1/unified-admin/support/*`) | Admins (dashboard) | View queue, claim, reply, transfer, create tickets |
 | Socket.IO (`/support` namespace) | Both | Real-time message delivery, typing indicators, status updates |
 
 ---
@@ -21,22 +31,19 @@ This is the **user-facing** support system. Users create tickets, send messages,
 
 ---
 
-### 1. Create Support Ticket
-**POST** `/api/v1/support/request-support`
+### 1. Send Message (Start or Continue Chat)
+**POST** `/api/v1/support/chat/send`
 
-**Auth:** Security headers guard (no JWT required — works for unregistered users too)
+**Auth:** JWT Bearer token (registered users)
 
-Creates a new ticket OR adds a message to an existing ticket (if `ticket_number` is provided).
+This is the **primary endpoint**. It either:
+- Creates a **new conversation** (if no `conversation_id` provided) and sends the first message
+- Adds a message to an **existing conversation** (if `conversation_id` provided)
 
 #### Payload
 ```json
 {
-  "subject": "I can't complete my transfer",
-  "description": "I tried sending money to @janedoe but it keeps showing 'insufficient balance' even though I have ₦50,000 in my wallet.",
-  "email": "john@example.com",
-  "phone_number": "08012345678",
-  "support_type": "TRANSACTION_ISSUE",
-  "related_transaction_id": "tx-uuid-here",
+  "message": "Hi, I tried sending money to @janedoe but it keeps failing. Can you help?",
   "device_metadata": {
     "device_id": "abc123",
     "device_model": "iPhone 14 Pro",
@@ -48,160 +55,227 @@ Creates a new ticket OR adds a message to an existing ticket (if `ticket_number`
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `subject` | string | Yes | Brief summary (5-200 chars) |
-| `description` | string | Yes | Detailed description (10-5000 chars) |
-| `email` | string | Yes | Contact email |
-| `phone_number` | string | No | Nigerian phone number (any format) |
-| `support_type` | string | No | Defaults to `GENERAL_INQUIRY`. See enum below |
-| `priority` | string | No | Auto-inferred from type if not set. See enum below |
-| `related_transaction_id` | string | No | Link to a specific transaction (for transaction issues) |
-| `session_id` | string | No | Registration session ID (auto-sets type to `REGISTRATION_ISSUE`) |
-| `ticket_number` | string | No | If provided, adds message to existing ticket instead |
+| `message` | string | Yes | The message content (max 5000 chars) |
+| `conversation_id` | string | No | If provided, adds message to existing conversation. If omitted, creates new conversation. |
 | `device_metadata` | object | No | Device info (auto-extracted from headers if not provided) |
 
-#### Response
+#### Response — New Conversation
 ```json
 {
   "success": true,
-  "message": "Support ticket created successfully",
+  "message": "Message sent",
   "data": {
-    "ticket": {
-      "id": "uuid",
-      "ticket_number": "SMI-2026-001234",
-      "subject": "I can't complete my transfer",
-      "description": "I tried sending money...",
-      "support_type": "TRANSACTION_ISSUE",
-      "status": "pending",
-      "priority": "medium",
+    "conversation": {
+      "id": "conv-uuid",
+      "status": "active",
       "email": "john@example.com",
       "phone_number": "+2348012345678",
-      "related_transaction_id": "tx-uuid-here",
+      "assigned_admin_name": null,
       "satisfaction_rating": null,
       "feedback": null,
-      "created_at": "2026-02-24T10:30:00.000Z",
-      "updated_at": "2026-02-24T10:30:00.000Z",
-      "last_response_at": null,
+      "last_message_at": "2026-02-25T10:30:00.000Z",
+      "created_at": "2026-02-25T10:30:00.000Z",
+      "updated_at": "2026-02-25T10:30:00.000Z",
       "messages": [
         {
           "id": "msg-uuid",
-          "message": "I tried sending money...",
+          "message": "Hi, I tried sending money to @janedoe but it keeps failing. Can you help?",
           "is_from_user": true,
           "sender_name": "John Doe",
           "sender_email": "john@example.com",
           "attachments": null,
-          "created_at": "2026-02-24T10:30:00.000Z"
+          "created_at": "2026-02-25T10:30:00.000Z"
         }
       ],
-      "total_messages": 1
+      "total_messages": 1,
+      "ticket": null
     },
-    "message": "Your ticket has been created. Our team will review it and respond as soon as possible."
+    "is_new": true
   }
 }
 ```
 
+#### Response — Existing Conversation
+```json
+{
+  "success": true,
+  "message": "Message sent",
+  "data": {
+    "conversation_id": "conv-uuid",
+    "message": {
+      "id": "msg-uuid",
+      "message": "Thanks, can you also check my balance?",
+      "is_from_user": true,
+      "sender_name": "John Doe",
+      "sender_email": "john@example.com",
+      "attachments": null,
+      "createdAt": "2026-02-25T10:35:00.000Z"
+    },
+    "is_new": false
+  }
+}
+```
+
+**How to use:** When the user opens the chat screen and has no conversations, just show the message input. When they hit send, call this endpoint without `conversation_id`. The response creates the conversation. From then on, pass the `conversation_id` for subsequent messages.
+
 ---
 
-### 2. Get My Tickets
-**GET** `/api/v1/support/my-tickets`
+### 2. Send Message (Unauthenticated)
+**POST** `/api/v1/support/chat/send-unauthenticated`
 
-**Auth:** JWT Bearer token (registered users only)
+**Auth:** Security headers guard (no JWT — for pre-registration users)
 
-Returns all tickets for the authenticated user, with the last message preview and unread indicator.
+Same behavior as the authenticated endpoint, but requires `email`.
+
+#### Payload
+```json
+{
+  "message": "I'm stuck on the registration page. It keeps saying my phone number is invalid.",
+  "email": "john@example.com",
+  "phone_number": "08012345678"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `message` | string | Yes | The message content |
+| `email` | string | Yes | Contact email |
+| `conversation_id` | string | No | For continuing an existing conversation |
+| `phone_number` | string | No | Contact phone |
+| `device_metadata` | object | No | Device info |
+
+---
+
+### 3. Get My Conversations
+**GET** `/api/v1/support/conversations`
+
+**Auth:** JWT Bearer token
+
+Returns all conversations for the authenticated user, ordered by most recently updated.
 
 #### Response
 ```json
 {
   "success": true,
-  "message": "Tickets fetched",
+  "message": "Conversations fetched",
   "data": {
-    "tickets": [
+    "conversations": [
       {
-        "id": "uuid",
-        "ticket_number": "SMI-2026-001234",
-        "subject": "I can't complete my transfer",
-        "support_type": "TRANSACTION_ISSUE",
-        "status": "in_progress",
-        "priority": "medium",
-        "message_count": 4,
+        "id": "conv-uuid-1",
+        "status": "active",
+        "assigned_admin_name": "Sarah Johnson",
+        "message_count": 8,
         "last_message": {
-          "message": "Hi John, I've looked into this and the issue was a temporary...",
+          "message": "I've resolved the transfer issue. Your funds should be available now.",
           "is_from_user": false,
-          "createdAt": "2026-02-24T11:15:00.000Z"
+          "sender_name": "Sarah Johnson",
+          "createdAt": "2026-02-25T11:15:00.000Z"
         },
         "has_unread": true,
-        "created_at": "2026-02-24T10:30:00.000Z",
-        "updated_at": "2026-02-24T11:15:00.000Z",
-        "last_response_at": "2026-02-24T11:15:00.000Z"
+        "ticket": {
+          "id": "ticket-uuid",
+          "ticket_number": "SMI-2026-001234",
+          "subject": "Failed transfer to @janedoe",
+          "status": "in_progress",
+          "priority": "medium",
+          "support_type": "TRANSACTION_ISSUE"
+        },
+        "last_message_at": "2026-02-25T11:15:00.000Z",
+        "created_at": "2026-02-25T10:30:00.000Z",
+        "updated_at": "2026-02-25T11:15:00.000Z",
+        "satisfaction_rating": null
+      },
+      {
+        "id": "conv-uuid-2",
+        "status": "closed",
+        "assigned_admin_name": "Admin Mike",
+        "message_count": 3,
+        "last_message": {
+          "message": "Glad I could help! Anything else?",
+          "is_from_user": false,
+          "sender_name": "Admin Mike",
+          "createdAt": "2026-02-24T14:00:00.000Z"
+        },
+        "has_unread": true,
+        "ticket": null,
+        "last_message_at": "2026-02-24T14:00:00.000Z",
+        "created_at": "2026-02-24T13:00:00.000Z",
+        "updated_at": "2026-02-24T14:00:00.000Z",
+        "satisfaction_rating": 5
       }
     ],
-    "total_tickets": 1
+    "total": 2
   }
 }
 ```
 
 | Field | Type | Description |
 |---|---|---|
-| `message_count` | number | Total visible messages (excludes internal admin notes) |
-| `last_message` | object \| null | Most recent message preview |
-| `has_unread` | boolean | `true` if last message is from support (not from user) — use for notification badge |
+| `status` | string | `active`, `waiting_support`, `waiting_user`, `closed` |
+| `assigned_admin_name` | string \| null | Name of the support agent handling this. Show to user (e.g. "Sarah is helping you") |
+| `message_count` | number | Total visible messages (excludes internal notes) |
+| `last_message` | object \| null | Preview of most recent message |
+| `has_unread` | boolean | `true` if the last message is from support — use for notification badge |
+| `ticket` | object \| null | If a ticket was created for this conversation, shows ticket details |
+| `satisfaction_rating` | number \| null | User rating (1-5) if already rated |
 
 ---
 
-### 3. Get Ticket Conversation
-**GET** `/api/v1/support/ticket?ticket_number=SMI-2026-001234`
+### 4. Get Conversation Detail (Full Chat)
+**GET** `/api/v1/support/conversations/:id`
 
-**Auth:** Security headers guard
+**Auth:** JWT Bearer token
 
-Returns the full ticket with all messages in chronological order.
-
-#### Query Params
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `ticket_number` | string | Yes | The ticket number |
+Returns the full conversation with all messages.
 
 #### Response
 ```json
 {
   "success": true,
-  "message": "Ticket retrieved",
+  "message": "Conversation retrieved",
   "data": {
-    "ticket": {
-      "id": "uuid",
-      "ticket_number": "SMI-2026-001234",
-      "subject": "I can't complete my transfer",
-      "description": "I tried sending money...",
-      "support_type": "TRANSACTION_ISSUE",
-      "status": "in_progress",
-      "priority": "medium",
+    "conversation": {
+      "id": "conv-uuid",
+      "status": "active",
+      "assigned_admin_name": "Sarah Johnson",
       "email": "john@example.com",
       "phone_number": "+2348012345678",
-      "related_transaction_id": "tx-uuid",
       "satisfaction_rating": null,
       "feedback": null,
-      "created_at": "2026-02-24T10:30:00.000Z",
-      "updated_at": "2026-02-24T11:15:00.000Z",
-      "last_response_at": "2026-02-24T11:15:00.000Z",
+      "last_message_at": "2026-02-25T11:15:00.000Z",
+      "created_at": "2026-02-25T10:30:00.000Z",
+      "updated_at": "2026-02-25T11:15:00.000Z",
       "messages": [
         {
           "id": "msg-1",
-          "message": "I tried sending money to @janedoe but it keeps showing insufficient balance...",
+          "message": "Hi, I tried sending money to @janedoe but it keeps failing.",
           "is_from_user": true,
           "sender_name": "John Doe",
           "sender_email": "john@example.com",
           "attachments": null,
-          "created_at": "2026-02-24T10:30:00.000Z"
+          "created_at": "2026-02-25T10:30:00.000Z"
         },
         {
           "id": "msg-2",
-          "message": "Hi John, I've looked into this. Your transfer was held due to a daily limit check...",
+          "message": "Hi John! I'm Sarah and I'll be helping you today. Let me look into this.",
           "is_from_user": false,
-          "sender_name": "Admin Support",
-          "sender_email": "support@smipay.com",
+          "sender_name": "Sarah Johnson",
+          "sender_email": "sarah@smipay.com",
           "attachments": null,
-          "created_at": "2026-02-24T11:15:00.000Z"
+          "created_at": "2026-02-25T10:32:00.000Z"
+        },
+        {
+          "id": "msg-3",
+          "message": "I've resolved the transfer issue. Your funds should be available now.",
+          "is_from_user": false,
+          "sender_name": "Sarah Johnson",
+          "sender_email": "sarah@smipay.com",
+          "attachments": null,
+          "created_at": "2026-02-25T11:15:00.000Z"
         }
       ],
-      "total_messages": 2
+      "total_messages": 3,
+      "ticket": null
     }
   }
 }
@@ -209,65 +283,18 @@ Returns the full ticket with all messages in chronological order.
 
 ---
 
-### 4. Send Message to Ticket
-**POST** `/api/v1/support/ticket/add-message`
-
-**Auth:** Security headers guard
-
-Adds a new message to an existing ticket. User must provide the email that matches the ticket owner.
-
-#### Payload
-```json
-{
-  "ticket_number": "SMI-2026-001234",
-  "message": "Thanks for the info. Can you increase my daily limit?",
-  "email": "john@example.com"
-}
-```
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `ticket_number` | string | Yes | Ticket to message |
-| `message` | string | Yes | Message content (10-5000 chars) |
-| `email` | string | Yes | Must match ticket owner email |
-
-#### Response
-```json
-{
-  "success": true,
-  "message": "Message sent",
-  "data": {
-    "ticket_number": "SMI-2026-001234",
-    "ticket_id": "uuid",
-    "message": {
-      "id": "msg-uuid",
-      "message": "Thanks for the info. Can you increase my daily limit?",
-      "is_from_user": true,
-      "sender_name": "John Doe",
-      "sender_email": "john@example.com",
-      "attachments": null,
-      "createdAt": "2026-02-24T12:00:00.000Z"
-    }
-  }
-}
-```
-
-**Important:** After sending, don't wait for the API response to show the message in the UI. Show it optimistically immediately, then confirm with the response. The Socket.IO event will also fire to update other connected clients.
-
----
-
-### 5. Rate Resolved Ticket
-**POST** `/api/v1/support/ticket/:ticketNumber/rate`
+### 5. Rate Conversation
+**POST** `/api/v1/support/conversations/:id/rate`
 
 **Auth:** JWT Bearer token
 
-Allows the user to submit a satisfaction rating after a ticket is resolved or closed.
+Submit a satisfaction rating after a conversation is closed.
 
 #### Payload
 ```json
 {
-  "rating": 4,
-  "feedback": "Quick response, issue resolved. Would be nice to have a self-service option for limit increases."
+  "rating": 5,
+  "feedback": "Sarah was amazing! Very quick and helpful."
 }
 ```
 
@@ -277,8 +304,8 @@ Allows the user to submit a satisfaction rating after a ticket is resolved or cl
 | `feedback` | string | No | Optional text feedback |
 
 #### Rules
-- Can only rate tickets you own
-- Can only rate `resolved` or `closed` tickets
+- Can only rate conversations you own
+- Can only rate `closed` conversations
 - Can only rate once
 
 ---
@@ -295,24 +322,17 @@ Server:     socket.io v4.8.3
 Client:     socket.io-client v4.x (npm install socket.io-client)
 ```
 
-**The frontend MUST install `socket.io-client` v4.x** to match the server. The connection URL is the backend base URL + `/support` (the namespace). Socket.IO uses `/socket.io/` as the default transport path under the hood — do NOT change it.
-
 #### Authentication
-Pass the user's JWT token in `auth.token` on connect:
-
 ```javascript
 import { io } from 'socket.io-client';
 
-// Use your backend base URL + /support namespace
-// Local:  http://localhost:1500/support
-// Prod:   https://smipay.com/support
 const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:1500';
 
 const socket = io(`${SOCKET_URL}/support`, {
   auth: {
-    token: userJwtToken,  // The same JWT used for REST API calls
+    token: userJwtToken,
   },
-  transports: ['websocket'],  // Skip long-polling, go straight to WebSocket
+  transports: ['websocket'],
   reconnection: true,
   reconnectionAttempts: Infinity,
   reconnectionDelay: 1000,
@@ -320,82 +340,51 @@ const socket = io(`${SOCKET_URL}/support`, {
 });
 
 socket.on('connect', () => {
-  console.log('✅ Connected to support chat, socket id:', socket.id);
-  // If user was viewing a ticket, re-join the room
-  if (currentTicketId) {
-    socket.emit('join_ticket', { ticket_id: currentTicketId });
+  console.log('Connected to support chat:', socket.id);
+  if (currentConversationId) {
+    socket.emit('join_conversation', { conversation_id: currentConversationId });
   }
 });
 
 socket.on('disconnect', (reason) => {
-  console.log('❌ Disconnected:', reason);
+  console.log('Disconnected:', reason);
 });
 
 socket.on('connect_error', (error) => {
-  console.error('🚨 Socket connection failed:', error.message);
-  // Common causes: invalid/expired JWT, wrong URL, server down
+  console.error('Socket connection failed:', error.message);
 });
 ```
-
-#### How to Know It's Working
-
-When the connection succeeds, the **backend logs**:
-```
-🔌 USER connected — user@example.com [socket: abc123] → joined room: user:uuid
-🔌 Total active connections: 1
-```
-
-If you see NOTHING in backend logs when the frontend loads, the frontend is **not connecting at all**.
-
-If the token is invalid or missing, the backend logs:
-```
-🔌 Connection REJECTED — no token provided (socket: abc123)
-🔌 Connection REJECTED — invalid/expired token (socket: abc123)
-```
-
-#### Quick Test (Browser Console)
-
-To verify the backend socket is reachable, paste this in the browser console:
-```javascript
-const s = io('http://localhost:1500/support', {
-  auth: { token: 'YOUR_JWT_TOKEN_HERE' },
-  transports: ['websocket'],
-});
-s.on('connect', () => console.log('CONNECTED:', s.id));
-s.on('connect_error', (e) => console.log('FAILED:', e.message));
-```
-If this prints `CONNECTED: ...`, the backend is working. If it prints `FAILED: ...`, check the error message.
 
 ---
 
 ### Client Events (You Emit)
 
-#### `join_ticket`
-Call this when user opens a ticket conversation. Required to receive real-time messages for that ticket.
+#### `join_conversation`
+Call when user opens a conversation chat screen. Required to receive real-time messages.
 
 ```javascript
-socket.emit('join_ticket', { ticket_id: 'uuid-of-ticket' });
+socket.emit('join_conversation', { conversation_id: 'conv-uuid' });
 ```
 
-#### `leave_ticket`
-Call this when user navigates away from the conversation.
+#### `leave_conversation`
+Call when user navigates away from the conversation.
 
 ```javascript
-socket.emit('leave_ticket', { ticket_id: 'uuid-of-ticket' });
+socket.emit('leave_conversation', { conversation_id: 'conv-uuid' });
 ```
 
 #### `typing`
 Emit while user is typing (debounce to every 2-3 seconds).
 
 ```javascript
-socket.emit('typing', { ticket_id: 'uuid-of-ticket' });
+socket.emit('typing', { conversation_id: 'conv-uuid' });
 ```
 
 #### `stop_typing`
 Emit when user stops typing (after 3s idle or on blur).
 
 ```javascript
-socket.emit('stop_typing', { ticket_id: 'uuid-of-ticket' });
+socket.emit('stop_typing', { conversation_id: 'conv-uuid' });
 ```
 
 ---
@@ -403,11 +392,11 @@ socket.emit('stop_typing', { ticket_id: 'uuid-of-ticket' });
 ### Server Events (You Listen To)
 
 #### `new_message`
-Fires when a new message is added to a ticket you've joined.
+Fires when a new message is added to a conversation you've joined.
 
 ```javascript
 socket.on('new_message', (data) => {
-  // data.ticket_id: string
+  // data.conversation_id: string
   // data.message: {
   //   id: string,
   //   message: string,
@@ -417,198 +406,167 @@ socket.on('new_message', (data) => {
   //   attachments: any | null,
   //   createdAt: string
   // }
-  
-  // Append to conversation UI
   appendMessage(data.message);
 });
 ```
 
-#### `ticket_updated`
-Fires on the user's personal room (even if not inside the ticket). Used for:
-- New admin reply notification (badge on ticket list)
-- Status change notification
+#### `conversation_updated`
+Fires on the user's personal room for notification badges and status updates.
 
 ```javascript
-socket.on('ticket_updated', (data) => {
-  // data.ticket_id: string
-  // data.event: 'new_reply' | 'status_changed' | ...
-  //
-  // For 'new_reply':
-  //   data.message.preview: string (first 100 chars)
-  //   data.message.sender_name: string
-  //   data.message.created_at: string
-  //
-  // For 'status_changed':
-  //   data.old_status: string
-  //   data.new_status: string
-  //   data.ticket_number: string
+socket.on('conversation_updated', (data) => {
+  // data.conversation_id: string
+  // data.event: 'new_reply' | 'claimed' | 'closed' | 'ticket_created' | 'handover_completed'
 
   if (data.event === 'new_reply') {
-    showNotificationBadge(data.ticket_id);
-    showPushNotification(`New reply on your ticket: ${data.message.preview}`);
+    // data.message: { id, preview, sender_name, created_at }
+    showNotificationBadge(data.conversation_id);
+    showPushNotification(`${data.message.sender_name}: ${data.message.preview}`);
   }
 
-  if (data.event === 'status_changed') {
-    updateTicketStatus(data.ticket_id, data.new_status);
-    if (data.new_status === 'resolved') {
-      showRatingPrompt(data.ticket_id);
-    }
+  if (data.event === 'claimed') {
+    // data.assigned_admin_name: string
+    // Show: "Sarah Johnson is now helping you"
+    updateAssignedAgent(data.conversation_id, data.assigned_admin_name);
   }
+
+  if (data.event === 'closed') {
+    updateConversationStatus(data.conversation_id, 'closed');
+    showRatingPrompt(data.conversation_id);
+  }
+
+  if (data.event === 'ticket_created') {
+    // data.ticket_number: string
+    // Show: "A support ticket SMI-2026-XXXX has been created for your issue"
+    showTicketCreatedNotice(data.conversation_id, data.ticket_number);
+  }
+
+  if (data.event === 'handover_completed') {
+    // data.assigned_admin_name: string
+    // Show: "Your conversation has been transferred to {name}"
+    updateAssignedAgent(data.conversation_id, data.assigned_admin_name);
+  }
+});
+```
+
+#### `conversation_claimed`
+Fires inside the conversation room when a support agent claims the conversation.
+
+```javascript
+socket.on('conversation_claimed', (data) => {
+  // data.conversation_id: string
+  // data.assigned_to: string (admin user ID)
+  // data.assigned_admin_name: string
+  showAgentJoined(data.assigned_admin_name);
+});
+```
+
+#### `conversation_closed`
+Fires inside the conversation room when the conversation is closed.
+
+```javascript
+socket.on('conversation_closed', (data) => {
+  // data.conversation_id: string
+  disableMessageInput();
+  showRatingPrompt();
+});
+```
+
+#### `ticket_created_from_conversation`
+Fires when a support agent creates a formal ticket for this conversation.
+
+```javascript
+socket.on('ticket_created_from_conversation', (data) => {
+  // data.conversation_id: string
+  // data.ticket: { id, ticket_number, subject, support_type, priority, status }
+  showTicketBadge(data.ticket);
 });
 ```
 
 #### `typing` / `stop_typing`
-Shows "Support is typing..." indicator in the conversation.
+Shows "Support is typing..." indicator.
 
 ```javascript
 socket.on('typing', (data) => {
   if (data.is_admin) {
-    showTypingIndicator(data.ticket_id);
+    showTypingIndicator(data.conversation_id);
   }
 });
 
 socket.on('stop_typing', (data) => {
-  hideTypingIndicator(data.ticket_id);
-});
-```
-
-#### `status_changed`
-Fires inside the ticket room when status changes.
-
-```javascript
-socket.on('status_changed', (data) => {
-  // data.ticket_id: string
-  // data.old_status: string
-  // data.new_status: string
-  // data.ticket_number: string
-  // data.resolution_notes?: string
-  
-  updateConversationHeader(data.new_status);
+  hideTypingIndicator(data.conversation_id);
 });
 ```
 
 ---
 
-## Enum Values
+## Conversation Status Values
 
-### Support Types
-Use these in the `support_type` field when creating a ticket:
-
-| Value | When to Use |
-|---|---|
-| `GENERAL_INQUIRY` | Default — general questions |
-| `REGISTRATION_ISSUE` | Can't complete registration |
-| `LOGIN_ISSUE` | Can't log in |
-| `TRANSACTION_ISSUE` | Problem with a specific transaction |
-| `PAYMENT_ISSUE` | Payment didn't go through |
-| `ACCOUNT_ISSUE` | Account-related problems |
-| `WALLET_ISSUE` | Wallet balance discrepancy, etc. |
-| `CARD_ISSUE` | Virtual card problems |
-| `KYC_VERIFICATION_ISSUE` | KYC verification problems |
-| `SECURITY_ISSUE` | Suspected unauthorized access |
-| `BILLING_ISSUE` | Charges or fees dispute |
-| `REFUND_REQUEST` | Requesting a refund |
-| `FEATURE_REQUEST` | Suggesting a new feature |
-| `BUG_REPORT` | Reporting a bug |
-| `OTHER` | Anything else |
-
-### Priority (auto-inferred if not set)
-| Value | Auto-Assigned For |
-|---|---|
-| `high` | `SECURITY_ISSUE`, `REFUND_REQUEST`, `REGISTRATION_ISSUE`, `LOGIN_ISSUE` |
-| `medium` | `TRANSACTION_ISSUE`, `PAYMENT_ISSUE`, `ACCOUNT_ISSUE`, `WALLET_ISSUE`, `CARD_ISSUE`, `KYC_VERIFICATION_ISSUE`, `BILLING_ISSUE`, `BUG_REPORT` |
-| `low` | `FEATURE_REQUEST`, `GENERAL_INQUIRY`, `OTHER` |
-| `urgent` | Never auto-assigned — admin-only escalation |
-
-### Ticket Status
-| Value | Meaning | User-Visible |
+| Value | Meaning | User-Visible Text |
 |---|---|---|
-| `pending` | Ticket created, waiting for support | "Waiting for support" |
-| `in_progress` | Support is working on it | "Being handled" |
-| `waiting_user` | Support asked a question, waiting for user | "Waiting for your reply" |
-| `escalated` | Escalated to senior team | "Under review" |
-| `resolved` | Issue resolved | "Resolved" — show rating prompt |
-| `closed` | Ticket closed | "Closed" |
+| `active` | Conversation is ongoing | "Active" |
+| `waiting_support` | User sent a message, waiting for support | "Waiting for support" |
+| `waiting_user` | Support responded, waiting for user | "Waiting for your reply" |
+| `closed` | Conversation ended | "Closed" — show rating prompt |
 
 ---
 
 ## Mobile App Integration Guide
 
-### Screen: Help & Support (Ticket List)
+### Screen: Help & Support (Conversation List)
 
 **On load:**
-1. Call `GET /support/my-tickets` to get all user tickets
+1. Call `GET /support/conversations` to get all user conversations
 2. Connect to Socket.IO `/support` namespace
-3. Listen for `ticket_updated` events to update badges in real-time
+3. Listen for `conversation_updated` events to update badges in real-time
 
 **UI Elements:**
-- Ticket cards showing: subject, status badge, support_type chip, last message preview, time ago, unread dot
-- FAB / button: "New Ticket" → opens create form
+- Conversation cards showing: assigned agent name (or "Waiting for support..."), last message preview, time ago, unread dot
+- If conversation has a ticket, show small ticket badge (e.g. "SMI-2026-001234")
+- FAB / button: "Start Chat" → navigates to empty chat screen
 - Pull to refresh
 
-### Screen: Create Ticket
+**Empty state** (no conversations yet):
+- Headphone icon
+- "Need help? Start a chat and our team will respond."
+- Button: "Start Chat"
 
-**Form fields:**
-- Subject (required)
-- Description (required)
-- Support Type dropdown (default: `GENERAL_INQUIRY`)
-- Related Transaction (optional — show picker if coming from transaction detail)
+### Screen: Chat (Conversation View)
 
-**On submit:**
-1. Call `POST /support/request-support`
-2. Navigate to the conversation screen for the new ticket
+**On open (new chat — no conversation_id):**
+1. Show empty chat screen with message input at the bottom
+2. When user sends first message → `POST /support/chat/send` (no `conversation_id`)
+3. Response returns the new `conversation.id` — store it for subsequent messages
+4. `socket.emit('join_conversation', { conversation_id })` to join the room
 
-### Screen: Report Transaction Issue (from transaction detail)
-
-**Pre-fill:**
-- `support_type: "TRANSACTION_ISSUE"`
-- `related_transaction_id: "<the-transaction-id>"`
-- Subject: "Issue with transaction [ref]"
-- Let user fill in description
-
-### Screen: Conversation (Chat UI)
-
-**On open:**
-1. Call `GET /support/ticket?ticket_number=SMI-2026-XXXX` to get full conversation
-2. `socket.emit('join_ticket', { ticket_id })` to join the room
-3. Listen for `new_message`, `typing`, `stop_typing`, `status_changed`
+**On open (existing conversation):**
+1. Call `GET /support/conversations/:id` to load full history
+2. `socket.emit('join_conversation', { conversation_id })` to join the room
+3. Listen for `new_message`, `typing`, `stop_typing`, `conversation_claimed`, `conversation_closed`, `ticket_created_from_conversation`
 
 **On leave:**
-1. `socket.emit('leave_ticket', { ticket_id })`
+1. `socket.emit('leave_conversation', { conversation_id })`
 
 **Sending a message:**
 1. Show message optimistically in UI
-2. Call `POST /support/ticket/add-message`
+2. Call `POST /support/chat/send` with `conversation_id`
 3. On success: confirm the optimistic message
 4. On error: show retry button
 
-**Receiving a message:**
-1. `new_message` event fires → append to chat
-2. Scroll to bottom
-3. Mark as read
+**Agent assignment display:**
+- When `assigned_admin_name` is null: show "Waiting for a support agent..."
+- When assigned: show "Sarah Johnson is helping you" at the top of the chat
+- When `conversation_claimed` event fires: animate the agent name appearing
 
-**Typing indicator:**
-- `socket.emit('typing', { ticket_id })` on keypress (debounced)
-- `socket.emit('stop_typing', { ticket_id })` on 3s idle
-- Show "Support is typing..." when receiving `typing` event from admin
+**Ticket badge:**
+- If `ticket` is not null in the conversation, show a small badge: "Ticket: SMI-2026-001234"
+- This tells the user the issue has been formally tracked
 
-**When ticket is resolved — Rating UI:**
-- Check `ticket.satisfaction_rating` from the ticket response
-- If `satisfaction_rating` is `null` AND status is `resolved` or `closed` → show the rating form (1-5 stars + optional feedback)
-- If `satisfaction_rating` is NOT null → the user already rated. **Hide the rating form.** Optionally show "You rated this X/5" as read-only.
-- Call `POST /support/ticket/:ticketNumber/rate` to submit
-- After successful submission, hide the form immediately (don't wait for a re-fetch)
-
-### Screen: Registration Support (pre-auth)
-
-For users stuck during registration who are not yet logged in:
-
-1. Call `POST /support/request-support` with:
-   - `session_id` (from registration flow)
-   - `support_type: "REGISTRATION_ISSUE"` (or omit — auto-detected from session_id)
-   - No JWT needed
-2. Show them the ticket number
-3. They can check status later via `GET /support/ticket?ticket_number=...`
+**When conversation is closed — Rating UI:**
+- Check `conversation.satisfaction_rating` from the response
+- If `satisfaction_rating` is `null` AND status is `closed` → show the rating form (1-5 stars + optional feedback)
+- If already rated → show "You rated this X/5" as read-only
+- Call `POST /support/conversations/:id/rate` to submit
 
 ---
 
@@ -619,17 +577,17 @@ App Launch
   │
   ├─ User logged in?
   │   ├─ YES → Connect to /support with JWT
-  │   │         Listen for ticket_updated (global notifications)
+  │   │         Listen for conversation_updated (global notifications)
   │   │
-  │   └─ NO → Don't connect (use REST only for registration support)
+  │   └─ NO → Don't connect (use REST only via unauthenticated endpoint)
   │
-  ├─ User opens ticket list?
+  ├─ User opens conversation list?
   │   └─ Already connected, just fetch via REST
   │
-  ├─ User opens conversation?
-  │   ├─ emit('join_ticket', { ticket_id })
-  │   ├─ Listen: new_message, typing, stop_typing, status_changed
-  │   └─ On leave: emit('leave_ticket', { ticket_id })
+  ├─ User opens chat (new or existing)?
+  │   ├─ emit('join_conversation', { conversation_id })
+  │   ├─ Listen: new_message, typing, stop_typing, conversation_claimed, conversation_closed
+  │   └─ On leave: emit('leave_conversation', { conversation_id })
   │
   └─ User closes app / logs out
       └─ Socket auto-disconnects
@@ -637,80 +595,29 @@ App Launch
 
 ---
 
-## ⚠️ CRITICAL: Socket.IO Connection is MANDATORY for Real-Time
+## CRITICAL: Socket.IO Connection is MANDATORY for Real-Time
 
-**Without Socket.IO, users will NOT receive messages in real-time.** They will only see new messages when they refresh the page. Typing indicators, status change notifications, and live message delivery all depend on an active Socket.IO connection.
-
-### Architecture Recap
+Without Socket.IO, users will NOT receive messages in real-time. They will only see new messages when they refresh. Typing indicators, agent claiming notifications, and live message delivery all depend on an active Socket.IO connection.
 
 ```
-┌─────────────────┐       REST POST        ┌─────────────────┐
-│  Admin Dashboard │ ─────────────────────→ │     Backend     │
-│  (sends reply)   │                        │                 │
-└─────────────────┘                        │  1. Save to DB  │
-                                           │  2. Return HTTP │
-                                           │  3. Broadcast   │
-                                           │     via Socket  │
-                                           └────────┬────────┘
-                                                    │
-                                           Socket.IO emit
-                                                    │
-                                           ┌────────▼────────┐
-                                           │   User Mobile   │
-                                           │   (listening)   │
-                                           │                 │
-                                           │  new_message →  │
-                                           │  append to chat │
-                                           └─────────────────┘
+Admin sends reply       Backend saves to DB       User receives in real-time
+via REST POST    →     + returns HTTP 201    →    via Socket.IO new_message event
+                                                   (only if user is connected!)
 ```
-
-**REST API creates messages. Socket.IO delivers them in real-time.** This is the standard pattern (used by Slack, Discord, WhatsApp Web, etc.).
-
-- **If the user's app is NOT connected to Socket.IO** → they will NOT see new messages until they refresh.
-- **Messages are NOT sent through the socket** — they are sent via REST POST, saved to DB, and then the backend broadcasts a `new_message` event to all connected Socket.IO clients in the ticket room.
-- **The frontend MUST connect to Socket.IO on app launch** (when user is logged in) and stay connected.
-
-### How to Verify Socket.IO is Working
-
-When a user connects to the socket, the backend logs:
-```
-🔌 USER connected — user@example.com [socket: abc123] → joined room: user:uuid
-```
-
-When a user joins a ticket room, the backend logs:
-```
-📋 USER uuid joined ticket room: SMI-2026-000001
-```
-
-When a message is emitted, the backend now logs the number of clients in each room:
-```
-💬 NEW MESSAGE [ADMIN] → ticket:uuid (2 client(s) in room) | "Hello..."
-💬 → Notifying user:uuid (1 client(s)) — admin reply
-```
-
-**If you see `(0 client(s) in room)` or the warning `⚠️ NO CLIENTS in room`**, it means the frontend is NOT connected. Fix the frontend Socket.IO connection.
 
 ### Frontend Checklist
 
 - [ ] **Connect to `/support` namespace** with JWT on app launch (when logged in)
-- [ ] **Emit `join_ticket`** when opening a ticket conversation
+- [ ] **Emit `join_conversation`** when opening a chat
 - [ ] **Listen for `new_message`** and append to chat UI
+- [ ] **Listen for `conversation_updated`** for notification badges
+- [ ] **Listen for `conversation_claimed`** to show agent name
+- [ ] **Listen for `conversation_closed`** to show rating prompt
+- [ ] **Listen for `ticket_created_from_conversation`** to show ticket badge
 - [ ] **Listen for `typing`/`stop_typing`** and show indicator
-- [ ] **Listen for `ticket_updated`** for notification badges
-- [ ] **Listen for `status_changed`** to update ticket status
-- [ ] **Emit `leave_ticket`** when navigating away from conversation
 - [ ] **Emit `typing`/`stop_typing`** when user types (debounced)
-- [ ] **Handle reconnection** — Socket.IO auto-reconnects, but re-emit `join_ticket` on reconnect
-
-### Common Mistakes
-
-| Mistake | Symptom | Fix |
-|---|---|---|
-| Not connecting to Socket.IO at all | No real-time updates, no typing | Connect on login: `io('/support', { auth: { token } })` |
-| Connecting but not emitting `join_ticket` | `ticket_updated` works but `new_message` doesn't | Emit `join_ticket` when opening a conversation |
-| Using wrong namespace | Connection fails | Must be `/support`, not `/` or `/socket.io` |
-| Not passing JWT token | Connection rejected (check backend logs) | Pass in `auth.token` on connect |
-| Not re-joining ticket room on reconnect | Messages stop after temporary disconnect | Listen for `connect` event and re-emit `join_ticket` |
+- [ ] **Emit `leave_conversation`** when navigating away
+- [ ] **Handle reconnection** — re-emit `join_conversation` on reconnect
 
 ---
 
@@ -718,12 +625,28 @@ When a message is emitted, the backend now logs the number of clients in each ro
 
 | Scenario | HTTP Code | Message |
 |---|---|---|
-| Ticket not found | 404 | "Ticket SMI-2026-XXXX not found" |
-| Email doesn't match | 400 | "Email does not match the ticket owner" |
-| Message to closed ticket | 400 | "Cannot add messages to a closed or resolved ticket" |
+| Conversation not found | 404 | "Conversation not found" |
+| Access denied (not your conversation) | 400 | "Access denied" |
+| Conversation closed | 400 | "This conversation has been closed" |
+| Email mismatch (unauthenticated) | 400 | "Email does not match the conversation owner" |
 | Rating out of range | 400 | "Rating must be between 1 and 5" |
-| Already rated | 400 | "Ticket already rated" |
-| Rating wrong status | 400 | "Can only rate resolved or closed tickets" |
-| Rate someone else's ticket | 400 | "You can only rate your own tickets" |
-| Invalid phone | 400 | "Phone number must be in E.164 format..." |
-| Invalid session | 400 | "Invalid session ID" |
+| Already rated | 400 | "Conversation already rated" |
+| Rating wrong status | 400 | "Can only rate closed conversations" |
+| Rate someone else's conversation | 400 | "You can only rate your own conversations" |
+
+---
+
+## Legacy Ticket Endpoints (Still Available)
+
+The old ticket-based endpoints are still available for backward compatibility:
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/support/request-support` | Create ticket (unauthenticated) |
+| POST | `/support/create-ticket` | Create ticket (authenticated) |
+| GET | `/support/my-tickets` | Get user's tickets |
+| GET | `/support/ticket?ticket_number=...` | Get ticket by number |
+| POST | `/support/ticket/add-message` | Add message to ticket |
+| POST | `/support/ticket/:ticketNumber/rate` | Rate ticket |
+
+These are deprecated for new implementations. Use the conversation-based endpoints above instead.
