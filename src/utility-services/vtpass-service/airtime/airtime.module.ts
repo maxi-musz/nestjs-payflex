@@ -5,6 +5,8 @@ import { AirtimeLimitsGuard } from 'src/utility-services/vtpass-service/airtime/
 import { RateLimitGuard } from 'src/utility-services/vtpass-service/guards/rate-limit.guard';
 import { AirtimeService } from './airtime.service';
 import { AirtimeController } from './airtime.controller';
+import { InternationalAirtimeService } from './international-airtime.service';
+import { InternationalAirtimeController } from './international-airtime.controller';
 import { PushNotificationModule } from 'src/push-notification/push-notification.module';
 
 @Module({
@@ -13,8 +15,8 @@ import { PushNotificationModule } from 'src/push-notification/push-notification.
     PrismaModule,
     PushNotificationModule
   ],
-  controllers: [AirtimeController],
-  providers: [AirtimeService, AirtimeLimitsGuard, RateLimitGuard],
-  exports: [AirtimeService],
+  controllers: [AirtimeController, InternationalAirtimeController],
+  providers: [AirtimeService, InternationalAirtimeService, AirtimeLimitsGuard, RateLimitGuard],
+  exports: [AirtimeService, InternationalAirtimeService],
 })
 export class AirtimeModule {}
