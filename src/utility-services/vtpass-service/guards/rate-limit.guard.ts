@@ -1,80 +1,109 @@
 import { CanActivate, ExecutionContext, Injectable, ForbiddenException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PrismaService } from 'src/prisma/prisma.service';
 
+/**
+ * Request-level rate limiter using in-memory sliding windows.
+ * Tracks actual HTTP requests (not DB records) per user and per IP.
+ *
+ * For distributed deployments (multiple instances), replace the
+ * static Maps with Redis (e.g., ioredis + sorted sets).
+ */
 @Injectable()
 export class RateLimitGuard implements CanActivate {
-  // In-memory IP buckets (per-instance). For distributed rate limiting, use Redis or a DB.
+  private static userBuckets: Map<string, number[]> = new Map();
   private static ipBuckets: Map<string, number[]> = new Map();
+  private static lastCleanup = Date.now();
+  private static readonly CLEANUP_INTERVAL_MS = 60_000;
+
   private readonly logger = new Logger(RateLimitGuard.name);
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
-  ) {}
+  constructor(private readonly config: ConfigService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
     const user = req.user;
-    if (!user?.sub) return false;
     const ip: string = (req.ip || req.headers['x-forwarded-for'] || '').toString();
-    
-    // Detect service type from route path (e.g., /vtpass/airtime, /vtpass/data, /vtpass/cable)
+
     const routePath = req.url || req.path || '';
-    let serviceType: 'airtime' | 'data' | 'cable' | 'electricity' = 'data';
-    let serviceName = 'utility';
-    
-    if (routePath.includes('/airtime')) {
-      serviceType = 'airtime';
-      serviceName = 'airtime';
-    } else if (routePath.includes('/electricity')) {
-      serviceType = 'electricity';
-      serviceName = 'electricity';
-    } else if (routePath.includes('/cable')) {
-      serviceType = 'cable';
-      serviceName = 'cable';
-    } else if (routePath.includes('/data')) {
-      serviceType = 'data';
-      serviceName = 'data';
-    }
-
-    this.logger.log(`${serviceName} Rate limit guard - IP: ${ip}`);
-
-    // Rate limiting rules: A user can make max 5 transactions per 60 seconds, and an IP can make max 10 requests per 60 seconds
-    // To change limits: Update {SERVICE}_RATE_WINDOW_SECONDS (time window), {SERVICE}_RATE_MAX_REQUESTS (user limit), {SERVICE}_IP_RATE_MAX_REQUESTS (IP limit)
-    // Example: AIRTIME_RATE_WINDOW_SECONDS=60, AIRTIME_RATE_MAX_REQUESTS=5, AIRTIME_IP_RATE_MAX_REQUESTS=10
+    const serviceName = this.detectService(routePath);
     const configPrefix = serviceName.toUpperCase();
-    const windowSeconds = Number(this.config.get(`${configPrefix}_RATE_WINDOW_SECONDS`) || 60);
-    const maxRequests = Number(this.config.get(`${configPrefix}_RATE_MAX_REQUESTS`) || 5);
-    const ipWindowSeconds = Number(this.config.get(`${configPrefix}_IP_RATE_WINDOW_SECONDS`) || windowSeconds);
-    const ipMaxRequests = Number(this.config.get(`${configPrefix}_IP_RATE_MAX_REQUESTS`) || maxRequests * 2);
 
-    const since = new Date(Date.now() - windowSeconds * 1000);
-    const count = await this.prisma.transactionHistory.count({
-      where: {
-        user_id: user.sub,
-        transaction_type: serviceType,
-        createdAt: { gte: since },
+    // Per-user: requests per window (authenticated users)
+    if (user?.sub) {
+      const userWindow = Number(this.config.get(`${configPrefix}_RATE_WINDOW_SECONDS`) || 60);
+      const userMax = Number(this.config.get(`${configPrefix}_RATE_MAX_REQUESTS`) || 10);
+      const userKey = `${user.sub}:${serviceName}`;
+
+      if (this.isOverLimit(RateLimitGuard.userBuckets, userKey, userWindow * 1000, userMax)) {
+        this.logger.warn(`User ${user.sub} rate limited on ${serviceName} (${userMax}/${userWindow}s)`);
+        throw new ForbiddenException('Rate limit exceeded. Please slow down.');
       }
-    });
-
-    if (count >= maxRequests) {
-      throw new ForbiddenException('Rate limit exceeded. Please slow down.');
     }
 
-    // Per-IP sliding window bucket
+    // Per-IP: requests per window (catches unauthenticated abuse too)
     if (ip) {
-      const now = Date.now();
-      const windowStart = now - ipWindowSeconds * 1000;
-      const bucket = RateLimitGuard.ipBuckets.get(ip) || [];
-      const recent = bucket.filter(ts => ts >= windowStart);
-      recent.push(now);
-      RateLimitGuard.ipBuckets.set(ip, recent);
-      if (recent.length > ipMaxRequests) {
-        throw new ForbiddenException('IP rate limit exceeded. Please slow down.');
+      const ipWindow = Number(this.config.get(`${configPrefix}_IP_RATE_WINDOW_SECONDS`) || 60);
+      const ipMax = Number(this.config.get(`${configPrefix}_IP_RATE_MAX_REQUESTS`) || 30);
+      const ipKey = `${ip}:${serviceName}`;
+
+      if (this.isOverLimit(RateLimitGuard.ipBuckets, ipKey, ipWindow * 1000, ipMax)) {
+        this.logger.warn(`IP ${ip} rate limited on ${serviceName} (${ipMax}/${ipWindow}s)`);
+        throw new ForbiddenException('Too many requests from this IP. Please slow down.');
       }
     }
+
+    this.periodicCleanup();
     return true;
   }
-}
 
+  /**
+   * Sliding window check: records the current timestamp and returns
+   * true if the number of requests in the window exceeds the limit.
+   */
+  private isOverLimit(
+    buckets: Map<string, number[]>,
+    key: string,
+    windowMs: number,
+    maxRequests: number,
+  ): boolean {
+    const now = Date.now();
+    const cutoff = now - windowMs;
+    const bucket = (buckets.get(key) || []).filter(ts => ts > cutoff);
+    bucket.push(now);
+    buckets.set(key, bucket);
+    return bucket.length > maxRequests;
+  }
+
+  private detectService(routePath: string): string {
+    if (routePath.includes('/airtime')) return 'airtime';
+    if (routePath.includes('/electricity')) return 'electricity';
+    if (routePath.includes('/cable')) return 'cable';
+    if (routePath.includes('/education')) return 'education';
+    if (routePath.includes('/data')) return 'data';
+    return 'utility';
+  }
+
+  /**
+   * Prevent unbounded memory growth by pruning expired entries
+   * every CLEANUP_INTERVAL_MS.
+   */
+  private periodicCleanup(): void {
+    const now = Date.now();
+    if (now - RateLimitGuard.lastCleanup < RateLimitGuard.CLEANUP_INTERVAL_MS) return;
+    RateLimitGuard.lastCleanup = now;
+
+    const maxWindow = 120_000; // 2 minutes — no window should be longer
+    const cutoff = now - maxWindow;
+
+    for (const [buckets] of [[RateLimitGuard.userBuckets], [RateLimitGuard.ipBuckets]]) {
+      for (const [key, timestamps] of (buckets as Map<string, number[]>).entries()) {
+        const filtered = timestamps.filter(ts => ts > cutoff);
+        if (filtered.length === 0) {
+          (buckets as Map<string, number[]>).delete(key);
+        } else {
+          (buckets as Map<string, number[]>).set(key, filtered);
+        }
+      }
+    }
+  }
+}

@@ -254,11 +254,9 @@ The API uses the following status codes from VTpass:
 
 ### 2. Rate Limiting
 
-- All endpoints are rate-limited to prevent abuse
-- The purchase endpoint has additional daily limits:
-  - Daily transaction count limit
-  - Daily transaction amount limit
-- Exceeding limits will return a 429 Too Many Requests error
+- All endpoints are rate-limited per user and per IP to prevent abuse
+- Exceeding rate limits returns a 429 error
+- There are no daily caps — users can purchase as much as their wallet balance allows
 
 ### 3. Wallet Balance
 

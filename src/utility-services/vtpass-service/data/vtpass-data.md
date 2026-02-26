@@ -364,24 +364,6 @@ Content-Type: application/json
 }
 ```
 
-**403 Forbidden - Daily Limit Reached:**
-```json
-{
-  "statusCode": 403,
-  "message": "Daily data purchase count limit reached",
-  "error": "Forbidden"
-}
-```
-
-**403 Forbidden - Daily Amount Limit Exceeded:**
-```json
-{
-  "statusCode": 403,
-  "message": "Daily data purchase amount limit exceeded",
-  "error": "Forbidden"
-}
-```
-
 **400 Bad Request - Existing Transaction:**
 ```json
 {
@@ -493,14 +475,9 @@ The API uses the following status codes from VTpass:
 
 ### 2. Rate Limiting
 
-- All endpoints are rate-limited to prevent abuse
-- The purchase endpoint has additional daily limits:
-  - **Daily transaction count limit**: Default 20 transactions per day
-  - **Daily transaction amount limit**: Default ₦500,000 per day
-- Exceeding limits will return a 403 Forbidden error
-- Limits are configurable via environment variables:
-  - `DATA_DAILY_COUNT_LIMIT`
-  - `DATA_DAILY_AMOUNT_LIMIT`
+- All endpoints are rate-limited per user and per IP to prevent abuse
+- Exceeding rate limits returns a 429 error
+- There are no daily caps — users can purchase as much as their wallet balance allows
 
 ### 3. Wallet Balance
 
@@ -740,11 +717,11 @@ curl -X POST "https://your-api.com/api/v1/vtpass/data/query" \
    - Product not whitelisted → "This service is temporarily unavailable. Please try again later."
    - Invalid phone number → "Please enter a valid phone number."
    - Transaction failed → "Transaction failed. Your money has been refunded."
-   - Daily limit reached → "You've reached your daily purchase limit. Please try again tomorrow."
    - Variation code not found → "Selected data plan is no longer available. Please select another plan."
+   - Rate limited → "Too many requests. Please slow down."
 6. **Implement retry logic** for network errors, but not for business logic errors
 7. **Store transaction references** for tracking and support purposes
-8. **Handle rate limiting** - Show appropriate message when daily limits are reached
+8. **Handle rate limiting** - Show appropriate message when rate limit is exceeded
 9. **Query transaction status** - For processing transactions, allow users to manually check status
 
 ---

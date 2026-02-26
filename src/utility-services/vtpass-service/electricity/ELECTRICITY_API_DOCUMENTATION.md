@@ -334,8 +334,6 @@ POST /api/v1/vtpass/electricity/purchase
 | 400 | `variation_code must be either prepaid or postpaid` | Invalid meter type |
 | 400 | `amount must be greater than zero` | Zero or negative amount |
 | 400 | `Amount must be between ₦500 and ₦500000` | Outside allowed range |
-| 403 | `Daily electricity purchase count limit reached` | Exceeded daily tx count |
-| 403 | `Daily electricity purchase amount limit exceeded` | Exceeded daily amount cap |
 | 429 | `Rate limit exceeded. Please slow down.` | Too many API calls |
 
 ---
@@ -515,16 +513,14 @@ POST /api/v1/vtpass/electricity/query
 
 ---
 
-## 8. Daily Limits
+## 8. Transaction Limits
 
 | Limit | Default | Env Variable |
 |-------|---------|-------------|
 | Min amount per transaction | ₦500 | `ELECTRICITY_MIN_AMOUNT` |
 | Max amount per transaction | ₦500,000 | `ELECTRICITY_MAX_AMOUNT` |
-| Max transactions per day | 20 | `ELECTRICITY_DAILY_COUNT_LIMIT` |
-| Max amount per day | ₦1,000,000 | `ELECTRICITY_DAILY_AMOUNT_LIMIT` |
 
-Exceeding limits returns `403 Forbidden`.
+> **Note:** Per-transaction min/max amounts are enforced. There are no daily caps — users can buy as much as their wallet balance allows.
 
 ---
 
@@ -558,8 +554,6 @@ If you receive `"PRODUCT IS NOT WHITELISTED ON YOUR ACCOUNT"`:
 
 | Error Message | Cause |
 |---------------|-------|
-| `Daily electricity purchase count limit reached` | Exceeded daily transaction count |
-| `Daily electricity purchase amount limit exceeded` | Exceeded daily amount cap |
 | `Rate limit exceeded. Please slow down.` | Too many API calls in short time |
 
 ### VTpass Response Codes

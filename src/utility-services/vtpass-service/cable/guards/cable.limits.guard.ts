@@ -1,14 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
 export class CableLimitsGuard implements CanActivate {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
-  ) {}
-
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
     const user = req.user;
@@ -29,7 +22,6 @@ export class CableLimitsGuard implements CanActivate {
     const isDstvOrGotv = serviceID === 'dstv' || serviceID === 'gotv';
     const isStartimesOrShowmax = serviceID === 'startimes' || serviceID === 'showmax';
 
-    // Validation for DSTV/GOTV
     if (isDstvOrGotv) {
       if (!subscription_type || !['change', 'renew'].includes(subscription_type)) {
         throw new BadRequestException('subscription_type must be either change or renew for DSTV/GOTV');
@@ -42,40 +34,15 @@ export class CableLimitsGuard implements CanActivate {
       }
     }
 
-    // Validation for Startimes/Showmax
     if (isStartimesOrShowmax) {
       if (!variation_code) {
         throw new BadRequestException('variation_code is required for Startimes/Showmax purchases');
       }
-      // subscription_type should not be provided for Startimes/Showmax
       if (subscription_type) {
         throw new BadRequestException('subscription_type is not used for Startimes/Showmax. Omit this field.');
       }
     }
 
-    // Daily limits for cable
-    const dailyCountLimit = Number(this.config.get('CABLE_DAILY_COUNT_LIMIT') || 20);
-    const dailyAmountLimit = Number(this.config.get('CABLE_DAILY_AMOUNT_LIMIT') || 500000);
-
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const [count, sumAgg] = await Promise.all([
-      this.prisma.transactionHistory.count({
-        where: { user_id: user.sub, transaction_type: 'cable', createdAt: { gte: startOfDay } }
-      }),
-      this.prisma.transactionHistory.aggregate({
-        _sum: { amount: true },
-        where: { user_id: user.sub, transaction_type: 'cable', createdAt: { gte: startOfDay } }
-      })
-    ]);
-
-    const dailyAmount = Number(sumAgg._sum.amount || 0);
-    if (count >= dailyCountLimit) throw new ForbiddenException('Daily cable purchase count limit reached');
-    if (amount > 0 && dailyAmount + amount > dailyAmountLimit) throw new ForbiddenException('Daily cable purchase amount limit exceeded');
-
     return true;
   }
 }
-
-

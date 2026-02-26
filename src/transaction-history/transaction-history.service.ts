@@ -210,6 +210,21 @@ export class TransactionHistoryService {
                 base.network = meta.payload?.serviceID || null;
                 break;
             }
+            case 'education': {
+                const creds = meta.credentials || {};
+                base.service_id = meta.serviceID || meta.payload?.serviceID || null;
+                base.variation_code = meta.payload?.variation_code || null;
+                base.product_name = transactions.product_name || null;
+                base.phone = meta.payload?.phone || null;
+                base.quantity = meta.payload?.quantity || 1;
+                base.profile_id = meta.payload?.billersCode || null;
+                base.pin = creds.pin || null;
+                base.serial = creds.serial || null;
+                base.tokens = creds.tokens || null;
+                base.cards = creds.cards || null;
+                base.purchased_code = creds.purchased_code || vtpass.purchased_code || null;
+                break;
+            }
             default:
                 break;
         }

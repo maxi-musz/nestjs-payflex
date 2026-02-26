@@ -393,9 +393,7 @@ No `subscription_type`. No verify step. `billersCode` is the **phone number**.
 | 400 | `variation_code is required for Startimes/Showmax purchases` | Missing variation_code |
 | 400 | `Amount must be greater than zero...` | Startimes eWallet variation without explicit amount |
 | 400 | `Invalid serviceID. Must be one of: dstv, gotv, startimes, showmax` | Bad serviceID |
-| 403 | `Daily cable purchase count limit reached` | Exceeded daily tx count |
-| 403 | `Daily cable purchase amount limit exceeded` | Exceeded daily amount cap |
-| 429 | `Too Many Requests` | Rate-limited |
+| 429 | `Rate limit exceeded. Please slow down.` | Too many API calls |
 
 ---
 
@@ -637,18 +635,7 @@ POST /api/v1/vtpass/cable/query
 
 ---
 
-## 9. Daily Limits
-
-| Limit | Default | Env Variable |
-|-------|---------|-------------|
-| Max transactions per day | 20 | `CABLE_DAILY_COUNT_LIMIT` |
-| Max amount per day | ₦500,000 | `CABLE_DAILY_AMOUNT_LIMIT` |
-
-Exceeding either limit returns `403 Forbidden`.
-
----
-
-## 10. Product Whitelisting
+## 9. Product Whitelisting
 
 If you receive `"PRODUCT IS NOT WHITELISTED ON YOUR ACCOUNT"`:
 
@@ -678,13 +665,11 @@ If you receive `"PRODUCT IS NOT WHITELISTED ON YOUR ACCOUNT"`:
 | `Showmax does not support smartcard verification...` | Called verify with serviceID=showmax | Skip verify for Showmax |
 | `Insufficient wallet balance` | User doesn't have enough funds | Prompt to top up wallet |
 
-### Rate / Limit Errors (403 / 429)
+### Rate Limit Errors (429)
 
 | Error Message | Cause |
 |---------------|-------|
-| `Daily cable purchase count limit reached` | Exceeded daily transaction count |
-| `Daily cable purchase amount limit exceeded` | Exceeded daily amount cap |
-| `Too Many Requests` | Too many API calls in short time |
+| `Rate limit exceeded. Please slow down.` | Too many API calls in short time |
 
 ### VTpass Response Codes
 
