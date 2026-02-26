@@ -7,6 +7,10 @@ import { PurchaseEducationDto } from './dto/purchase-education.dto';
 import { VerifyJambProfileDto } from './dto/verify-jamb-profile.dto';
 import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
 import { EmailService } from 'src/common/mailer/email.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
+import { StatsService } from 'src/common/stats/stats.service';
+import { PushNotificationService } from 'src/push-notification/push-notification.service';
+import { AuditStatus } from '@prisma/client';
 import * as colors from 'colors';
 
 @Injectable()
@@ -29,6 +33,9 @@ export class EducationService {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly auditLogService: AuditLogService,
+    private readonly statsService: StatsService,
+    private readonly pushNotificationService: PushNotificationService,
   ) {
     this.credentials = VtpassCredentialsHelper.getCredentials(configService);
     this.apiKey = this.credentials.apiKey;
@@ -303,7 +310,15 @@ export class EducationService {
 
         const balance_before = Number(wallet.current_balance);
         const balance_after = balance_before - resolvedAmount;
-        await tx.wallet.update({ where: { user_id: userPayload.sub }, data: { current_balance: balance_after } });
+        await tx.wallet.update({
+          where: { user_id: userPayload.sub },
+          data: {
+            current_balance: balance_after,
+            balance_before,
+            balance_after,
+            all_time_withdrawn: { increment: resolvedAmount },
+          },
+        });
 
         this.logger.log(`Wallet balance before: ${balance_before}, after: ${balance_after}`);
 
@@ -405,6 +420,20 @@ export class EducationService {
         }
       }
 
+      // Fire-and-forget: audit log + stats
+      this.auditLogService
+        .logTransaction(
+          finalStatus === 'success' ? 'EDUCATION_PURCHASE' : finalStatus === 'failed' ? 'EDUCATION_PURCHASE_FAILED' : 'EDUCATION_PURCHASE',
+          finalStatus === 'success' ? AuditStatus.SUCCESS : finalStatus === 'failed' ? AuditStatus.FAILURE : AuditStatus.PENDING,
+          null,
+          { amount: resolvedAmount, currency: 'NGN', balance_before: Number(createdTx.balance_before), balance_after: Number(createdTx.balance_after), transaction_ref: request_id },
+          { user_id: userPayload.sub, resource_type: 'TransactionHistory', resource_id: createdTx.id, metadata: { serviceID: dto.serviceID, variation_code: dto.variation_code, vtpass_code: responseCode } },
+        )
+        .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
+
+      this.statsService.onTransactionCreated(resolvedAmount, finalStatus, 0).catch((e) => this.logger.warn(`Stats update failed: ${e.message}`));
+      this.statsService.onWalletDebited(resolvedAmount).catch((e) => this.logger.warn(`Stats wallet debit failed: ${e.message}`));
+
       // Processing response
       if (isProcessing) {
         const formattedResponse = {
@@ -427,6 +456,9 @@ export class EducationService {
       };
 
       if (finalStatus === 'success') {
+        this.pushNotificationService
+          .sendTransactionNotification(userPayload.sub, 'education', resolvedAmount, 'success', createdTx.id)
+          .catch((e) => this.logger.warn(`Push notification failed: ${e.message}`));
         try {
           const user = await this.prisma.user.findUnique({
             where: { id: userPayload.sub },
@@ -489,6 +521,15 @@ export class EducationService {
       } catch (updateError: any) {
         this.logger.warn(`Could not update transaction status: ${updateError.message || updateError}`);
       }
+
+      this.auditLogService
+        .logTransaction('EDUCATION_PURCHASE_FAILED', AuditStatus.FAILURE, null,
+          { amount: resolvedAmount, currency: 'NGN', transaction_ref: request_id },
+          { user_id: userPayload.sub, error_message: error.message, metadata: { serviceID: dto.serviceID, variation_code: dto.variation_code } },
+        )
+        .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
+
+      this.statsService.onTransactionCreated(resolvedAmount, 'failed', 0).catch((e) => this.logger.warn(`Stats update failed: ${e.message}`));
 
       if (error instanceof HttpException) throw error;
       if (error.response) {
@@ -686,6 +727,28 @@ export class EducationService {
           }
         }
       });
+
+      if (finalStatus !== 'pending') {
+        this.auditLogService
+          .logTransaction(
+            finalStatus === 'success' ? 'EDUCATION_PURCHASE' : 'EDUCATION_PURCHASE_FAILED',
+            finalStatus === 'success' ? AuditStatus.SUCCESS : AuditStatus.FAILURE,
+            null,
+            { amount: transaction.amount || 0, currency: 'NGN', transaction_ref: requestId },
+            { user_id: transaction.user_id, resource_type: 'TransactionHistory', resource_id: transaction.id, description: `[Cron requery] Education transaction resolved to ${finalStatus}` },
+          )
+          .catch((e) => this.logger.warn(`[Cron] Audit log failed: ${e.message}`));
+
+        this.statsService
+          .onTransactionStatusChanged('pending', finalStatus, transaction.amount || 0, 0)
+          .catch((e) => this.logger.warn(`[Cron] Stats update failed: ${e.message}`));
+
+        if (finalStatus === 'success') {
+          this.pushNotificationService
+            .sendTransactionNotification(transaction.user_id, 'education', transaction.amount || 0, 'success', transaction.id)
+            .catch((e) => this.logger.warn(`[Cron] Push notification failed: ${e.message}`));
+        }
+      }
 
       return { updated: true, status: finalStatus };
     } catch (error: any) {

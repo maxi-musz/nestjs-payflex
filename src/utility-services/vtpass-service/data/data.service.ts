@@ -7,6 +7,10 @@ import { QueryTransactionDto } from './dto/query-transaction.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
 import { categorizeVariations } from '../variation-categorizer.helper';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
+import { StatsService } from 'src/common/stats/stats.service';
+import { PushNotificationService } from 'src/push-notification/push-notification.service';
+import { AuditStatus } from '@prisma/client';
 
 @Injectable()
 export class DataService {
@@ -21,6 +25,9 @@ export class DataService {
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly auditLogService: AuditLogService,
+    private readonly statsService: StatsService,
+    private readonly pushNotificationService: PushNotificationService,
   ) {
     this.credentials = VtpassCredentialsHelper.getCredentials(configService);
     this.apiKey = this.credentials.apiKey;
@@ -324,7 +331,12 @@ export class DataService {
 
         await tx.wallet.update({
           where: { user_id: userPayload.sub },
-          data: { current_balance: balance_after }
+          data: {
+            current_balance: balance_after,
+            balance_before,
+            balance_after,
+            all_time_withdrawn: { increment: amountNum },
+          },
         });
 
         return await tx.transactionHistory.create({
@@ -431,6 +443,36 @@ export class DataService {
         }
       }
 
+      // Fire-and-forget: audit log + stats
+      this.auditLogService
+        .logTransaction(
+          finalStatus === 'success' ? 'DATA_PURCHASE' : finalStatus === 'failed' ? 'DATA_PURCHASE_FAILED' : 'DATA_PURCHASE',
+          finalStatus === 'success' ? AuditStatus.SUCCESS : finalStatus === 'failed' ? AuditStatus.FAILURE : AuditStatus.PENDING,
+          null,
+          {
+            amount: smipayAmount,
+            currency: 'NGN',
+            balance_before: Number(createdTx.balance_before),
+            balance_after: Number(createdTx.balance_after),
+            transaction_ref: request_id,
+          },
+          {
+            user_id: userPayload.sub,
+            resource_type: 'TransactionHistory',
+            resource_id: createdTx.id,
+            metadata: { serviceID: dto.serviceID, billersCode: dto.billersCode, vtpass_code: responseCode, markup_value: markupValue },
+          },
+        )
+        .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
+
+      this.statsService
+        .onTransactionCreated(smipayAmount, finalStatus, markupValue)
+        .catch((e) => this.logger.warn(`Stats update failed: ${e.message}`));
+
+      this.statsService
+        .onWalletDebited(smipayAmount)
+        .catch((e) => this.logger.warn(`Stats wallet debit failed: ${e.message}`));
+
       // If processing, return success response with pending status info
       if (isProcessing) {
         const formattedResponse = {
@@ -450,6 +492,13 @@ export class DataService {
       };
 
       this.logger.log('Data purchase request completed successfully');
+
+      if (finalStatus === 'success') {
+        this.pushNotificationService
+          .sendTransactionNotification(userPayload.sub, 'data', smipayAmount, 'success', createdTx.id)
+          .catch((e) => this.logger.warn(`Push notification failed: ${e.message}`));
+      }
+
       return new ApiResponseDto(true, 'Data purchase successful', formattedResponse);
     } catch (error: any) {
       this.logger.error(`Error purchasing data: ${error.message}`);
@@ -492,7 +541,18 @@ export class DataService {
       } catch (updateError: any) {
         this.logger.warn(`Could not update transaction status: ${updateError.message || updateError}`);
       }
-      
+
+      this.auditLogService
+        .logTransaction('DATA_PURCHASE_FAILED', AuditStatus.FAILURE, null,
+          { amount: smipayAmount, currency: 'NGN', transaction_ref: request_id },
+          { user_id: userPayload.sub, error_message: error.message, metadata: { serviceID: dto.serviceID, billersCode: dto.billersCode } },
+        )
+        .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
+
+      this.statsService
+        .onTransactionCreated(smipayAmount, 'failed', 0)
+        .catch((e) => this.logger.warn(`Stats update failed: ${e.message}`));
+
       if (error.response) {
         try {
           this.logger.error('VTpass API Error Response: ' + JSON.stringify(error.response.data));
@@ -658,6 +718,28 @@ export class DataService {
           }
         }
       });
+
+      if (finalStatus !== 'pending') {
+        this.auditLogService
+          .logTransaction(
+            finalStatus === 'success' ? 'DATA_PURCHASE' : 'DATA_PURCHASE_FAILED',
+            finalStatus === 'success' ? AuditStatus.SUCCESS : AuditStatus.FAILURE,
+            null,
+            { amount: transaction.amount || 0, currency: 'NGN', transaction_ref: requestId },
+            { user_id: transaction.user_id, resource_type: 'TransactionHistory', resource_id: transaction.id, description: `[Cron requery] Data transaction resolved to ${finalStatus}` },
+          )
+          .catch((e) => this.logger.warn(`[Cron] Audit log failed: ${e.message}`));
+
+        this.statsService
+          .onTransactionStatusChanged('pending', finalStatus, transaction.amount || 0, transaction.markup_value || 0)
+          .catch((e) => this.logger.warn(`[Cron] Stats update failed: ${e.message}`));
+
+        if (finalStatus === 'success') {
+          this.pushNotificationService
+            .sendTransactionNotification(transaction.user_id, 'data', transaction.amount || 0, 'success', transaction.id)
+            .catch((e) => this.logger.warn(`[Cron] Push notification failed: ${e.message}`));
+        }
+      }
 
       return { updated: true, status: finalStatus };
     } catch (error: any) {

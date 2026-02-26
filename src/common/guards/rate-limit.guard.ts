@@ -78,7 +78,7 @@ export class RateLimitGuard implements CanActivate {
       // Uses environment variables: GLOBAL_RATE_LIMIT_REQUESTS and GLOBAL_RATE_LIMIT_WINDOW_SECONDS
       const maxRequests = process.env.GLOBAL_RATE_LIMIT_REQUESTS
         ? parseInt(process.env.GLOBAL_RATE_LIMIT_REQUESTS, 10)
-        : 10; // Default: 10 requests
+        : 30; // Default: 30 requests
 
       const windowSeconds = process.env.GLOBAL_RATE_LIMIT_WINDOW_SECONDS
         ? parseInt(process.env.GLOBAL_RATE_LIMIT_WINDOW_SECONDS, 10)

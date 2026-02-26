@@ -8,12 +8,14 @@ import { AirtimeController } from './airtime.controller';
 import { InternationalAirtimeService } from './international-airtime.service';
 import { InternationalAirtimeController } from './international-airtime.controller';
 import { PushNotificationModule } from 'src/push-notification/push-notification.module';
+import { EmailModule } from 'src/common/mailer/email.module';
 
 @Module({
   imports: [
     ConfigModule,
     PrismaModule,
-    PushNotificationModule
+    PushNotificationModule,
+    EmailModule,
   ],
   controllers: [AirtimeController, InternationalAirtimeController],
   providers: [AirtimeService, InternationalAirtimeService, AirtimeLimitsGuard, RateLimitGuard],

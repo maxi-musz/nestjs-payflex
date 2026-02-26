@@ -5,11 +5,15 @@ import { DataLimitsGuard } from 'src/utility-services/vtpass-service/data/guards
 import { RateLimitGuard } from 'src/utility-services/vtpass-service/guards/rate-limit.guard';
 import { DataService } from './data.service';
 import { DataController } from './data.controller';
+import { PushNotificationModule } from 'src/push-notification/push-notification.module';
+import { EmailModule } from 'src/common/mailer/email.module';
 
 @Module({
   imports: [
     ConfigModule,
-    PrismaModule
+    PrismaModule,
+    PushNotificationModule,
+    EmailModule,
   ],
   controllers: [DataController],
   providers: [DataService, DataLimitsGuard, RateLimitGuard],

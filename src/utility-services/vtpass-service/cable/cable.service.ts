@@ -7,6 +7,10 @@ import { PurchaseCableDto } from './dto/purchase-cable.dto';
 import { VerifySmartcardDto } from './dto/verify-smartcard.dto';
 import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
 import { EmailService } from 'src/common/mailer/email.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
+import { StatsService } from 'src/common/stats/stats.service';
+import { PushNotificationService } from 'src/push-notification/push-notification.service';
+import { AuditStatus } from '@prisma/client';
 
 @Injectable()
 export class CableService {
@@ -22,6 +26,9 @@ export class CableService {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly auditLogService: AuditLogService,
+    private readonly statsService: StatsService,
+    private readonly pushNotificationService: PushNotificationService,
   ) {
     this.credentials = VtpassCredentialsHelper.getCredentials(configService);
     this.apiKey = this.credentials.apiKey;
@@ -339,7 +346,15 @@ export class CableService {
         }
         const balance_before = Number(wallet.current_balance);
         const balance_after = balance_before - amountNum;
-        await tx.wallet.update({ where: { user_id: userPayload.sub }, data: { current_balance: balance_after } });
+        await tx.wallet.update({
+          where: { user_id: userPayload.sub },
+          data: {
+            current_balance: balance_after,
+            balance_before,
+            balance_after,
+            all_time_withdrawn: { increment: amountNum },
+          },
+        });
 
         return await tx.transactionHistory.create({
           data: {
@@ -453,6 +468,20 @@ export class CableService {
         }
       }
 
+      // Fire-and-forget: audit log + stats
+      this.auditLogService
+        .logTransaction(
+          finalStatus === 'success' ? 'CABLE_PURCHASE' : finalStatus === 'failed' ? 'CABLE_PURCHASE_FAILED' : 'CABLE_PURCHASE',
+          finalStatus === 'success' ? AuditStatus.SUCCESS : finalStatus === 'failed' ? AuditStatus.FAILURE : AuditStatus.PENDING,
+          null,
+          { amount: amountNum, currency: 'NGN', balance_before: Number(createdTx.balance_before), balance_after: Number(createdTx.balance_after), transaction_ref: request_id },
+          { user_id: userPayload.sub, resource_type: 'TransactionHistory', resource_id: createdTx.id, metadata: { serviceID: dto.serviceID, billersCode: dto.billersCode, vtpass_code: responseCode } },
+        )
+        .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
+
+      this.statsService.onTransactionCreated(amountNum, finalStatus, 0).catch((e) => this.logger.warn(`Stats update failed: ${e.message}`));
+      this.statsService.onWalletDebited(amountNum).catch((e) => this.logger.warn(`Stats wallet debit failed: ${e.message}`));
+
       if (isProcessing) {
         const formattedResponse = { id: createdTx.id, ...response.data, status: 'processing', message: 'Transaction is being processed. Use the query endpoint with request_id to check status.', wallet_balance: Number(createdTx.balance_after) };
         return new ApiResponseDto(true, 'Transaction is being processed', formattedResponse);
@@ -463,6 +492,12 @@ export class CableService {
       if (dto.serviceID === 'showmax') {
         formattedResponse.voucher_code = response.data?.purchased_code || null;
         formattedResponse.voucher_codes = response.data?.Voucher || [];
+      }
+
+      if (finalStatus === 'success') {
+        this.pushNotificationService
+          .sendTransactionNotification(userPayload.sub, 'cable', amountNum, 'success', createdTx.id)
+          .catch((e) => this.logger.warn(`Push notification failed: ${e.message}`));
       }
 
       this.logger.log('Cable purchase request completed');
@@ -483,6 +518,16 @@ export class CableService {
       } catch (updateError: any) {
         this.logger.warn(`Could not update transaction status: ${updateError.message || updateError}`);
       }
+
+      this.auditLogService
+        .logTransaction('CABLE_PURCHASE_FAILED', AuditStatus.FAILURE, null,
+          { amount: Number(vtpassAmount), currency: 'NGN', transaction_ref: request_id },
+          { user_id: userPayload.sub, error_message: error.message, metadata: { serviceID: dto.serviceID, billersCode: dto.billersCode } },
+        )
+        .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
+
+      this.statsService.onTransactionCreated(Number(vtpassAmount), 'failed', 0).catch((e) => this.logger.warn(`Stats update failed: ${e.message}`));
+
       if (error instanceof HttpException) {
         throw error;
       }

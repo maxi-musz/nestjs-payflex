@@ -7,6 +7,10 @@ import { PurchaseElectricityDto } from './dto/purchase-electricity.dto';
 import { VerifyMeterDto } from './dto/verify-meter.dto';
 import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
 import { EmailService } from 'src/common/mailer/email.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
+import { StatsService } from 'src/common/stats/stats.service';
+import { PushNotificationService } from 'src/push-notification/push-notification.service';
+import { AuditStatus } from '@prisma/client';
 import * as colors from 'colors';
 
 @Injectable()
@@ -38,6 +42,9 @@ export class ElectricityService {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly auditLogService: AuditLogService,
+    private readonly statsService: StatsService,
+    private readonly pushNotificationService: PushNotificationService,
   ) {
     this.credentials = VtpassCredentialsHelper.getCredentials(configService);
     this.apiKey = this.credentials.apiKey;
@@ -323,7 +330,15 @@ export class ElectricityService {
         }
         const balance_before = Number(wallet.current_balance);
         const balance_after = balance_before - amountNum;
-        await tx.wallet.update({ where: { user_id: userPayload.sub }, data: { current_balance: balance_after } });
+        await tx.wallet.update({
+          where: { user_id: userPayload.sub },
+          data: {
+            current_balance: balance_after,
+            balance_before,
+            balance_after,
+            all_time_withdrawn: { increment: amountNum },
+          },
+        });
 
         this.logger.log(`Wallet balance before: ${balance_before}, after: ${balance_after}`);
 
@@ -420,6 +435,20 @@ export class ElectricityService {
         }
       }
 
+      // Fire-and-forget: audit log + stats
+      this.auditLogService
+        .logTransaction(
+          finalStatus === 'success' ? 'ELECTRICITY_PURCHASE' : finalStatus === 'failed' ? 'ELECTRICITY_PURCHASE_FAILED' : 'ELECTRICITY_PURCHASE',
+          finalStatus === 'success' ? AuditStatus.SUCCESS : finalStatus === 'failed' ? AuditStatus.FAILURE : AuditStatus.PENDING,
+          null,
+          { amount: amountNum, currency: 'NGN', balance_before: Number(createdTx.balance_before), balance_after: Number(createdTx.balance_after), transaction_ref: request_id },
+          { user_id: userPayload.sub, resource_type: 'TransactionHistory', resource_id: createdTx.id, metadata: { serviceID: dto.serviceID, billersCode: dto.billersCode, variation_code: dto.variation_code, vtpass_code: responseCode } },
+        )
+        .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
+
+      this.statsService.onTransactionCreated(amountNum, finalStatus, 0).catch((e) => this.logger.warn(`Stats update failed: ${e.message}`));
+      this.statsService.onWalletDebited(amountNum).catch((e) => this.logger.warn(`Stats wallet debit failed: ${e.message}`));
+
       if (isProcessing) {
         const formattedResponse = {
           id: createdTx.id,
@@ -443,6 +472,9 @@ export class ElectricityService {
       }
 
       if (finalStatus === 'success') {
+        this.pushNotificationService
+          .sendTransactionNotification(userPayload.sub, 'electricity', amountNum, 'success', createdTx.id)
+          .catch((e) => this.logger.warn(`Push notification failed: ${e.message}`));
         try {
           const user = await this.prisma.user.findUnique({
             where: { id: userPayload.sub },
@@ -504,6 +536,16 @@ export class ElectricityService {
       } catch (updateError: any) {
         this.logger.warn(`Could not update transaction status: ${updateError.message || updateError}`);
       }
+
+      this.auditLogService
+        .logTransaction('ELECTRICITY_PURCHASE_FAILED', AuditStatus.FAILURE, null,
+          { amount: amountNum, currency: 'NGN', transaction_ref: request_id },
+          { user_id: userPayload.sub, error_message: error.message, metadata: { serviceID: dto.serviceID, billersCode: dto.billersCode } },
+        )
+        .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
+
+      this.statsService.onTransactionCreated(amountNum, 'failed', 0).catch((e) => this.logger.warn(`Stats update failed: ${e.message}`));
+
       if (error instanceof HttpException) throw error;
       if (error.response) {
         const rawMessage = error.response.data?.response_description || error.response.data?.message || 'Failed to purchase electricity';
@@ -623,6 +665,28 @@ export class ElectricityService {
           }
         }
       });
+
+      if (finalStatus !== 'pending') {
+        this.auditLogService
+          .logTransaction(
+            finalStatus === 'success' ? 'ELECTRICITY_PURCHASE' : 'ELECTRICITY_PURCHASE_FAILED',
+            finalStatus === 'success' ? AuditStatus.SUCCESS : AuditStatus.FAILURE,
+            null,
+            { amount: transaction.amount || 0, currency: 'NGN', transaction_ref: requestId },
+            { user_id: transaction.user_id, resource_type: 'TransactionHistory', resource_id: transaction.id, description: `[Cron requery] Electricity transaction resolved to ${finalStatus}` },
+          )
+          .catch((e) => this.logger.warn(`[Cron] Audit log failed: ${e.message}`));
+
+        this.statsService
+          .onTransactionStatusChanged('pending', finalStatus, transaction.amount || 0, 0)
+          .catch((e) => this.logger.warn(`[Cron] Stats update failed: ${e.message}`));
+
+        if (finalStatus === 'success') {
+          this.pushNotificationService
+            .sendTransactionNotification(transaction.user_id, 'electricity', transaction.amount || 0, 'success', transaction.id)
+            .catch((e) => this.logger.warn(`[Cron] Push notification failed: ${e.message}`));
+        }
+      }
 
       return { updated: true, status: finalStatus };
     } catch (error: any) {

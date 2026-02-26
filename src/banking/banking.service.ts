@@ -10,10 +10,13 @@ import { formatAmount, formatDate } from 'src/common/helper_functions/formatter'
 import { generateSessionId } from 'src/common/helper_functions/generators';
 import { CreateVirtualAccountDto, InitiateTransferDto, VerifyAccountNumberDto } from './dto/accountNo-creation.dto';
 import { ConfigService } from '@nestjs/config';
-import { error } from 'console';
 import { BankProviderFactory } from './bank-providers/bank-provider.factory';
 import { StatsService } from 'src/common/stats/stats.service';
 import { ReferralService } from '../referral/referral.service';
+import { AuditLogService } from 'src/common/audit-log/audit-log.service';
+import { PushNotificationService } from 'src/push-notification/push-notification.service';
+import { EmailService } from 'src/common/mailer/email.service';
+import { AuditStatus } from '@prisma/client';
 
 // Determine Paystack environment key
 const paystackKey =
@@ -44,6 +47,9 @@ export class BankingService {
         private readonly bankProviderFactory: BankProviderFactory,
         private readonly stats: StatsService,
         private readonly referralService: ReferralService,
+        private readonly auditLogService: AuditLogService,
+        private readonly pushNotificationService: PushNotificationService,
+        private readonly emailService: EmailService,
     ) {
         this.apiUrl = 'https://api.flutterwave.com/v3';
         this.secretKey = this.configService.get<string>('FLW_SECRET_KEY') || '';
@@ -173,9 +179,17 @@ export class BankingService {
                 },
             });
 
-            console.log(colors.green(`Transaction saved successfully. ID: ${createdTransaction.id}`));
+            this.logger.log(`Transaction saved successfully. ID: ${createdTransaction.id}`);
             this.stats.onTransactionCreated(dto.amount, 'pending');
-            
+
+            // audit: track that user initiated a paystack funding
+            this.auditLogService
+                .logTransaction('FUND_WALLET_INIT', AuditStatus.PENDING, null,
+                    { amount: dto.amount, currency: 'NGN', transaction_ref: reference },
+                    { user_id: existingUser.id, resource_type: 'TransactionHistory', resource_id: createdTransaction.id },
+                )
+                .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
+
             // // Double-check by querying back from DB
             // const verifySaved = await this.prisma.transactionHistory.findUnique({
             //     where: { id: createdTransaction.id },
@@ -414,37 +428,77 @@ export class BankingService {
                 });
             }
 
-            // We successfully claimed the transaction — now credit the wallet
+            // we claimed it — now credit the wallet atomically
+            const transactionAmount = existingTransaction.amount || 0;
+            const balanceBefore = Number(userWallet.current_balance);
+            const balanceAfter = balanceBefore + transactionAmount;
+
             const { updatedTx, updatedWallet } = await this.prisma.$transaction(async (tx) => {
-                const transaction = await tx.transactionHistory.findUnique({
+                // snapshot balance on the transaction so we can trace it later
+                const transaction = await tx.transactionHistory.update({
                     where: { transaction_reference: reference },
+                    data: { balance_before: balanceBefore, balance_after: balanceAfter },
                     include: { sender_details: true, icon: true },
                 });
 
-                // Update wallet balance atomically
-                const transactionAmount = existingTransaction.amount || 0;
+                // credit wallet + keep wallet-level balance tracking in sync
                 const wallet = await tx.wallet.update({
                     where: { id: userWallet.id },
-                data: {
-                        current_balance: {
-                            increment: transactionAmount
-                        },
-                        all_time_fuunding: {
-                            increment: transactionAmount
-                        },
-                    updatedAt: new Date()
-                }
+                    data: {
+                        current_balance: { increment: transactionAmount },
+                        balance_before: balanceBefore,
+                        balance_after: balanceAfter,
+                        all_time_fuunding: { increment: transactionAmount },
+                        updatedAt: new Date(),
+                    },
                 });
 
                 return { updatedTx: transaction!, updatedWallet: wallet };
             });
 
-            console.log(colors.green(`Payment verified successfully. New balance: ${updatedWallet.current_balance}`));
-            this.stats.onTransactionStatusChanged('pending', 'success', existingTransaction.amount || 0);
-            this.stats.onWalletFunded(existingTransaction.amount || 0);
-            this.referralService.checkAndTriggerReward(existingTransaction.user_id, existingTransaction.amount || 0);
+            this.logger.log(`Payment verified successfully. New balance: ${updatedWallet.current_balance}`);
+            this.stats.onTransactionStatusChanged('pending', 'success', transactionAmount);
+            this.stats.onWalletFunded(transactionAmount);
+            this.referralService.checkAndTriggerReward(existingTransaction.user_id, transactionAmount);
 
-              const formattedResponse = {
+            // audit: funding verified and wallet credited
+            this.auditLogService
+                .logTransaction('FUND_WALLET_COMPLETE', AuditStatus.SUCCESS, null,
+                    { amount: transactionAmount, currency: 'NGN', balance_before: balanceBefore, balance_after: balanceAfter, transaction_ref: reference },
+                    { user_id: userId, resource_type: 'TransactionHistory', resource_id: updatedTx.id },
+                )
+                .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
+
+            // let the user know their wallet was funded
+            this.pushNotificationService
+                .sendTransactionNotification(userId, 'deposit', transactionAmount, 'success', updatedTx.id)
+                .catch((e) => this.logger.warn(`Push notification failed: ${e.message}`));
+
+            // send deposit confirmation email (we already have the template built)
+            try {
+                const user = await this.prisma.user.findUnique({
+                    where: { id: userId },
+                    select: { email: true, first_name: true, accounts: { take: 1, select: { account_number: true, bank_name: true } } },
+                });
+                if (user?.email) {
+                    const acct = user.accounts?.[0];
+                    const txDate = new Date().toLocaleString('en-NG', { dateStyle: 'long', timeStyle: 'short' });
+                    this.emailService.sendDepositNotificationEmail(
+                        user.email,
+                        user.first_name || 'Valued Customer',
+                        transactionAmount,
+                        balanceAfter,
+                        reference,
+                        acct?.account_number || 'N/A',
+                        acct?.bank_name || 'Paystack',
+                        txDate,
+                    ).catch((e) => this.logger.warn(`Deposit email failed: ${e.message}`));
+                }
+            } catch (emailErr: any) {
+                this.logger.warn(`Could not send deposit email: ${emailErr.message}`);
+            }
+
+            const formattedResponse = {
                 id: updatedTx.id,
                 amount: formatAmount(updatedTx.amount ?? 0),
                 transaction_type: updatedTx.transaction_type || "deposit",
@@ -453,9 +507,9 @@ export class BankingService {
                 status: "success",
                 payment_method: "paystack",
                 date: formatDate(updatedTx.updatedAt),
-                balance_after: formatAmount(updatedWallet.current_balance)
-              }
-    
+                balance_after: formatAmount(updatedWallet.current_balance),
+            };
+
             return new ApiResponseDto(true, "Payment verified successfully", formattedResponse);
     
         } catch (error: any) {
@@ -530,22 +584,52 @@ export class BankingService {
                 return { updated: false };
             }
 
+            const txAmount = existingTransaction.amount || 0;
+            const balanceBefore = Number(userWallet.current_balance);
+            const balanceAfter = balanceBefore + txAmount;
+
             await this.prisma.$transaction(async (tx) => {
+                // snapshot balance on the transaction for traceability
                 await tx.transactionHistory.update({
                     where: { transaction_reference: reference },
-                    data: { status: paystackStatus, updatedAt: new Date() },
+                    data: {
+                        status: paystackStatus,
+                        balance_before: balanceBefore,
+                        balance_after: balanceAfter,
+                        updatedAt: new Date(),
+                    },
                 });
+                // credit wallet + keep wallet-level tracking in sync
                 await tx.wallet.update({
                     where: { id: userWallet.id },
                     data: {
-                        current_balance: { increment: existingTransaction.amount || 0 },
-                        all_time_fuunding: { increment: existingTransaction.amount || 0 },
+                        current_balance: { increment: txAmount },
+                        balance_before: balanceBefore,
+                        balance_after: balanceAfter,
+                        all_time_fuunding: { increment: txAmount },
                         updatedAt: new Date(),
                     },
                 });
             });
 
-            this.logger.log(colors.green(`[Cron] Paystack transaction ${reference} requery: verified and wallet credited`));
+            this.logger.log(`[Cron] Paystack transaction ${reference} requery: verified and wallet credited`);
+
+            // everything the verify endpoint does — stats, audit, push, referral
+            this.stats.onTransactionStatusChanged('pending', 'success', txAmount).catch((e) => this.logger.warn(`[Cron] Stats failed: ${e.message}`));
+            this.stats.onWalletFunded(txAmount).catch((e) => this.logger.warn(`[Cron] Stats wallet funded failed: ${e.message}`));
+            this.referralService.checkAndTriggerReward(existingTransaction.user_id, txAmount);
+
+            this.auditLogService
+                .logTransaction('FUND_WALLET_COMPLETE', AuditStatus.SUCCESS, null,
+                    { amount: txAmount, currency: 'NGN', balance_before: balanceBefore, balance_after: balanceAfter, transaction_ref: reference },
+                    { user_id: existingTransaction.user_id, resource_type: 'TransactionHistory', resource_id: existingTransaction.id, description: '[Cron requery] Paystack funding verified' },
+                )
+                .catch((e) => this.logger.warn(`[Cron] Audit log failed: ${e.message}`));
+
+            this.pushNotificationService
+                .sendTransactionNotification(existingTransaction.user_id, 'deposit', txAmount, 'success', existingTransaction.id)
+                .catch((e) => this.logger.warn(`[Cron] Push notification failed: ${e.message}`));
+
             return { updated: true };
         } catch (error: any) {
             console.log(colors.yellow(`[Cron] Paystack requery ${reference} failed: ${error?.message || error}`));
