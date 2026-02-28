@@ -106,6 +106,15 @@ export class NewAuthService {
         metadata: { email: dto.email, reason: 'wrong_password' },
         ...this.deviceFields(req),
       });
+      this.logger.error(`Login failed — wrong password for ${dto.email}`);
+      this.audit.logAuth(AuditAction.LOGIN_FAILED, AuditStatus.FAILURE, req, {
+        user_id: user.id,
+        description: `Login failed — wrong password for ${dto.email}`,
+        resource_type: 'User',
+        resource_id: user.id,
+        metadata: { email: dto.email, reason: 'wrong_password' },
+        ...this.deviceFields(req),
+      });
       throw new UnauthorizedException('Invalid credentials');
     }
 

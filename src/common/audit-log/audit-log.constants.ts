@@ -153,6 +153,12 @@ export const ACTION_CATEGORY_MAP: Record<AuditAction, AuditCategory> = {
   REFERRAL_MANUAL_APPROVE: AuditCategory.ADMIN,
   REFERRAL_MANUAL_REJECT: AuditCategory.ADMIN,
 
+  // Cashback
+  CASHBACK_CONFIG_UPDATE: AuditCategory.ADMIN,
+  CASHBACK_RULE_CREATE: AuditCategory.ADMIN,
+  CASHBACK_RULE_UPDATE: AuditCategory.ADMIN,
+  CASHBACK_RULE_DELETE: AuditCategory.ADMIN,
+
   // Webhooks
   WEBHOOK_PAYSTACK: AuditCategory.WEBHOOK,
   WEBHOOK_FLUTTERWAVE: AuditCategory.WEBHOOK,
@@ -391,6 +397,12 @@ export const ACTION_DESCRIPTION_MAP: Record<AuditAction, string> = {
   REFERRAL_CONFIG_UPDATE: 'Referral config updated',
   REFERRAL_MANUAL_APPROVE: 'Referral manually approved',
   REFERRAL_MANUAL_REJECT: 'Referral manually rejected',
+
+  // Cashback
+  CASHBACK_CONFIG_UPDATE: 'Cashback config updated',
+  CASHBACK_RULE_CREATE: 'Cashback rule created',
+  CASHBACK_RULE_UPDATE: 'Cashback rule updated',
+  CASHBACK_RULE_DELETE: 'Cashback rule deleted',
 
   // Webhooks
   WEBHOOK_PAYSTACK: 'Paystack webhook received',

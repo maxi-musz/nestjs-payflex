@@ -19,6 +19,7 @@ import { CommonModule } from './common/common.module';
 import { SupportModule } from './support/support.module';
 import { EmailModule } from './common/mailer/email.module';
 import { AuditLogModule } from './common/audit-log/audit-log.module';
+import { CashbackModule } from './common/cashback/cashback.module';
 import { NewAuthModule } from './new-auth/new-auth.module';
 import { PermissionsModule } from './admin/unified-admin/permissions/permissions.module';
 import { StatsModule } from './common/stats/stats.module';
@@ -29,6 +30,7 @@ import { AdminSupportModule } from './admin/unified-admin/support/admin-support.
 import { AdminAuditLogsModule } from './admin/unified-admin/audit-logs/admin-audit-logs.module';
 import { ReferralModule } from './referral/referral.module';
 import { AdminReferralsModule } from './admin/unified-admin/referrals/admin-referrals.module';
+import { AdminCashbackModule } from './admin/unified-admin/cashback/admin-cashback.module';
 import { StorageModule } from './storage/storage.module';
 
 @Module({
@@ -40,6 +42,7 @@ import { StorageModule } from './storage/storage.module';
     StorageModule,
     StatsModule,
     AuditLogModule,
+    CashbackModule,
     NewAuthModule,
     PermissionsModule,
     DashboardModule,
@@ -48,6 +51,7 @@ import { StorageModule } from './storage/storage.module';
     AdminSupportModule,
     AdminAuditLogsModule,
     AdminReferralsModule,
+    AdminCashbackModule,
     ReferralModule,
     UserModule, 
     BookmarkModule, 

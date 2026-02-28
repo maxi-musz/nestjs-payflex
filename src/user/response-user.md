@@ -57,6 +57,22 @@ Returns everything the app homepage needs: user info, wallet, accounts (DVA), re
       "updatedAt": "20 Jan 2026"
     },
 
+    "cashback_wallet": {
+      "current_balance": "₦250.00",
+      "all_time_earned": "₦1,500.00",
+      "all_time_withdrawn": "₦1,250.00"
+    },
+
+    "cashback_rates": [
+      { "service": "airtime", "percentage": 2, "is_active": true },
+      { "service": "data", "percentage": 1.5, "is_active": true },
+      { "service": "cable", "percentage": 1, "is_active": true },
+      { "service": "electricity", "percentage": 1, "is_active": true },
+      { "service": "education", "percentage": 0.5, "is_active": true },
+      { "service": "betting", "percentage": 0, "is_active": false },
+      { "service": "international_airtime", "percentage": 1, "is_active": true }
+    ],
+
     "transaction_history": [
       {
         "id": "uuid",
@@ -304,6 +320,32 @@ Updates user profile fields (name, gender, date of birth, etc.).
 | `limits.monthly` | number | Max ₦ per month |
 | `limits.airtimeDaily` | number | Max ₦ airtime per day |
 | `is_active` | boolean | Whether this tier is active in the system |
+
+### Cashback Wallet
+| Field | Type | Notes |
+|---|---|---|
+| `current_balance` | string | Formatted cashback balance the user can spend (e.g. `"₦250.00"`). Shows `"₦0.00"` if user has never earned cashback |
+| `all_time_earned` | string | Total cashback earned across all purchases |
+| `all_time_withdrawn` | string | Total cashback spent (used to pay for purchases) |
+
+**How to use this on the frontend:**
+- Display the cashback balance on the homepage (e.g. a small card or badge next to the main wallet)
+- When `current_balance` is greater than `"₦0.00"`, show a "Use Cashback" toggle on the purchase screens (airtime, data, etc.)
+- When the user toggles "Use Cashback" on, send `use_cashback: true` in the purchase request body — the backend handles the split automatically
+- The cashback balance is separate from the main wallet — it can only be used to partially or fully pay for utility purchases
+
+### Cashback Rates
+| Field | Type | Notes |
+|---|---|---|
+| `service` | string | Service type: `airtime`, `data`, `cable`, `electricity`, `education`, `betting`, `international_airtime` |
+| `percentage` | number | Cashback percentage for this service (e.g. `2` means 2%). Will be `0` if the service is disabled |
+| `is_active` | boolean | Whether cashback is currently active for this service |
+
+**How to use this on the frontend:**
+- Use `cashback_rates` to display a cashback badge on each service quick link (e.g. "2% cashback" on the airtime button)
+- Only show the badge when `is_active` is `true` and `percentage` is greater than `0`
+- If **all** items have `is_active: false`, the admin has turned off the entire cashback program — hide all cashback UI
+- These rates are managed by the admin and can change at any time — always use the latest values from this endpoint
 
 ### Available Tiers (Profile endpoint only)
 Same fields as `current_tier`, plus:

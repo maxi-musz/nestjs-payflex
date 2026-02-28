@@ -8,6 +8,8 @@ import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
 import { PushNotificationService } from 'src/push-notification/push-notification.service';
 import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import { StatsService } from 'src/common/stats/stats.service';
+import { CashbackService, PaymentSplit } from 'src/common/cashback/cashback.service';
+import { ReferralService } from 'src/referral/referral.service';
 import { AuditStatus } from '@prisma/client';
 import {
   validateCredentialsOnInit,
@@ -38,6 +40,8 @@ export class AirtimeService {
     private readonly pushNotificationService: PushNotificationService,
     private readonly auditLogService: AuditLogService,
     private readonly statsService: StatsService,
+    private readonly cashbackService: CashbackService,
+    private readonly referralService: ReferralService,
   ) {
     this.credentials = VtpassCredentialsHelper.getCredentials(configService);
     this.apiKey = this.credentials.apiKey;
@@ -162,6 +166,9 @@ export class AirtimeService {
       );
     }
 
+    // default split — full amount from wallet, 0 from cashback
+    let split: PaymentSplit = { walletCharge: Number(dto.amount), cashbackCharge: 0, cashbackBefore: 0, cashbackAfter: 0 };
+
     try {
       // Validate credentials before making the request
       validateCredentialsForPost(
@@ -183,7 +190,6 @@ export class AirtimeService {
 
       this.logger.log(`Payload: ${JSON.stringify(payload)}`);
       const headers = this.getPostHeaders();
-      // Log headers with masked secret key for debugging
       const maskedHeaders = {
         ...headers,
         'secret-key': maskKey(headers['secret-key']),
@@ -192,10 +198,12 @@ export class AirtimeService {
       this.logger.log(`Headers: ${JSON.stringify(maskedHeaders)}`);
       this.logger.log(`URL: ${url}`);
 
-      // Wallet hold + create pending transaction atomically
+      // if user opted in, deduct what we can from cashback first
+      split = await this.cashbackService.resolvePayment(userPayload.sub, Number(dto.amount), dto.use_cashback === true);
+
+      // wallet hold + create pending transaction atomically
       const description = `VTU ${dto.serviceID.toUpperCase()} to ${dto.phone}`;
       const createdTx = await this.prisma.$transaction(async (tx) => {
-        // Prevent double-deduct: check existing by request_id
         const existing = await tx.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
         if (existing) return existing;
 
@@ -209,23 +217,29 @@ export class AirtimeService {
           throw new HttpException('User wallet not found in database', HttpStatus.BAD_REQUEST);
         }
 
-        this.logger.log(`Balance check: ${wallet.current_balance} >= ${amountNum} → ${Number(wallet.current_balance) >= amountNum ? 'OK' : 'INSUFFICIENT'}`);
-        validateWalletBalance(Number(wallet.current_balance), amountNum);
-
         const balance_before = Number(wallet.current_balance);
-        const balance_after = balance_before - amountNum;
 
-        await tx.wallet.update({
-          where: { user_id: userPayload.sub },
-          data: {
-            current_balance: balance_after,
-            balance_before,
-            balance_after,
-            all_time_withdrawn: { increment: amountNum },
-          },
-        });
+        // only deduct the wallet portion (could be 0 if cashback covered it all)
+        if (split.walletCharge > 0) {
+          this.logger.log(`Balance check: ${wallet.current_balance} >= ${split.walletCharge} → ${balance_before >= split.walletCharge ? 'OK' : 'INSUFFICIENT'}`);
+          validateWalletBalance(balance_before, split.walletCharge);
+        }
 
-        this.logger.log(`Wallet balance before: ${balance_before}, after: ${balance_after}`);
+        const balance_after = balance_before - split.walletCharge;
+
+        if (split.walletCharge > 0) {
+          await tx.wallet.update({
+            where: { user_id: userPayload.sub },
+            data: {
+              current_balance: balance_after,
+              balance_before,
+              balance_after,
+              all_time_withdrawn: { increment: split.walletCharge },
+            },
+          });
+        }
+
+        this.logger.log(`Wallet balance before: ${balance_before}, after: ${balance_after}${split.cashbackCharge > 0 ? ` (₦${split.cashbackCharge} from cashback)` : ''}`);
 
         return await tx.transactionHistory.create({
           data: {
@@ -242,7 +256,11 @@ export class AirtimeService {
             transaction_reference: request_id,
             balance_before,
             balance_after,
-            meta_data: payload,
+            meta_data: {
+              ...payload,
+              cashback_used: split.cashbackCharge,
+              wallet_charged: split.walletCharge,
+            },
           }
         });
       });
@@ -280,10 +298,17 @@ export class AirtimeService {
 
       // Only refund and throw error for actual failures or reversals
       if (shouldRefund) {
-        await this.prisma.wallet.update({
-          where: { user_id: userPayload.sub },
-          data: { current_balance: { increment: Number(dto.amount) } }
-        });
+        if (split.walletCharge > 0) {
+          await this.prisma.wallet.update({
+            where: { user_id: userPayload.sub },
+            data: { current_balance: { increment: split.walletCharge } }
+          });
+        }
+        // return cashback portion to cashback wallet
+        if (split.cashbackCharge > 0) {
+          this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge)
+            .catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
+        }
         
         if (shouldThrow) {
           this.logger.error(`VTpass response: code=${responseCode}, status=${txStatus}, description="${responseDescription}"`);
@@ -320,6 +345,17 @@ export class AirtimeService {
       this.statsService
         .onWalletDebited(Number(dto.amount))
         .catch((e) => this.logger.warn(`Stats wallet debit failed: ${e.message}`));
+
+      // cashback + referral reward on successful purchase
+      if (finalStatus === 'success') {
+        this.cashbackService
+          .processCashback({ userId: userPayload.sub, amount: Number(dto.amount), serviceType: 'airtime', transactionRef: request_id })
+          .catch((e) => this.logger.warn(`Cashback processing failed: ${e.message}`));
+
+        this.referralService
+          .checkAndTriggerReward(userPayload.sub, Number(dto.amount))
+          .catch((e) => this.logger.warn(`Referral reward check failed: ${e.message}`));
+      }
 
       // If processing, return success response with pending status info
       if (finalStatus === 'pending') {
@@ -377,11 +413,18 @@ export class AirtimeService {
               where: { transaction_reference: request_id },
               data: { status: 'failed', meta_data: errorMeta },
             });
-            await tx.wallet.update({
-              where: { user_id: userPayload.sub },
-              data: { current_balance: { increment: Number(dto.amount) } },
-            });
+            if (split.walletCharge > 0) {
+              await tx.wallet.update({
+                where: { user_id: userPayload.sub },
+                data: { current_balance: { increment: split.walletCharge } },
+              });
+            }
           });
+          // return cashback portion to cashback wallet
+          if (split.cashbackCharge > 0) {
+            this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge)
+              .catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
+          }
           this.logger.log(`Transaction ${request_id} marked as failed, wallet refunded`);
         } else {
           // Transaction was never created (error before DB commit) — create a failed record
@@ -598,6 +641,14 @@ export class AirtimeService {
           this.pushNotificationService
             .sendTransactionNotification(transaction.user_id, 'airtime', transaction.amount || 0, 'success', transaction.id)
             .catch((e) => this.logger.warn(`[Cron] Push notification failed: ${e.message}`));
+
+          this.cashbackService
+            .processCashback({ userId: transaction.user_id, amount: Number(transaction.amount || 0), serviceType: 'airtime', transactionRef: requestId })
+            .catch((e) => this.logger.warn(`[Cron] Cashback processing failed: ${e.message}`));
+
+          this.referralService
+            .checkAndTriggerReward(transaction.user_id, Number(transaction.amount || 0))
+            .catch((e) => this.logger.warn(`[Cron] Referral reward check failed: ${e.message}`));
         }
       }
 

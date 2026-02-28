@@ -78,6 +78,7 @@ model User {
   paystackTransferRecipients PaystackTransferRecipient[] @relation("PaystackTransferRecipients")
   auditLogs                  AuditLog[]                  @relation("UserAuditLogs")
   permissions                Permission[]                @relation("UserPermissions")
+  cashbackWallet             CashbackWallet?
 }
 
 model ProfileImage {
@@ -547,8 +548,8 @@ model Referral {
   referral_code_used String
 
   // Status tracking
-  status          ReferralStatus @default(pending)
-  is_active       Boolean        @default(true)
+  status    ReferralStatus @default(pending)
+  is_active Boolean        @default(true)
 
   // Milestone tracking
   referee_registered    Boolean   @default(false)
@@ -570,9 +571,9 @@ model Referral {
   referee_reward_tx_ref   String?
 
   // Admin override
-  manually_approved    Boolean  @default(false)
+  manually_approved    Boolean @default(false)
   manually_approved_by String?
-  manually_rejected    Boolean  @default(false)
+  manually_rejected    Boolean @default(false)
   rejection_reason     String?
 
   // Metadata
@@ -591,12 +592,12 @@ model Referral {
 }
 
 enum ReferralStatus {
-  pending        // Referee registered but hasn't met reward conditions
-  eligible       // Conditions met, reward ready to be issued
-  rewarded       // Both sides rewarded
+  pending // Referee registered but hasn't met reward conditions
+  eligible // Conditions met, reward ready to be issued
+  rewarded // Both sides rewarded
   partially_rewarded // Only one side rewarded (edge case)
-  expired        // Referral expired (e.g. 90 days, no first tx)
-  rejected       // Admin manually rejected
+  expired // Referral expired (e.g. 90 days, no first tx)
+  rejected // Admin manually rejected
 }
 
 model ReferralConfig {
@@ -613,9 +614,9 @@ model ReferralConfig {
   reward_trigger String @default("first_transaction") // first_transaction | kyc_verified | registration
 
   // Limits
-  max_referrals_per_user    Int @default(50)
-  referral_expiry_days      Int @default(90)
-  min_transaction_amount    Float @default(100)
+  max_referrals_per_user Int   @default(50)
+  referral_expiry_days   Int   @default(90)
+  min_transaction_amount Float @default(100)
 
   // Updated by
   updated_by String?
@@ -695,8 +696,8 @@ model SupportConversation {
 
   // Timestamps
   last_message_at DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   // Relations
   messages  SupportMessage[]
@@ -724,8 +725,8 @@ model ConversationHandover {
   status        HandoverStatus @default(pending)
 
   responded_at DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@index([conversation_id])
   @@index([from_admin_id])
@@ -1207,6 +1208,12 @@ enum AuditAction {
   REFERRAL_MANUAL_APPROVE
   REFERRAL_MANUAL_REJECT
 
+  // ── Cashback ─────────────────────────────────────────────
+  CASHBACK_CONFIG_UPDATE
+  CASHBACK_RULE_CREATE
+  CASHBACK_RULE_UPDATE
+  CASHBACK_RULE_DELETE
+
   // ── Webhooks ───────────────────────────────────────────────
   WEBHOOK_PAYSTACK
   WEBHOOK_FLUTTERWAVE
@@ -1285,7 +1292,7 @@ model Permission {
 
   // Who this permission is assigned to (null = permission definition/template)
   user_id String?
-  user    User?  @relation("UserPermissions", fields: [user_id], references: [id], onDelete: Cascade)
+  user    User?   @relation("UserPermissions", fields: [user_id], references: [id], onDelete: Cascade)
 
   // Who granted this permission
   granted_by String?
@@ -1380,6 +1387,105 @@ model SystemStats {
   @@map("system_stats")
 }
 
+// ─── Cashback System ────────────────────────────────────────
+
+// one row — master switch + global defaults for the cashback program
+model CashbackConfig {
+  id String @id @default("cashback_config")
+
+  is_active Boolean @default(false)
+
+  // fallback percentage if a service doesn't have its own rule
+  default_percentage Float @default(0)
+
+  // cap per single transaction (so we don't bleed on huge purchases)
+  max_cashback_per_transaction Float @default(500)
+
+  // daily cap per user
+  max_cashback_per_day Float @default(2000)
+
+  // minimum transaction amount to qualify
+  min_transaction_amount Float @default(100)
+
+  updated_by String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("cashback_config")
+}
+
+// per-service cashback percentages — one row per service type
+model CashbackRule {
+  id String @id @default(uuid())
+
+  service_type CashbackServiceType @unique
+  is_active    Boolean             @default(true)
+
+  // percentage of the transaction amount the user gets back
+  percentage Float @default(0)
+
+  // override the global caps at service level (null = use global)
+  max_cashback_amount    Float?
+  min_transaction_amount Float?
+
+  updated_by String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("cashback_rules")
+}
+
+enum CashbackServiceType {
+  airtime
+  data
+  cable
+  electricity
+  education
+  betting
+  international_airtime
+}
+
+// separate wallet just for cashback — keeps it clean from main balance
+model CashbackWallet {
+  id      String @id @default(uuid())
+  user_id String @unique
+
+  current_balance    Float @default(0)
+  all_time_earned    Float @default(0)
+  all_time_withdrawn Float @default(0)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [user_id], references: [id])
+
+  @@map("cashback_wallets")
+}
+
+// every cashback credit/debit for audit trail
+model CashbackHistory {
+  id      String @id @default(uuid())
+  user_id String
+
+  amount             Float
+  service_type       CashbackServiceType
+  transaction_ref    String
+  percentage_applied Float
+
+  // the original purchase amount that triggered this cashback
+  source_amount Float
+
+  status String @default("credited") // credited | reversed | withdrawn
+
+  createdAt DateTime @default(now())
+
+  @@index([user_id])
+  @@index([transaction_ref])
+  @@map("cashback_history")
+}
+
 // Resources that can be permission-gated
 enum PermissionResource {
   DASHBOARD
@@ -1396,4 +1502,5 @@ enum PermissionResource {
   ACCOUNTS
   PUSH_NOTIFICATIONS
   SETTINGS
+  CASHBACK
 }

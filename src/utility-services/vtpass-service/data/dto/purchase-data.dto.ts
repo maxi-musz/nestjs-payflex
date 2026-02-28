@@ -1,4 +1,4 @@
-import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export enum DataServiceId {
   MTN = 'mtn-data',
@@ -12,26 +12,30 @@ export enum DataServiceId {
 
 export class PurchaseDataDto {
   @IsEnum(DataServiceId)
-  serviceID: DataServiceId; // e.g., 'mtn-data', 'airtel-data', 'glo-data', 'etisalat-data'
+  serviceID: DataServiceId;
 
   @IsString()
   @IsNotEmpty()
-  billersCode: string; // The phone number to purchase data for
+  billersCode: string;
 
   @IsString()
   @IsNotEmpty()
-  variation_code: string; // The variation code from GET VARIATIONS endpoint
+  variation_code: string;
 
   @IsNumber()
   @IsOptional()
-  amount?: number; // Optional: variation_code determines the price
+  amount?: number;
 
   @IsString()
   @IsOptional()
-  phone: string; // The phone number of the customer or recipient
+  phone: string;
 
   @IsString()
   @IsOptional()
-  request_id?: string; // Optional: for idempotency - if provided, checks for existing transaction
+  request_id?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  use_cashback?: boolean;
 }
 

@@ -1,4 +1,4 @@
-import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class PurchaseAirtimeDto {
   @IsString()
@@ -14,7 +14,11 @@ export class PurchaseAirtimeDto {
 
   @IsString()
   @IsOptional()
-  request_id?: string; // Optional: for idempotency - if provided, checks for existing transaction
+  request_id?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  use_cashback?: boolean;
 }
 
 

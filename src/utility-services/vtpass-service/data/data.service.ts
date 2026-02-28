@@ -10,6 +10,8 @@ import { categorizeVariations } from '../variation-categorizer.helper';
 import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import { StatsService } from 'src/common/stats/stats.service';
 import { PushNotificationService } from 'src/push-notification/push-notification.service';
+import { CashbackService, PaymentSplit } from 'src/common/cashback/cashback.service';
+import { ReferralService } from 'src/referral/referral.service';
 import { AuditStatus } from '@prisma/client';
 
 @Injectable()
@@ -28,6 +30,8 @@ export class DataService {
     private readonly auditLogService: AuditLogService,
     private readonly statsService: StatsService,
     private readonly pushNotificationService: PushNotificationService,
+    private readonly cashbackService: CashbackService,
+    private readonly referralService: ReferralService,
   ) {
     this.credentials = VtpassCredentialsHelper.getCredentials(configService);
     this.apiKey = this.credentials.apiKey;
@@ -268,6 +272,8 @@ export class DataService {
     let smipayAmount = 0;
     let markupPercent = 0;
     let markupValue = 0;
+    // default split — full amount from wallet, 0 from cashback
+    let split: PaymentSplit = { walletCharge: 0, cashbackCharge: 0, cashbackBefore: 0, cashbackAfter: 0 };
 
     try {
       // Get variation amount if not provided
@@ -295,8 +301,6 @@ export class DataService {
       markupValue = underThreshold ? 0 : (vtpassAmount * markupPercent) / 100;
       smipayAmount = Math.floor(underThreshold ? vtpassAmount : vtpassAmount + markupValue);
 
-      // Phone should be the phone number where data is needed (same as billersCode)
-      // According to VTpass docs: phone is "The phone number of the customer or recipient of this service"
       const phone = dto.billersCode.trim();
 
       const payload = {
@@ -310,39 +314,50 @@ export class DataService {
 
       this.logger.log(`Payload: ${JSON.stringify(payload)}`);
 
-      // Wallet hold + create pending transaction atomically
+      // if user opted in, deduct what we can from cashback first
+      split = await this.cashbackService.resolvePayment(userPayload.sub, smipayAmount, dto.use_cashback === true);
+
+      // wallet hold + create pending transaction atomically
       const provider = this.getProviderLabelFromServiceId(dto.serviceID);
       const description = `${provider} DATA - ${dto.billersCode}`;
-      // Derive plain provider name (e.g. "mtn" from "mtn-data") for reporting
       const providerName = dto.serviceID.split('-')[0];
       const createdTx = await this.prisma.$transaction(async (tx) => {
-        // Prevent double-deduct: check existing by request_id
         const existing = await tx.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
         if (existing) return existing;
 
         const wallet = await tx.wallet.findUnique({ where: { user_id: userPayload.sub } });
-        const amountNum = Number(smipayAmount);
-        if (!wallet || Number(wallet.current_balance) < amountNum) {
-          throw new HttpException('Insufficient wallet balance', HttpStatus.BAD_REQUEST);
+
+        if (!wallet) {
+          throw new HttpException('User wallet not found in database', HttpStatus.BAD_REQUEST);
         }
 
         const balance_before = Number(wallet.current_balance);
-        const balance_after = balance_before - amountNum;
 
-        await tx.wallet.update({
-          where: { user_id: userPayload.sub },
-          data: {
-            current_balance: balance_after,
-            balance_before,
-            balance_after,
-            all_time_withdrawn: { increment: amountNum },
-          },
-        });
+        // only deduct the wallet portion (could be 0 if cashback covered it all)
+        if (split.walletCharge > 0) {
+          if (balance_before < split.walletCharge) {
+            throw new HttpException('Insufficient wallet balance', HttpStatus.BAD_REQUEST);
+          }
+        }
+
+        const balance_after = balance_before - split.walletCharge;
+
+        if (split.walletCharge > 0) {
+          await tx.wallet.update({
+            where: { user_id: userPayload.sub },
+            data: {
+              current_balance: balance_after,
+              balance_before,
+              balance_after,
+              all_time_withdrawn: { increment: split.walletCharge },
+            },
+          });
+        }
 
         return await tx.transactionHistory.create({
           data: ({
             user_id: userPayload.sub,
-            amount: amountNum,
+            amount: smipayAmount,
             provider: providerName,
             vtpass_amount: vtpassAmount,
             smipay_amount: smipayAmount,
@@ -358,7 +373,11 @@ export class DataService {
             transaction_reference: request_id,
             balance_before,
             balance_after,
-            meta_data: payload,
+            meta_data: {
+              ...payload,
+              cashback_used: split.cashbackCharge,
+              wallet_charged: split.walletCharge,
+            },
           } as any)
         });
       });
@@ -433,10 +452,16 @@ export class DataService {
 
       // Only refund and throw error for actual failures or reversals
       if (shouldRefund) {
-        await this.prisma.wallet.update({
-          where: { user_id: userPayload.sub },
-          data: { current_balance: { increment: Number(smipayAmount) } }
-        });
+        if (split.walletCharge > 0) {
+          await this.prisma.wallet.update({
+            where: { user_id: userPayload.sub },
+            data: { current_balance: { increment: split.walletCharge } }
+          });
+        }
+        if (split.cashbackCharge > 0) {
+          this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge)
+            .catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
+        }
         
         if (shouldThrow) {
           throw new HttpException(errorMessage, HttpStatus.BAD_REQUEST);
@@ -473,6 +498,17 @@ export class DataService {
         .onWalletDebited(smipayAmount)
         .catch((e) => this.logger.warn(`Stats wallet debit failed: ${e.message}`));
 
+      // cashback + referral reward on successful purchase
+      if (finalStatus === 'success') {
+        this.cashbackService
+          .processCashback({ userId: userPayload.sub, amount: smipayAmount, serviceType: 'data', transactionRef: request_id })
+          .catch((e) => this.logger.warn(`Cashback processing failed: ${e.message}`));
+
+        this.referralService
+          .checkAndTriggerReward(userPayload.sub, smipayAmount)
+          .catch((e) => this.logger.warn(`Referral reward check failed: ${e.message}`));
+      }
+
       // If processing, return success response with pending status info
       if (isProcessing) {
         const formattedResponse = {
@@ -507,7 +543,6 @@ export class DataService {
       try {
         const existingForUpdate = await this.prisma.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
         if (existingForUpdate) {
-          const amount = Number(smipayAmount) || 0;
           await this.prisma.$transaction(async (tx) => {
             await tx.transactionHistory.update({
               where: { transaction_reference: request_id },
@@ -530,16 +565,22 @@ export class DataService {
                 } 
               }
             });
-            if (amount > 0) {
+            if (split.walletCharge > 0) {
               await tx.wallet.update({
                 where: { user_id: userPayload.sub },
-                data: { current_balance: { increment: Number(amount) } }
+                data: { current_balance: { increment: split.walletCharge } }
               });
             }
           });
         }
       } catch (updateError: any) {
         this.logger.warn(`Could not update transaction status: ${updateError.message || updateError}`);
+      }
+
+      // return cashback portion to cashback wallet (covers both tx-exists and pre-tx-failure cases)
+      if (split.cashbackCharge > 0) {
+        this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge)
+          .catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
       }
 
       this.auditLogService
@@ -738,6 +779,14 @@ export class DataService {
           this.pushNotificationService
             .sendTransactionNotification(transaction.user_id, 'data', transaction.amount || 0, 'success', transaction.id)
             .catch((e) => this.logger.warn(`[Cron] Push notification failed: ${e.message}`));
+
+          this.cashbackService
+            .processCashback({ userId: transaction.user_id, amount: Number(transaction.amount || 0), serviceType: 'data', transactionRef: requestId })
+            .catch((e) => this.logger.warn(`[Cron] Cashback processing failed: ${e.message}`));
+
+          this.referralService
+            .checkAndTriggerReward(transaction.user_id, Number(transaction.amount || 0))
+            .catch((e) => this.logger.warn(`[Cron] Referral reward check failed: ${e.message}`));
         }
       }
 

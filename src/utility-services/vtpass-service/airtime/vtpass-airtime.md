@@ -106,7 +106,8 @@ Content-Type: application/json
   "serviceID": "mtn",
   "amount": 100,
   "phone": "08012345678",
-  "request_id": "202601271200abc123" // Optional: for idempotency
+  "request_id": "202601271200abc123",
+  "use_cashback": true
 }
 ```
 
@@ -118,6 +119,7 @@ Content-Type: application/json
 | `amount` | number | Yes | Amount to purchase (in Naira). Must be within provider's min/max limits |
 | `phone` | string | Yes | Phone number to recharge (11 digits, e.g., "08012345678") |
 | `request_id` | string | No | Unique transaction reference for idempotency. If not provided, system generates one automatically |
+| `use_cashback` | boolean | No | If `true`, the backend deducts what it can from the user's cashback wallet first, and only charges the remainder from the main wallet. Defaults to `false` if not sent |
 
 **Success Response (200 OK):**
 
@@ -258,10 +260,15 @@ The API uses the following status codes from VTpass:
 - Exceeding rate limits returns a 429 error
 - There are no daily caps — users can purchase as much as their wallet balance allows
 
-### 3. Wallet Balance
+### 3. Wallet Balance & Cashback
 
 - Transactions are deducted from the user's wallet balance immediately
-- If the transaction fails or is reversed, the amount is automatically refunded
+- If `use_cashback: true` is sent and the user has a cashback balance, the backend splits the payment automatically:
+  - Cashback wallet is charged first (up to its full balance)
+  - The remainder comes from the main wallet
+  - Example: ₦1,000 airtime with ₦250 cashback balance → ₦250 from cashback + ₦750 from wallet
+- If the transaction fails or is reversed, both the wallet and cashback portions are refunded automatically
+- On a successful purchase, the user also **earns** cashback (if the admin has enabled it for that service) — this is separate from spending cashback
 - Always check wallet balance before allowing purchase
 
 ### 4. Product Whitelisting
@@ -318,7 +325,8 @@ const purchaseAirtime = async (
   token: string,
   serviceID: string,
   amount: number,
-  phone: string
+  phone: string,
+  useCashback: boolean = false
 ) => {
   const response = await fetch('/api/v1/vtpass/airtime/purchase', {
     method: 'POST',
@@ -329,7 +337,8 @@ const purchaseAirtime = async (
     body: JSON.stringify({
       serviceID,
       amount,
-      phone
+      phone,
+      use_cashback: useCashback
     })
   });
   return await response.json();
@@ -341,12 +350,13 @@ try {
   const providers = await getServiceIds(userToken);
   console.log('Available providers:', providers.data);
 
-  // Purchase MTN airtime
+  // Purchase MTN airtime (with cashback toggle from UI)
   const result = await purchaseAirtime(
     userToken,
     'mtn',
     100,
-    '08012345678'
+    '08012345678',
+    true // user toggled "Use Cashback" on
   );
 
   if (result.success) {
@@ -381,7 +391,8 @@ curl -X POST "https://your-api.com/api/v1/vtpass/airtime/purchase" \
   -d '{
     "serviceID": "mtn",
     "amount": 100,
-    "phone": "08012345678"
+    "phone": "08012345678",
+    "use_cashback": true
   }'
 ```
 
@@ -413,6 +424,11 @@ For issues related to:
 
 ## Changelog
 
+- **2026-02-26**: Cashback integration
+  - Added `use_cashback` field to purchase request
+  - Backend now splits payment between cashback wallet and main wallet when `use_cashback: true`
+  - Successful purchases earn cashback automatically (if admin has enabled it for the service)
+  - Refunds now correctly return amounts to both wallets on failure
 - **2026-01-27**: Initial documentation
   - Added service IDs endpoint
   - Added purchase endpoint

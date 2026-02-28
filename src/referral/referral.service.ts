@@ -2,7 +2,7 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { StatsService } from '../common/stats/stats.service';
 import { AuditLogService } from '../common/audit-log/audit-log.service';
-import { AuditAction, AuditStatus, ReferralStatus, Prisma } from '@prisma/client';
+import { AuditAction, AuditStatus, ReferralStatus, ReferralConfig, Prisma } from '@prisma/client';
 import { ApiResponseDto } from '../common/dto/api-response.dto';
 import * as colors from 'colors';
 
@@ -10,11 +10,21 @@ import * as colors from 'colors';
 export class ReferralService {
   private readonly logger = new Logger(ReferralService.name);
 
+  // config rarely changes — cache it so we don't hit DB on every purchase
+  private configCache: { config: ReferralConfig; expiresAt: number } | null = null;
+  private static readonly CACHE_TTL_MS = 60_000;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly stats: StatsService,
     private readonly audit: AuditLogService,
   ) {}
+
+  /** Admin service calls this after updating config so changes take effect immediately */
+  invalidateCache(): void {
+    this.configCache = null;
+    this.logger.log('Referral config cache invalidated');
+  }
 
   // ──────────────────────────────────────────────────────────
   // VALIDATE — Check referral code before registration
@@ -482,6 +492,9 @@ export class ReferralService {
       },
     });
 
+    // admin changed something — clear the cache so it takes effect immediately
+    this.invalidateCache();
+
     if (req) {
       this.audit.logAdmin(AuditAction.REFERRAL_CONFIG_UPDATE, AuditStatus.SUCCESS, adminId, req, {
         description: 'Referral config updated',
@@ -595,6 +608,12 @@ export class ReferralService {
   // ──────────────────────────────────────────────────────────
 
   private async getConfig() {
+    const now = Date.now();
+
+    if (this.configCache && now < this.configCache.expiresAt) {
+      return this.configCache.config;
+    }
+
     let config = await this.prisma.referralConfig.findUnique({
       where: { id: 'referral_config' },
     });
@@ -612,6 +631,8 @@ export class ReferralService {
         },
       });
     }
+
+    this.configCache = { config, expiresAt: now + ReferralService.CACHE_TTL_MS };
     return config;
   }
 }

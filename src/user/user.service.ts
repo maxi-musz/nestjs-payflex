@@ -9,6 +9,7 @@ import { first } from "rxjs";
 import * as bcrypt from "bcrypt";
 import { DvaProviderFactory } from "src/banking/dva-providers/dva-provider.factory";
 import { StatsService } from "src/common/stats/stats.service";
+import { CashbackService } from "src/common/cashback/cashback.service";
 
 function maskAccountNumber(accountNumber: string): string {
     if (!accountNumber) return "";
@@ -120,6 +121,7 @@ function getUserTier(user: any): TierInfo {
         private configService: ConfigService,
         private dvaProviderFactory: DvaProviderFactory,
         private stats: StatsService,
+        private cashbackService: CashbackService,
     ) {}
 
     async fetchUserDashboard(userPayload: any) {
@@ -238,6 +240,12 @@ function getUserTier(user: any): TierInfo {
                 this.logger.log(colors.green("User wallet created successfully"))
             }
 
+            // Fetch cashback wallet + active cashback rates (rates served from memory cache)
+            const [cashbackWallet, cashbackRates] = await Promise.all([
+                this.prisma.cashbackWallet.findUnique({ where: { user_id: userPayload.sub } }),
+                this.cashbackService.getActiveRates(),
+            ]);
+
             // Fetch user first name and display image 
             const user = await this.prisma.user.findUnique({
                 where: { id: userPayload.sub },
@@ -263,29 +271,29 @@ function getUserTier(user: any): TierInfo {
             });
 
             // Check if existing account is a DVA (has provider in metadata)
-            const isDva = existingDva && (existingDva.meta_data as any)?.provider;
+            // const isDva = existingDva && (existingDva.meta_data as any)?.provider;
 
-            if (!isDva) {
-                const isDevelopment = process.env.NODE_ENV === 'development';
-                if (isDevelopment) {
-                    this.logger.log(colors.yellow("Skipping DVA auto-assignment in development mode"));
-                } else {
-                    this.logger.log(colors.cyan("User does not have a DVA, auto-assigning..."));
-                    try {
-                        const dvaProvider = this.dvaProviderFactory.getProvider();
-                        await dvaProvider.assignDva(
-                            userPayload.sub,
-                            user.email || null,
-                            {
-                                phone_number: user.phone_number || undefined,
-                            }
-                        );
-                        this.logger.log(colors.green("DVA auto-assigned successfully"));
-                    } catch (dvaError: any) {
-                        this.logger.error(colors.red(`Failed to auto-assign DVA: ${dvaError.message}`));
-                    }
-                }
-            }
+            // if (!isDva) {
+            //     const isDevelopment = process.env.NODE_ENV === 'development';
+            //     if (isDevelopment) {
+            //         this.logger.log(colors.yellow("Skipping DVA auto-assignment in development mode"));
+            //     } else {
+            //         this.logger.log(colors.cyan("User does not have a DVA, auto-assigning..."));
+            //         try {
+            //             const dvaProvider = this.dvaProviderFactory.getProvider();
+            //             await dvaProvider.assignDva(
+            //                 userPayload.sub,
+            //                 user.email || null,
+            //                 {
+            //                     phone_number: user.phone_number || undefined,
+            //                 }
+            //             );
+            //             this.logger.log(colors.green("DVA auto-assigned successfully"));
+            //         } catch (dvaError: any) {
+            //             this.logger.error(colors.red(`Failed to auto-assign DVA: ${dvaError.message}`));
+            //         }
+            //     }
+            // }
 
             const latest_transaction_history = await this.prisma.transactionHistory.findMany({
                 where: { user_id: userPayload.sub },
@@ -341,6 +349,12 @@ function getUserTier(user: any): TierInfo {
                     createdAt: userWallet?.createdAt,
                     updatedAt: formatDate(userWallet?.updatedAt ?? new Date()),
                 },
+                cashback_wallet: {
+                    current_balance: formatAmount(cashbackWallet?.current_balance ?? 0),
+                    all_time_earned: formatAmount(cashbackWallet?.all_time_earned ?? 0),
+                    all_time_withdrawn: formatAmount(cashbackWallet?.all_time_withdrawn ?? 0),
+                },
+                cashback_rates: cashbackRates,
                 transaction_history: latest_transaction_history.map(tx => ({
                     id: tx.id,
                     amount: tx.amount,
