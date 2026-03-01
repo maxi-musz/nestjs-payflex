@@ -63,7 +63,7 @@ export class BankingService {
  
     // 
     async initialisePaystackFunding(dto: PaystackFundingDto, userPayload: any) {
-        console.log("Inititating paystack funding")
+        this.logger.log(`[Paystack Init] User ${userPayload.email} initiating ₦${dto.amount} wallet funding`);
         // Determine Paystack environment key
         const paystackKey =
             process.env.NODE_ENV === "development"
@@ -215,7 +215,7 @@ export class BankingService {
     }
 
     async verifyPaystackFunding(dto: PaystackFundingVerifyDto, userPayload: any) {
-        console.log(colors.cyan(`Verifying wallet funding with Paystack. Reference: ${dto.reference}`));
+        this.logger.log(`[Paystack Verify] User ${userPayload.email} verifying reference: ${dto.reference}`);
     
         try {
             // 1. Validate reference is provided
@@ -389,8 +389,20 @@ export class BankingService {
             const paystackKoboAmount = paystackData.amount;
     
             if (paystackStatus !== 'success') {
-                console.log(colors.yellow(`Payment status from Paystack: ${paystackStatus}`));
-                return new ApiResponseDto(false, `Payment was not successful. Status: ${paystackStatus}`);
+                const terminalStatus = paystackStatus === 'abandoned' ? 'cancelled' : 'failed';
+                const userMessage = paystackStatus === 'abandoned'
+                    ? 'Payment was cancelled.'
+                    : `Payment failed. Status: ${paystackStatus}`;
+
+                await this.prisma.transactionHistory.updateMany({
+                    where: { transaction_reference: reference, status: 'pending' },
+                    data: { status: terminalStatus, updatedAt: new Date() },
+                });
+                this.logger.log(`Transaction ${reference} marked as ${terminalStatus} (Paystack status: ${paystackStatus})`);
+                this.stats.onTransactionStatusChanged('pending', terminalStatus, existingTransaction.amount || 0)
+                    .catch((e) => this.logger.warn(`Stats failed: ${e.message}`));
+
+                return new ApiResponseDto(false, userMessage, { status: terminalStatus });
             }
     
             // 12. Validate that the amount paid matches the expected amount
@@ -529,6 +541,56 @@ export class BankingService {
     }
 
     /**
+     * Cancel a pending Paystack funding transaction.
+     * Called by frontend when user abandons the Paystack payment page.
+     * Idempotent — safe to call multiple times for the same reference.
+     */
+    async cancelPaystackFunding(dto: { reference: string }, userPayload: any): Promise<ApiResponseDto<any>> {
+        this.logger.log(`[Paystack Cancel] User ${userPayload.email} cancelling reference: ${dto.reference}`);
+        const reference = dto.reference?.trim();
+        if (!reference) {
+            this.logger.log(colors.red('Transaction reference is required.'));
+            return new ApiResponseDto(false, 'Transaction reference is required.');
+        }
+
+        const transaction = await this.prisma.transactionHistory.findFirst({
+            where: { transaction_reference: reference },
+        });
+
+        if (!transaction) {
+            this.logger.log(colors.red('Transaction not found.'));
+            return new ApiResponseDto(false, 'Transaction not found.');
+        }
+
+        if (transaction.user_id !== userPayload.sub) {
+            return new ApiResponseDto(false, 'Transaction not found.');
+        }
+
+        if (transaction.status === 'cancelled') {
+            return new ApiResponseDto(true, 'Payment already cancelled.', { status: 'cancelled' });
+        }
+
+        if (transaction.status === 'success') {
+            return new ApiResponseDto(false, 'This payment has already been completed and cannot be cancelled.');
+        }
+
+        if (transaction.status === 'failed') {
+            return new ApiResponseDto(true, 'Payment already failed.', { status: 'failed' });
+        }
+
+        await this.prisma.transactionHistory.update({
+            where: { id: transaction.id },
+            data: { status: 'cancelled', updatedAt: new Date() },
+        });
+
+        this.logger.log(`Transaction ${reference} cancelled by user ${userPayload.sub}`);
+        this.stats.onTransactionStatusChanged('pending', 'cancelled', transaction.amount || 0)
+            .catch((e) => this.logger.warn(`Stats failed: ${e.message}`));
+
+        return new ApiResponseDto(true, 'Payment cancelled successfully.', { status: 'cancelled' });
+    }
+
+    /**
      * Requery a pending Paystack (deposit) transaction with Paystack API and update DB if successful.
      * Used by cron to reconcile pending funding transactions.
      */
@@ -576,6 +638,16 @@ export class BankingService {
             const paystackStatus = paystackData.status;
             const paystackKoboAmount = paystackData.amount;
             const amountInKobo = existingTransaction.amount * 100;
+
+            if (paystackStatus === 'abandoned' || paystackStatus === 'failed') {
+                const terminalStatus = paystackStatus === 'abandoned' ? 'cancelled' : 'failed';
+                await this.prisma.transactionHistory.update({
+                    where: { id: existingTransaction.id },
+                    data: { status: terminalStatus, updatedAt: new Date() },
+                });
+                this.logger.log(`[Cron] Paystack transaction ${reference} marked as ${terminalStatus} (Paystack: ${paystackStatus})`);
+                return { updated: true };
+            }
 
             if (paystackStatus !== 'success' || paystackKoboAmount !== amountInKobo) {
                 return { updated: false };

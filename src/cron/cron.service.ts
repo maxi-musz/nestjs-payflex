@@ -52,18 +52,24 @@ export class CronService implements OnModuleInit {
     cron.schedule('*/5 * * * *', async () => {
       await this.requeryPendingPaystackTransactions();
     });
+
+    // Stale Paystack transaction cleanup - runs every hour
+    // Catches abandoned/failed payments that slipped through (user closed browser, network issues)
+    cron.schedule('0 * * * *', async () => {
+      await this.cleanupStalePaystackTransactions();
+    });
   }
 
   /**
    * Requery pending VTpass transactions (data and airtime)
-   * Runs every 3 minutes, queries transactions up to 3 times max
+   * Runs every 25 minutes, queries transactions up to 2 times max
    */
   private async requeryPendingVtpassTransactions(): Promise<void> {
     try {
       this.logger.log('[Cron] Starting requery of pending VTpass transactions...');
 
       // Find pending transactions (data and airtime) created in the last 30 minutes
-      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+      const twentyFiveMinutesAgo = new Date(Date.now() - 25 * 60 * 1000);
       
       const pendingTransactions = await this.prisma.transactionHistory.findMany({
         where: {
@@ -72,7 +78,7 @@ export class CronService implements OnModuleInit {
             in: ['data', 'airtime'],
           },
           createdAt: {
-            gte: thirtyMinutesAgo,
+            gte: twentyFiveMinutesAgo,
           },
           transaction_reference: {
             not: null,
@@ -131,20 +137,20 @@ export class CronService implements OnModuleInit {
 
   /**
    * Requery pending Paystack (deposit) transactions.
-   * Runs every 5 minute.
+   * Runs every 25 minutes.
    */
   private async requeryPendingPaystackTransactions(): Promise<void> {
     try {
       this.logger.log(colors.america('[Cron] Starting requery of pending Paystack transactions...'));
 
-      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+      const twentyFiveMinutesAgo = new Date(Date.now() - 25 * 60 * 1000);
       const pending = await this.prisma.transactionHistory.findMany({
         where: {
           status: 'pending',
           transaction_type: 'deposit',
           payment_method: 'paystack',
           transaction_reference: { not: null },
-          createdAt: { gte: thirtyMinutesAgo },
+          createdAt: { gte: twentyFiveMinutesAgo },
         },
         select: { transaction_reference: true },
         take: 50,
@@ -176,6 +182,61 @@ export class CronService implements OnModuleInit {
       this.logger.log('[Cron] Finished requerying pending Paystack transactions');
     } catch (error: any) {
       this.logger.error(`[Cron] Error in Paystack requery job: ${error.message}`, error.stack);
+    }
+  }
+
+  /**
+   * Cleanup stale Paystack pending deposits older than 2 hours.
+   * These are transactions where the user likely closed the browser, lost network,
+   * or abandoned payment without the frontend ever calling verify or cancel.
+   * We verify each with Paystack and mark them as cancelled/failed/success accordingly.
+   */
+  private async cleanupStalePaystackTransactions(): Promise<void> {
+    try {
+      this.logger.log('[Cron] Starting stale Paystack transaction cleanup...');
+
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      const stale = await this.prisma.transactionHistory.findMany({
+        where: {
+          status: 'pending',
+          transaction_type: 'deposit',
+          payment_channel: 'paystack',
+          transaction_reference: { not: null },
+          createdAt: { lt: twoHoursAgo },
+        },
+        select: { transaction_reference: true },
+        take: 100,
+      });
+
+      const refs = stale
+        .map((t) => t.transaction_reference)
+        .filter((r): r is string => r != null);
+
+      if (refs.length === 0) {
+        this.logger.log('[Cron] No stale Paystack transactions to clean up');
+        return;
+      }
+
+      this.logger.log(`[Cron] Found ${refs.length} stale Paystack transactions (>2h old)`);
+
+      const batchSize = 5;
+      for (let i = 0; i < refs.length; i += batchSize) {
+        const batch = refs.slice(i, i + batchSize);
+        await Promise.all(
+          batch.map((ref) =>
+            this.bankingService.requeryPendingPaystackTransaction(ref).catch((err: any) => {
+              this.logger.error(`[Cron] Stale cleanup ${ref}: ${err?.message || err}`);
+            }),
+          ),
+        );
+        if (i + batchSize < refs.length) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+
+      this.logger.log('[Cron] Finished stale Paystack transaction cleanup');
+    } catch (error: any) {
+      this.logger.error(`[Cron] Error in stale Paystack cleanup: ${error.message}`, error.stack);
     }
   }
 }

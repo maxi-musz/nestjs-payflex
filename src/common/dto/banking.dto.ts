@@ -16,6 +16,12 @@ export class PaystackFundingVerifyDto {
     reference: string;
 }
 
+export class PaystackFundingCancelDto {
+    @IsString()
+    @IsNotEmpty()
+    reference: string;
+}
+
 export enum TransferCurrency {
     usd = 'usd',
     eur = 'eur',
