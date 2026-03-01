@@ -114,7 +114,37 @@ Returns everything the app homepage needs: user info, wallet, accounts (DVA), re
         "airtimeDaily": 50000
       },
       "is_active": true
-    }
+    },
+
+    "reward_banners": [
+      {
+        "type": "referral",
+        "title": "Refer & Earn 🎁",
+        "message": "Invite a friend and earn ₦200.00 when they make their first transaction! Your friend gets ₦100.00 too.",
+        "data": {
+          "referrer_reward": 200,
+          "referee_reward": 100
+        }
+      },
+      {
+        "type": "cashback",
+        "title": "Cashback is Live 💰",
+        "message": "Earn cashback on every purchase you make on SmiPay — airtime, data, bills and more. The more you transact, the more you earn!",
+        "data": {
+          "max_per_transaction": 500,
+          "max_per_day": 2000
+        }
+      },
+      {
+        "type": "first_transaction",
+        "title": "Welcome Bonus 🎉",
+        "message": "Make your first transaction and earn ₦100.00 instantly! This is our gift to you for getting started.",
+        "data": {
+          "reward_amount": 100,
+          "min_transaction_amount": 100
+        }
+      }
+    ]
   }
 }
 ```
@@ -346,6 +376,84 @@ Updates user profile fields (name, gender, date of birth, etc.).
 - Only show the badge when `is_active` is `true` and `percentage` is greater than `0`
 - If **all** items have `is_active: false`, the admin has turned off the entire cashback program — hide all cashback UI
 - These rates are managed by the admin and can change at any time — always use the latest values from this endpoint
+
+### Reward Banners (Homepage only)
+
+An array of 0–3 banner objects for a horizontally scrolling promotional carousel on the homepage. Each banner represents an active reward program the user can benefit from. **If the array is empty, there are no active promotions — hide the carousel entirely.**
+
+| Field | Type | Notes |
+|---|---|---|
+| `type` | string | Banner type: `"referral"`, `"cashback"`, or `"first_transaction"` — use this to apply distinct styling/colors per banner |
+| `title` | string | Short headline with emoji (e.g. `"Refer & Earn 🎁"`) — display as the banner title |
+| `message` | string | Ready-to-display promotional text with real amounts from the admin config. Includes ₦ formatting. |
+| `data` | object | Raw numeric values in case you want to format differently or build custom UI (see below) |
+
+#### Banner-specific `data` fields
+
+**`type: "referral"`**
+
+| Field | Type | Notes |
+|---|---|---|
+| `data.referrer_reward` | number | ₦ the referrer earns (e.g. `200`) |
+| `data.referee_reward` | number | ₦ the referred friend earns (e.g. `100`) |
+
+**`type: "cashback"`**
+
+| Field | Type | Notes |
+|---|---|---|
+| `data.max_per_transaction` | number | Maximum ₦ cashback per single purchase |
+| `data.max_per_day` | number | Maximum ₦ cashback per day across all purchases |
+
+**`type: "first_transaction"`**
+
+| Field | Type | Notes |
+|---|---|---|
+| `data.reward_amount` | number | ₦ bonus the user will receive on their first transaction |
+| `data.min_transaction_amount` | number | Minimum ₦ the first transaction must be to qualify |
+
+#### When each banner appears / disappears
+
+| Banner | Shows when | Hides when |
+|---|---|---|
+| **referral** | Admin has enabled the referral program | Referral program is turned off |
+| **cashback** | Admin has enabled the cashback program | Cashback program is turned off |
+| **first_transaction** | Program is active AND user has NOT yet received the bonus AND current date is within the campaign window | User already received the bonus, OR program is off, OR outside campaign dates |
+
+#### How to use on the frontend
+
+- Render the `reward_banners` array as a **horizontally scrolling banner carousel** on the homepage
+- Use the `type` field to apply distinct background colors / gradients per banner (e.g. purple for referral, green for cashback, gold for first transaction)
+- Display `title` as the headline and `message` as the body text
+- If you need custom formatting, use the raw numbers in `data` instead of the pre-formatted `message`
+- The `first_transaction` banner is **personalized** — it only appears for users who haven't earned the bonus yet, so it acts as a call-to-action for new users
+- When a user taps a banner, navigate to the relevant screen (referral → share referral code, cashback → purchase screen, first_transaction → purchase screen)
+- The array order is: referral first, cashback second, first_transaction third (if all three are active)
+
+#### Example: All three banners active (new user)
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  ◀  [ Refer & Earn 🎁 ]  [ Cashback is Live 💰 ]  [ Welcome Bonus 🎉 ]  ▶  │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Example: Only cashback active (existing user who already got first-tx bonus, referral off)
+
+```
+┌──────────────────────────────────────────────┐
+│          [ Cashback is Live 💰 ]              │
+└──────────────────────────────────────────────┘
+```
+
+#### Example: No active programs
+
+```json
+"reward_banners": []
+```
+
+No carousel rendered.
+
+---
 
 ### Available Tiers (Profile endpoint only)
 Same fields as `current_tier`, plus:

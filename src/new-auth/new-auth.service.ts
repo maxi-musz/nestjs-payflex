@@ -172,20 +172,27 @@ export class NewAuthService {
   async requestEmailVerification(dto: RequestEmailVerificationDto, req: Request) {
     this.logger.log(`Request email verification for ${dto.email}`);
 
-    const defaultTier = await this.prisma.tier.findFirst({
+    let defaultTier = await this.prisma.tier.findFirst({
       where: { order: 1 },
       orderBy: { order: 'asc' },
     });
     if (!defaultTier) {
-      await this.audit.logAuth(AuditAction.EMAIL_OTP_REQUEST, AuditStatus.FAILURE, req, {
-        description: `Email verification blocked — tier service not available (no tier with order 1)`,
-        metadata: { email: dto.email, reason: 'tier_service_unavailable' },
-        ...this.deviceFields(req),
+      this.logger.warn('No tier with order 1 found — auto-creating default Tier 1');
+      defaultTier = await this.prisma.tier.create({
+        data: {
+          tier: 'VERIFIED',
+          name: 'Tier 1',
+          description: 'For email verified users',
+          is_active: true,
+          order: 1,
+          requirements: ['email_verification'],
+          single_transaction_limit: 500000,
+          daily_limit: 2000000,
+          monthly_limit: 50000000,
+          airtime_daily_limit: 50000,
+        },
       });
-      this.logger.error('Error connecting to Tier service. No tier with order 1 found');
-      throw new ServiceUnavailableException(
-        'Error connecting toTier service. Please try again later or contact support.',
-      );
+      this.logger.log(`Default Tier 1 created successfully (id: ${defaultTier.id})`);
     }
 
     const existingUser = await this.prisma.user.findUnique({

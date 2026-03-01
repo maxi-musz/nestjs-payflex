@@ -10,6 +10,8 @@ import * as bcrypt from "bcrypt";
 import { DvaProviderFactory } from "src/banking/dva-providers/dva-provider.factory";
 import { StatsService } from "src/common/stats/stats.service";
 import { CashbackService } from "src/common/cashback/cashback.service";
+import { ReferralService } from "src/referral/referral.service";
+import { FirstTxRewardService } from "src/common/first-tx-reward/first-tx-reward.service";
 
 function maskAccountNumber(accountNumber: string): string {
     if (!accountNumber) return "";
@@ -122,6 +124,8 @@ function getUserTier(user: any): TierInfo {
         private dvaProviderFactory: DvaProviderFactory,
         private stats: StatsService,
         private cashbackService: CashbackService,
+        private referralService: ReferralService,
+        private firstTxRewardService: FirstTxRewardService,
     ) {}
 
     async fetchUserDashboard(userPayload: any) {
@@ -271,46 +275,70 @@ function getUserTier(user: any): TierInfo {
             });
 
             // Check if existing account is a DVA (has provider in metadata)
-            // const isDva = existingDva && (existingDva.meta_data as any)?.provider;
-
-            // if (!isDva) {
-            //     const isDevelopment = process.env.NODE_ENV === 'development';
-            //     if (isDevelopment) {
-            //         this.logger.log(colors.yellow("Skipping DVA auto-assignment in development mode"));
-            //     } else {
-            //         this.logger.log(colors.cyan("User does not have a DVA, auto-assigning..."));
-            //         try {
-            //             const dvaProvider = this.dvaProviderFactory.getProvider();
-            //             await dvaProvider.assignDva(
-            //                 userPayload.sub,
-            //                 user.email || null,
-            //                 {
-            //                     phone_number: user.phone_number || undefined,
-            //                 }
-            //             );
-            //             this.logger.log(colors.green("DVA auto-assigned successfully"));
-            //         } catch (dvaError: any) {
-            //             this.logger.error(colors.red(`Failed to auto-assign DVA: ${dvaError.message}`));
-            //         }
-            //     }
-            // }
-
-            const latest_transaction_history = await this.prisma.transactionHistory.findMany({
-                where: { user_id: userPayload.sub },
-                orderBy: { createdAt: 'desc' },
-                take: 3,
-                include: {
-                    sender_details: true,
-                    icon: true
-                }
-            })
-
-            // Fetch accounts again (in case DVA was just assigned)
-            const accounts = await this.prisma.account.findMany({
-                where: { user_id: userPayload.sub },
-            })
+           
+            const [latest_transaction_history, accounts, referralConfig, cashbackConfig, firstTxConfig, firstTxAlreadyReceived] = await Promise.all([
+                this.prisma.transactionHistory.findMany({
+                    where: { user_id: userPayload.sub },
+                    orderBy: { createdAt: 'desc' },
+                    take: 3,
+                    include: { sender_details: true, icon: true },
+                }),
+                this.prisma.account.findMany({
+                    where: { user_id: userPayload.sub },
+                }),
+                this.prisma.referralConfig.findUnique({ where: { id: 'referral_config' } }),
+                this.prisma.cashbackConfig.findUnique({ where: { id: 'cashback_config' } }),
+                this.prisma.firstTxRewardConfig.findUnique({ where: { id: 'first_tx_reward_config' } }),
+                this.prisma.firstTxRewardHistory.findUnique({ where: { user_id: userPayload.sub } }),
+            ]);
 
             const createdCurrencies = new Set(accounts.map(account => account.currency));
+
+            // ── Build reward banners for homepage carousel ──
+            const reward_banners: { type: string; title: string; message: string; data?: Record<string, any> }[] = [];
+
+            if (referralConfig?.is_active) {
+                reward_banners.push({
+                    type: 'referral',
+                    title: 'Refer & Earn 🎁',
+                    message: `Invite a friend and earn ₦${formatAmount(referralConfig.referrer_reward_amount)} when they make their first transaction! Your friend gets ₦${formatAmount(referralConfig.referee_reward_amount)} too.`,
+                    data: {
+                        referrer_reward: referralConfig.referrer_reward_amount,
+                        referee_reward: referralConfig.referee_reward_amount,
+                    },
+                });
+            }
+
+            if (cashbackConfig?.is_active) {
+                reward_banners.push({
+                    type: 'cashback',
+                    title: 'Cashback is Live 💰',
+                    message: `Earn cashback on every purchase you make on SmiPay — airtime, data, bills and more. The more you transact, the more you earn!`,
+                    data: {
+                        max_per_transaction: cashbackConfig.max_cashback_per_transaction,
+                        max_per_day: cashbackConfig.max_cashback_per_day,
+                    },
+                });
+            }
+
+            if (firstTxConfig?.is_active && !firstTxAlreadyReceived) {
+                const now = new Date();
+                const withinWindow =
+                    (!firstTxConfig.start_date || now >= firstTxConfig.start_date) &&
+                    (!firstTxConfig.end_date || now <= firstTxConfig.end_date);
+
+                if (withinWindow) {
+                    reward_banners.push({
+                        type: 'first_transaction',
+                        title: 'Welcome Bonus 🎉',
+                        message: `Make your first transaction and earn ₦${formatAmount(firstTxConfig.reward_amount)} instantly! This is our gift to you for getting started.`,
+                        data: {
+                            reward_amount: firstTxConfig.reward_amount,
+                            min_transaction_amount: firstTxConfig.min_transaction_amount,
+                        },
+                    });
+                }
+            }
 
             const formattedResponse = {
                 user: {
@@ -410,9 +438,11 @@ function getUserTier(user: any): TierInfo {
                         limits: determinedTier.limits,
                         is_active: true,
                     };
-                })()
+                })(),
+                reward_banners,
             }
             console.log(colors.magenta(`User data for ${user.email} for app homepage successfully retrieved`))
+            // console.log(colors.magenta(`User data for ${user.email} for app homepage successfully retrieved: ${JSON.stringify(formattedResponse)}`))
             return new ApiResponseDto(
                 true, 
                 `User data ${user.email} for app homepage successfully retrieved`, 
