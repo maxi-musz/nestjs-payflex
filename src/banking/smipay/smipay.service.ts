@@ -5,7 +5,6 @@ import { FindUserByTagDto, SendMoneyByTagDto } from './dto/smipay-transfer.dto';
 import { generateSessionId, generateUniqueTransactionReference } from 'src/common/helper_functions/generators';
 import * as colors from 'colors/safe';
 import { StatsService } from 'src/common/stats/stats.service';
-import { ReferralService } from '../../referral/referral.service';
 
 @Injectable()
 export class SmipayService {
@@ -14,7 +13,6 @@ export class SmipayService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stats: StatsService,
-    private readonly referralService: ReferralService,
   ) {}
 
   /**
@@ -306,7 +304,6 @@ export class SmipayService {
         this.stats.onTransactionCreated(dto.amount, 'success');
         this.stats.onWalletDebited(dto.amount);
         this.stats.onWalletFunded(dto.amount);
-        this.referralService.checkAndTriggerReward(sender.id, dto.amount);
 
         return new ApiResponseDto(
           true,

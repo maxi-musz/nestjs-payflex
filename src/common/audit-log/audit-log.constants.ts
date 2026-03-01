@@ -159,6 +159,14 @@ export const ACTION_CATEGORY_MAP: Record<AuditAction, AuditCategory> = {
   CASHBACK_RULE_UPDATE: AuditCategory.ADMIN,
   CASHBACK_RULE_DELETE: AuditCategory.ADMIN,
 
+  // First Tx Reward
+  FIRST_TX_REWARD_CONFIG_UPDATE: AuditCategory.ADMIN,
+
+  // Notification Campaigns
+  NOTIFICATION_CAMPAIGN_CREATE: AuditCategory.ADMIN,
+  NOTIFICATION_CAMPAIGN_SEND: AuditCategory.ADMIN,
+  NOTIFICATION_CAMPAIGN_CANCEL: AuditCategory.ADMIN,
+
   // Webhooks
   WEBHOOK_PAYSTACK: AuditCategory.WEBHOOK,
   WEBHOOK_FLUTTERWAVE: AuditCategory.WEBHOOK,
@@ -243,6 +251,14 @@ export const ACTION_SEVERITY_MAP: Partial<Record<AuditAction, AuditSeverity>> = 
   USER_ACTIVATE: AuditSeverity.MEDIUM,
   USER_ROLE_CHANGE: AuditSeverity.HIGH,
   USER_TIER_CHANGE: AuditSeverity.MEDIUM,
+
+  // First Tx Reward
+  FIRST_TX_REWARD_CONFIG_UPDATE: AuditSeverity.MEDIUM,
+
+  // Notification Campaigns
+  NOTIFICATION_CAMPAIGN_CREATE: AuditSeverity.MEDIUM,
+  NOTIFICATION_CAMPAIGN_SEND: AuditSeverity.MEDIUM,
+  NOTIFICATION_CAMPAIGN_CANCEL: AuditSeverity.MEDIUM,
 };
 
 /**
@@ -403,6 +419,14 @@ export const ACTION_DESCRIPTION_MAP: Record<AuditAction, string> = {
   CASHBACK_RULE_CREATE: 'Cashback rule created',
   CASHBACK_RULE_UPDATE: 'Cashback rule updated',
   CASHBACK_RULE_DELETE: 'Cashback rule deleted',
+
+  // First Tx Reward
+  FIRST_TX_REWARD_CONFIG_UPDATE: 'First-tx reward config updated',
+
+  // Notification Campaigns
+  NOTIFICATION_CAMPAIGN_CREATE: 'Notification campaign created',
+  NOTIFICATION_CAMPAIGN_SEND: 'Notification campaign sent',
+  NOTIFICATION_CAMPAIGN_CANCEL: 'Notification campaign cancelled',
 
   // Webhooks
   WEBHOOK_PAYSTACK: 'Paystack webhook received',

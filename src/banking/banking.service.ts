@@ -12,7 +12,6 @@ import { CreateVirtualAccountDto, InitiateTransferDto, VerifyAccountNumberDto } 
 import { ConfigService } from '@nestjs/config';
 import { BankProviderFactory } from './bank-providers/bank-provider.factory';
 import { StatsService } from 'src/common/stats/stats.service';
-import { ReferralService } from '../referral/referral.service';
 import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import { PushNotificationService } from 'src/push-notification/push-notification.service';
 import { EmailService } from 'src/common/mailer/email.service';
@@ -46,7 +45,6 @@ export class BankingService {
         private readonly prisma: PrismaService,
         private readonly bankProviderFactory: BankProviderFactory,
         private readonly stats: StatsService,
-        private readonly referralService: ReferralService,
         private readonly auditLogService: AuditLogService,
         private readonly pushNotificationService: PushNotificationService,
         private readonly emailService: EmailService,
@@ -459,7 +457,6 @@ export class BankingService {
             this.logger.log(`Payment verified successfully. New balance: ${updatedWallet.current_balance}`);
             this.stats.onTransactionStatusChanged('pending', 'success', transactionAmount);
             this.stats.onWalletFunded(transactionAmount);
-            this.referralService.checkAndTriggerReward(existingTransaction.user_id, transactionAmount);
 
             // audit: funding verified and wallet credited
             this.auditLogService
@@ -614,10 +611,9 @@ export class BankingService {
 
             this.logger.log(`[Cron] Paystack transaction ${reference} requery: verified and wallet credited`);
 
-            // everything the verify endpoint does — stats, audit, push, referral
+            // everything the verify endpoint does — stats, audit, push
             this.stats.onTransactionStatusChanged('pending', 'success', txAmount).catch((e) => this.logger.warn(`[Cron] Stats failed: ${e.message}`));
             this.stats.onWalletFunded(txAmount).catch((e) => this.logger.warn(`[Cron] Stats wallet funded failed: ${e.message}`));
-            this.referralService.checkAndTriggerReward(existingTransaction.user_id, txAmount);
 
             this.auditLogService
                 .logTransaction('FUND_WALLET_COMPLETE', AuditStatus.SUCCESS, null,

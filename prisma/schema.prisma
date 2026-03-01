@@ -248,6 +248,7 @@ enum TransactionType {
   education
   betting
   referral_bonus
+  first_tx_bonus
 }
 
 enum CreditDebit {
@@ -1214,6 +1215,14 @@ enum AuditAction {
   CASHBACK_RULE_UPDATE
   CASHBACK_RULE_DELETE
 
+  // ── First Tx Reward ─────────────────────────────────────────
+  FIRST_TX_REWARD_CONFIG_UPDATE
+
+  // ── Notification Campaigns ─────────────────────────────────
+  NOTIFICATION_CAMPAIGN_CREATE
+  NOTIFICATION_CAMPAIGN_SEND
+  NOTIFICATION_CAMPAIGN_CANCEL
+
   // ── Webhooks ───────────────────────────────────────────────
   WEBHOOK_PAYSTACK
   WEBHOOK_FLUTTERWAVE
@@ -1503,4 +1512,125 @@ enum PermissionResource {
   PUSH_NOTIFICATIONS
   SETTINGS
   CASHBACK
+  FIRST_TX_REWARD
+  NOTIFICATIONS
+}
+
+// ─── First Transaction Reward ────────────────────────────────
+
+model FirstTxRewardConfig {
+  id String @id @default("first_tx_reward_config")
+
+  is_active Boolean @default(false)
+
+  reward_amount          Float @default(100)
+  min_transaction_amount Float @default(100)
+
+  // JSON array of TransactionType strings that qualify, e.g. ["airtime","data","transfer"]
+  eligible_transaction_types Json @default("[\"airtime\",\"data\",\"transfer\",\"deposit\",\"cable\",\"electricity\",\"education\",\"betting\"]")
+
+  // Campaign budget — stops issuing when total given reaches this. null = unlimited
+  budget_limit Float?
+
+  // Maximum number of unique users who can receive. null = unlimited
+  max_recipients Int?
+
+  // Campaign window — reward only issued within this period. null = no restriction
+  start_date DateTime?
+  end_date   DateTime?
+
+  // Whether user must be KYC-verified to qualify
+  require_kyc Boolean @default(false)
+
+  updated_by String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("first_tx_reward_config")
+}
+
+// One row per user who received the bonus — user_id is unique (one-time reward)
+model FirstTxRewardHistory {
+  id      String @id @default(uuid())
+  user_id String @unique
+
+  reward_amount   Float
+  transaction_ref String @unique
+
+  source_transaction_ref  String
+  source_transaction_type String
+  source_amount           Float
+
+  createdAt DateTime @default(now())
+
+  @@index([user_id])
+  @@index([transaction_ref])
+  @@index([createdAt])
+  @@map("first_tx_reward_history")
+}
+
+// ─── Notification Campaigns ──────────────────────────────────
+
+enum NotificationTargetType {
+  all
+  individual
+  filtered
+}
+
+enum NotificationCampaignStatus {
+  draft
+  scheduled
+  sending
+  sent
+  failed
+  cancelled
+}
+
+model NotificationCampaign {
+  id String @id @default(uuid())
+
+  title            String
+  subject          String
+  content_markdown String   @db.Text
+  content_html     String   @db.Text
+
+  target_type    NotificationTargetType
+  target_filters Json?
+  target_emails  Json?
+
+  status        NotificationCampaignStatus @default(draft)
+  scheduled_for DateTime?
+  sent_at       DateTime?
+
+  total_recipients Int @default(0)
+  sent_count       Int @default(0)
+  failed_count     Int @default(0)
+
+  created_by String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  logs NotificationLog[]
+
+  @@index([status])
+  @@index([scheduled_for])
+  @@map("notification_campaigns")
+}
+
+model NotificationLog {
+  id          String @id @default(uuid())
+  campaign_id String
+  user_id     String?
+  email       String
+  status      String @default("pending")
+  error_message String?
+
+  createdAt DateTime @default(now())
+
+  campaign NotificationCampaign @relation(fields: [campaign_id], references: [id])
+
+  @@index([campaign_id])
+  @@index([email])
+  @@map("notification_logs")
 }

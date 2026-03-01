@@ -401,3 +401,35 @@ International airtime endpoints are protected by the same rate limiting as other
 | POST | `/purchase` | Purchase international airtime | JWT + RateLimit |
 | POST | `/query` | Check transaction status | JWT + RateLimit |
 
+---
+
+## Wallet Balance & Rewards
+
+- Transactions are deducted from the user's wallet balance immediately
+- If the transaction fails or is reversed, the wallet is refunded automatically
+- Always check wallet balance before allowing purchase
+
+### Rewards on Successful Purchase
+
+On a successful international airtime purchase, the backend automatically triggers these reward checks (all fire-and-forget — they never block or affect the purchase response):
+
+| Reward | What happens | Notes |
+|--------|-------------|-------|
+| **Cashback** | User earns a % of the purchase amount into their **cashback wallet** | Only if admin has enabled cashback for `international_airtime`. Percentage and caps are managed via admin cashback config. |
+| **Referral** | If the user was referred by someone, the referrer may earn a reward | Only triggers if referral program is active and conditions are met |
+| **First Transaction Bonus** | If this is the user's very first successful transaction, they may earn a welcome bonus | Only triggers once per user, ever. Only if admin has enabled the first-tx program. |
+
+**Frontend does NOT need to do anything special for these rewards.** They happen entirely on the backend. However, you may want to:
+- Show a toast/notification if the user earned cashback (listen for push notifications)
+- Display the user's cashback wallet balance somewhere in the app (use the cashback balance endpoint)
+
+---
+
+## Changelog
+
+- **2026-02-28**: Rewards integration
+  - Successful international airtime purchases now earn cashback automatically (if admin has enabled it for `international_airtime`)
+  - Referral reward checks now trigger on successful international airtime purchase
+  - First transaction bonus checks now trigger on successful international airtime purchase
+- **2026-02-25**: Initial documentation
+

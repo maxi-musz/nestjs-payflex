@@ -10,6 +10,9 @@ import { EmailService } from 'src/common/mailer/email.service';
 import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import { StatsService } from 'src/common/stats/stats.service';
 import { PushNotificationService } from 'src/push-notification/push-notification.service';
+import { CashbackService } from 'src/common/cashback/cashback.service';
+import { ReferralService } from 'src/referral/referral.service';
+import { FirstTxRewardService } from 'src/common/first-tx-reward/first-tx-reward.service';
 import { AuditStatus } from '@prisma/client';
 
 @Injectable()
@@ -29,6 +32,9 @@ export class CableService {
     private readonly auditLogService: AuditLogService,
     private readonly statsService: StatsService,
     private readonly pushNotificationService: PushNotificationService,
+    private readonly cashbackService: CashbackService,
+    private readonly referralService: ReferralService,
+    private readonly firstTxRewardService: FirstTxRewardService,
   ) {
     this.credentials = VtpassCredentialsHelper.getCredentials(configService);
     this.apiKey = this.credentials.apiKey;
@@ -498,6 +504,18 @@ export class CableService {
         this.pushNotificationService
           .sendTransactionNotification(userPayload.sub, 'cable', amountNum, 'success', createdTx.id)
           .catch((e) => this.logger.warn(`Push notification failed: ${e.message}`));
+
+        this.cashbackService
+          .processCashback({ userId: userPayload.sub, amount: amountNum, serviceType: 'cable', transactionRef: request_id })
+          .catch((e) => this.logger.warn(`Cashback processing failed: ${e.message}`));
+
+        this.referralService
+          .checkAndTriggerReward(userPayload.sub, amountNum)
+          .catch((e) => this.logger.warn(`Referral reward check failed: ${e.message}`));
+
+        this.firstTxRewardService
+          .checkAndReward({ userId: userPayload.sub, amount: amountNum, transactionType: 'cable', transactionRef: request_id })
+          .catch((e) => this.logger.warn(`First-tx reward check failed: ${e.message}`));
       }
 
       this.logger.log('Cable purchase request completed');

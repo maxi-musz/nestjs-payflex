@@ -31,6 +31,9 @@ import { AdminAuditLogsModule } from './admin/unified-admin/audit-logs/admin-aud
 import { ReferralModule } from './referral/referral.module';
 import { AdminReferralsModule } from './admin/unified-admin/referrals/admin-referrals.module';
 import { AdminCashbackModule } from './admin/unified-admin/cashback/admin-cashback.module';
+import { AdminFirstTxRewardModule } from './admin/unified-admin/first-tx-reward/admin-first-tx-reward.module';
+import { AdminNotificationsModule } from './admin/unified-admin/notifications/admin-notifications.module';
+import { FirstTxRewardModule } from './common/first-tx-reward/first-tx-reward.module';
 import { StorageModule } from './storage/storage.module';
 
 @Module({
@@ -43,6 +46,7 @@ import { StorageModule } from './storage/storage.module';
     StatsModule,
     AuditLogModule,
     CashbackModule,
+    FirstTxRewardModule,
     NewAuthModule,
     PermissionsModule,
     DashboardModule,
@@ -52,6 +56,8 @@ import { StorageModule } from './storage/storage.module';
     AdminAuditLogsModule,
     AdminReferralsModule,
     AdminCashbackModule,
+    AdminFirstTxRewardModule,
+    AdminNotificationsModule,
     ReferralModule,
     UserModule, 
     BookmarkModule, 

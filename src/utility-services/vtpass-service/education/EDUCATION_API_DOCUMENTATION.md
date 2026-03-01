@@ -630,3 +630,39 @@ All endpoints are rate-limited per user and per IP to prevent abuse.
 | `waec-registration` | WAEC Registration | `tokens[]`, `pin` | Single token returned per purchase |
 | `waec` | WAEC Result Checker | `cards[]` with `{Serial, Pin}` | Supports quantity > 1, returns array of cards |
 | `jamb` | JAMB PIN | `pin` | Requires Profile ID verification first |
+
+---
+
+## Wallet Balance & Rewards
+
+- Transactions are deducted from the user's wallet balance immediately
+- The amount is determined by the fixed variation price × quantity — user does NOT enter an amount
+- If the transaction fails or is reversed, the wallet is refunded automatically
+- Always check wallet balance before allowing purchase
+
+### Rewards on Successful Purchase
+
+On a successful education purchase, the backend automatically triggers these reward checks (all fire-and-forget — they never block or affect the purchase response):
+
+| Reward | What happens | Notes |
+|--------|-------------|-------|
+| **Cashback** | User earns a % of the purchase amount into their **cashback wallet** | Only if admin has enabled cashback for `education`. Percentage and caps are managed via admin cashback config. |
+| **Referral** | If the user was referred by someone, the referrer may earn a reward | Only triggers if referral program is active and conditions are met |
+| **First Transaction Bonus** | If this is the user's very first successful transaction, they may earn a welcome bonus | Only triggers once per user, ever. Only if admin has enabled the first-tx program. |
+
+These rewards also trigger on **cron requery** — if a pending education transaction is resolved to success by the background job, the same cashback/referral/first-tx checks fire at that point.
+
+**Frontend does NOT need to do anything special for these rewards.** They happen entirely on the backend. However, you may want to:
+- Show a toast/notification if the user earned cashback (listen for push notifications)
+- Display the user's cashback wallet balance somewhere in the app (use the cashback balance endpoint)
+
+---
+
+## Changelog
+
+- **2026-02-28**: Rewards integration
+  - Successful education purchases now earn cashback automatically (if admin has enabled it for `education`)
+  - Referral reward checks now trigger on successful education purchase
+  - First transaction bonus checks now trigger on successful education purchase
+  - Rewards also fire when pending transactions are resolved to success via cron requery
+- **2026-02-25**: Initial documentation

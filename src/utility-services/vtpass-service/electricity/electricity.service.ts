@@ -10,6 +10,9 @@ import { EmailService } from 'src/common/mailer/email.service';
 import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import { StatsService } from 'src/common/stats/stats.service';
 import { PushNotificationService } from 'src/push-notification/push-notification.service';
+import { CashbackService } from 'src/common/cashback/cashback.service';
+import { ReferralService } from 'src/referral/referral.service';
+import { FirstTxRewardService } from 'src/common/first-tx-reward/first-tx-reward.service';
 import { AuditStatus } from '@prisma/client';
 import * as colors from 'colors';
 
@@ -45,6 +48,9 @@ export class ElectricityService {
     private readonly auditLogService: AuditLogService,
     private readonly statsService: StatsService,
     private readonly pushNotificationService: PushNotificationService,
+    private readonly cashbackService: CashbackService,
+    private readonly referralService: ReferralService,
+    private readonly firstTxRewardService: FirstTxRewardService,
   ) {
     this.credentials = VtpassCredentialsHelper.getCredentials(configService);
     this.apiKey = this.credentials.apiKey;
@@ -506,6 +512,18 @@ export class ElectricityService {
         } catch (emailError: any) {
           this.logger.error(`Failed to send electricity purchase success email: ${emailError.message}`);
         }
+
+        this.cashbackService
+          .processCashback({ userId: userPayload.sub, amount: amountNum, serviceType: 'electricity', transactionRef: request_id })
+          .catch((e) => this.logger.warn(`Cashback processing failed: ${e.message}`));
+
+        this.referralService
+          .checkAndTriggerReward(userPayload.sub, amountNum)
+          .catch((e) => this.logger.warn(`Referral reward check failed: ${e.message}`));
+
+        this.firstTxRewardService
+          .checkAndReward({ userId: userPayload.sub, amount: amountNum, transactionType: 'electricity', transactionRef: request_id })
+          .catch((e) => this.logger.warn(`First-tx reward check failed: ${e.message}`));
       }
 
       this.logger.log('Electricity purchase request completed');
@@ -685,6 +703,18 @@ export class ElectricityService {
           this.pushNotificationService
             .sendTransactionNotification(transaction.user_id, 'electricity', transaction.amount || 0, 'success', transaction.id)
             .catch((e) => this.logger.warn(`[Cron] Push notification failed: ${e.message}`));
+
+          this.cashbackService
+            .processCashback({ userId: transaction.user_id, amount: Number(transaction.amount || 0), serviceType: 'electricity', transactionRef: requestId })
+            .catch((e) => this.logger.warn(`[Cron] Cashback processing failed: ${e.message}`));
+
+          this.referralService
+            .checkAndTriggerReward(transaction.user_id, Number(transaction.amount || 0))
+            .catch((e) => this.logger.warn(`[Cron] Referral reward check failed: ${e.message}`));
+
+          this.firstTxRewardService
+            .checkAndReward({ userId: transaction.user_id, amount: Number(transaction.amount || 0), transactionType: 'electricity', transactionRef: requestId })
+            .catch((e) => this.logger.warn(`[Cron] First-tx reward check failed: ${e.message}`));
         }
       }
 

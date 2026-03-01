@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { EmailService } from 'src/common/mailer/email.service';
 import { PushNotificationService } from 'src/push-notification/push-notification.service';
-import { ReferralService } from '../../referral/referral.service';
 import * as colors from 'colors/safe';
 import * as crypto from 'crypto';
 import { Logger } from '@nestjs/common';
@@ -16,7 +15,6 @@ export class PaystackWebhookService {
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
     private readonly pushNotificationService: PushNotificationService,
-    private readonly referralService: ReferralService,
   ) {}
 
   /**
@@ -442,11 +440,6 @@ export class PaystackWebhookService {
       } else {
         console.error(colors.red(`❌ Wallet not found after transaction!`));
       }
-
-      // Check referral reward trigger
-      try {
-        this.referralService.checkAndTriggerReward(user.id, amountInNgn);
-      } catch {}
 
       // Send push notification (non-blocking - don't fail if notification fails)
       try {

@@ -10,6 +10,7 @@ import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import { StatsService } from 'src/common/stats/stats.service';
 import { CashbackService, PaymentSplit } from 'src/common/cashback/cashback.service';
 import { ReferralService } from 'src/referral/referral.service';
+import { FirstTxRewardService } from 'src/common/first-tx-reward/first-tx-reward.service';
 import { AuditStatus } from '@prisma/client';
 import {
   validateCredentialsOnInit,
@@ -42,6 +43,7 @@ export class AirtimeService {
     private readonly statsService: StatsService,
     private readonly cashbackService: CashbackService,
     private readonly referralService: ReferralService,
+    private readonly firstTxRewardService: FirstTxRewardService,
   ) {
     this.credentials = VtpassCredentialsHelper.getCredentials(configService);
     this.apiKey = this.credentials.apiKey;
@@ -355,6 +357,10 @@ export class AirtimeService {
         this.referralService
           .checkAndTriggerReward(userPayload.sub, Number(dto.amount))
           .catch((e) => this.logger.warn(`Referral reward check failed: ${e.message}`));
+
+        this.firstTxRewardService
+          .checkAndReward({ userId: userPayload.sub, amount: Number(dto.amount), transactionType: 'airtime', transactionRef: request_id })
+          .catch((e) => this.logger.warn(`First-tx reward check failed: ${e.message}`));
       }
 
       // If processing, return success response with pending status info
@@ -649,6 +655,10 @@ export class AirtimeService {
           this.referralService
             .checkAndTriggerReward(transaction.user_id, Number(transaction.amount || 0))
             .catch((e) => this.logger.warn(`[Cron] Referral reward check failed: ${e.message}`));
+
+          this.firstTxRewardService
+            .checkAndReward({ userId: transaction.user_id, amount: Number(transaction.amount || 0), transactionType: 'airtime', transactionRef: requestId })
+            .catch((e) => this.logger.warn(`[Cron] First-tx reward check failed: ${e.message}`));
         }
       }
 
