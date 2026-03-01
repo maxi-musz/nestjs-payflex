@@ -1,4 +1,4 @@
-import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class PurchaseCableDto {
   @IsOptional()
@@ -33,6 +33,10 @@ export class PurchaseCableDto {
   @IsOptional()
   @IsNumber()
   quantity?: number; // months
+
+  @IsOptional()
+  @IsBoolean()
+  use_cashback?: boolean;
 }
 
 

@@ -226,6 +226,7 @@ POST /api/v1/vtpass/electricity/purchase
 | `amount` | number | **Yes** | Amount in Naira |
 | `phone` | string | **Yes** | Customer phone number |
 | `request_id` | string | No | Idempotency key. Auto-generated if omitted. **Always store this — you need it for query.** |
+| `use_cashback` | boolean | No | If `true`, the backend deducts what it can from the user's cashback wallet first, then the remainder from the main wallet. Defaults to `false` if not sent |
 
 > **WARNING:** The `amount` field MUST be >= the `Min_Purchase_Amount` returned from the verify step for this meter. If you send a lower amount, VTpass will reject it. The backend will refund the wallet, but this creates a poor user experience. **Always validate on the frontend first.**
 
@@ -739,9 +740,11 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 ## Wallet Balance & Rewards
 
-- Transactions are deducted from the user's wallet balance immediately
-- If the transaction fails or is reversed, the wallet is refunded automatically
-- Always check wallet balance before allowing purchase
+- Transactions are deducted from the user's wallet (and optionally cashback wallet when `use_cashback: true`)
+- If `use_cashback: true` is sent and the user has a cashback balance, the backend splits the payment: cashback wallet is charged first (up to its balance), the remainder from the main wallet. Example: ₦5,000 electricity with ₦800 cashback → ₦800 from cashback + ₦4,200 from wallet
+- If the transaction fails or is reversed, both wallet and cashback (if any was used) are refunded automatically
+- On a successful purchase, the user also **earns** cashback (if admin has enabled it for electricity) — separate from spending cashback
+- Always check wallet balance (and optionally show cashback balance) before allowing purchase
 
 ### Rewards on Successful Purchase
 
@@ -763,6 +766,8 @@ These rewards also trigger on **cron requery** — if a pending electricity tran
 
 ## Changelog
 
+- **2026-02-28**: Spend cashback support
+  - Purchase request now accepts optional `use_cashback: true`; payment is split between cashback wallet and main wallet when set. Refunds on failure (including cron requery) return amounts to both wallets.
 - **2026-02-28**: Rewards integration
   - Successful electricity purchases now earn cashback automatically (if admin has enabled it for `electricity`)
   - Referral reward checks now trigger on successful electricity purchase

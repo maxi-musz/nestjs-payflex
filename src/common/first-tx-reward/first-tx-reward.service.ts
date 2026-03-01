@@ -83,24 +83,31 @@ export class FirstTxRewardService {
         return { rewarded: false, rewardAmount: 0, reason: 'below_minimum' };
       }
 
-      // already received? (fast path — unique constraint on user_id)
-      const alreadyReceived = await this.prisma.firstTxRewardHistory.findUnique({
-        where: { user_id: userId },
-        select: { id: true },
+      // already received? (single source of truth: User.first_tx_reward_received)
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { first_tx_reward_received: true },
       });
-      if (alreadyReceived) {
+      if (user?.first_tx_reward_received) {
         return { rewarded: false, rewardAmount: 0, reason: 'already_received' };
       }
 
-      // has the user done any previous successful transaction? (must be their FIRST)
-      const previousTx = await this.prisma.transactionHistory.count({
-        where: {
-          user_id: userId,
-          status: 'success',
-          transaction_type: { in: eligibleTypes as any },
-          transaction_reference: { not: transactionRef },
-        },
-      });
+      // Has the user done any previous successful *purchase*? (must be their FIRST)
+      // Exclude deposit and transfer so that funding/moving money doesn't count — only first spend (airtime, data, cable, etc.) triggers the reward.
+      const purchaseOnlyTypes = (eligibleTypes as string[]).filter(
+        (t) => t !== 'deposit' && t !== 'transfer',
+      );
+      const previousTx =
+        purchaseOnlyTypes.length > 0
+          ? await this.prisma.transactionHistory.count({
+              where: {
+                user_id: userId,
+                status: 'success',
+                transaction_type: { in: purchaseOnlyTypes as any },
+                transaction_reference: { not: transactionRef },
+              },
+            })
+          : 0;
       if (previousTx > 0) {
         return { rewarded: false, rewardAmount: 0, reason: 'not_first_transaction' };
       }
@@ -140,11 +147,11 @@ export class FirstTxRewardService {
 
       const result = await this.prisma.$transaction(async (tx) => {
         // double-check inside the transaction (race condition guard)
-        const exists = await tx.firstTxRewardHistory.findUnique({
-          where: { user_id: userId },
-          select: { id: true },
+        const userRow = await tx.user.findUnique({
+          where: { id: userId },
+          select: { first_tx_reward_received: true },
         });
-        if (exists) return null;
+        if (userRow?.first_tx_reward_received) return null;
 
         const wallet = await tx.wallet.findUnique({
           where: { user_id: userId },
@@ -189,6 +196,11 @@ export class FirstTxRewardService {
             source_transaction_type: transactionType,
             source_amount: amount,
           },
+        });
+
+        await tx.user.update({
+          where: { id: userId },
+          data: { first_tx_reward_received: true },
         });
 
         return { rewardAmount: config.reward_amount };

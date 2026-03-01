@@ -57,6 +57,7 @@ model User {
   has_completed_onboarding     Boolean          @default(false)
   password_attempts            Int              @default(0)
   password_attempts_started_at DateTime?
+  first_tx_reward_received     Boolean          @default(false)
   tier_id                      String?
   tier                         Tier?            @relation("UserTier", fields: [tier_id], references: [id], onDelete: SetNull)
   createdAt                    DateTime         @default(now())

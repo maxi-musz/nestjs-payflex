@@ -221,6 +221,7 @@ POST /api/v1/vtpass/airtime/international/purchase
 | `country_code` | string | **Yes** | Country code from `/countries` |
 | `product_type_id` | string | **Yes** | Product type ID from `/product-types` |
 | `request_id` | string | No | Idempotency key. Auto-generated if omitted. **Always store this — needed for query.** |
+| `use_cashback` | boolean | No | If `true`, the backend deducts what it can from the user's cashback wallet first, then the remainder from the main wallet. Defaults to `false` if not sent |
 
 ### Example Request
 
@@ -405,9 +406,11 @@ International airtime endpoints are protected by the same rate limiting as other
 
 ## Wallet Balance & Rewards
 
-- Transactions are deducted from the user's wallet balance immediately
-- If the transaction fails or is reversed, the wallet is refunded automatically
-- Always check wallet balance before allowing purchase
+- Transactions are deducted from the user's wallet (and optionally cashback wallet when `use_cashback: true`)
+- If `use_cashback: true` is sent and the user has a cashback balance, the backend splits the payment: cashback wallet is charged first (up to its balance), the remainder from the main wallet
+- If the transaction fails or is reversed, both wallet and cashback (if any was used) are refunded automatically
+- On a successful purchase, the user also **earns** cashback (if admin has enabled it for international airtime) — separate from spending cashback
+- Always check wallet balance (and optionally show cashback balance) before allowing purchase
 
 ### Rewards on Successful Purchase
 
@@ -427,6 +430,8 @@ On a successful international airtime purchase, the backend automatically trigge
 
 ## Changelog
 
+- **2026-02-28**: Spend cashback support
+  - Purchase request now accepts optional `use_cashback: true`; payment is split between cashback wallet and main wallet when set. Refunds on failure (including query endpoint) return amounts to both wallets.
 - **2026-02-28**: Rewards integration
   - Successful international airtime purchases now earn cashback automatically (if admin has enabled it for `international_airtime`)
   - Referral reward checks now trigger on successful international airtime purchase

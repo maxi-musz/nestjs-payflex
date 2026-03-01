@@ -1,4 +1,4 @@
-import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export const VALID_EDUCATION_SERVICE_IDS = [
   'waec-registration',
@@ -40,4 +40,8 @@ export class PurchaseEducationDto {
   @IsOptional()
   @IsString()
   billersCode?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  use_cashback?: boolean;
 }

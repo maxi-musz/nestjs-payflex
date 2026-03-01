@@ -1,4 +1,4 @@
-import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsIn, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export const VALID_ELECTRICITY_SERVICE_IDS = [
   'ikeja-electric',
@@ -40,4 +40,8 @@ export class PurchaseElectricityDto {
   @IsString()
   @IsNotEmpty()
   phone: string;
+
+  @IsOptional()
+  @IsBoolean()
+  use_cashback?: boolean;
 }

@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class PurchaseInternationalAirtimeDto {
   @IsOptional()
@@ -37,5 +37,9 @@ export class PurchaseInternationalAirtimeDto {
   @IsString()
   @IsNotEmpty()
   product_type_id: string;
+
+  @IsOptional()
+  @IsBoolean()
+  use_cashback?: boolean;
 }
 

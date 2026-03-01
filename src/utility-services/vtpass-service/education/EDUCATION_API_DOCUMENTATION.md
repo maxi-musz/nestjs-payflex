@@ -204,6 +204,7 @@ POST /api/v1/vtpass/education/purchase
 | `billersCode` | string | **JAMB only** | JAMB Profile ID (must be verified first) |
 | `amount` | number | No | **Ignored** — resolved from variation. Optional for reference. |
 | `request_id` | string | No | Idempotency key. Auto-generated if omitted. **Always store this — needed for query.** |
+| `use_cashback` | boolean | No | If `true`, the backend deducts what it can from the user's cashback wallet first, then the remainder from the main wallet. Defaults to `false` if not sent |
 
 ### Request Examples
 
@@ -635,10 +636,12 @@ All endpoints are rate-limited per user and per IP to prevent abuse.
 
 ## Wallet Balance & Rewards
 
-- Transactions are deducted from the user's wallet balance immediately
+- Transactions are deducted from the user's wallet (and optionally cashback wallet when `use_cashback: true`)
 - The amount is determined by the fixed variation price × quantity — user does NOT enter an amount
-- If the transaction fails or is reversed, the wallet is refunded automatically
-- Always check wallet balance before allowing purchase
+- If `use_cashback: true` is sent and the user has a cashback balance, the backend splits the payment: cashback wallet is charged first (up to its balance), the remainder from the main wallet
+- If the transaction fails or is reversed, both wallet and cashback (if any was used) are refunded automatically
+- On a successful purchase, the user also **earns** cashback (if admin has enabled it for education) — separate from spending cashback
+- Always check wallet balance (and optionally show cashback balance) before allowing purchase
 
 ### Rewards on Successful Purchase
 
@@ -660,6 +663,8 @@ These rewards also trigger on **cron requery** — if a pending education transa
 
 ## Changelog
 
+- **2026-02-28**: Spend cashback support
+  - Purchase request now accepts optional `use_cashback: true`; payment is split between cashback wallet and main wallet when set. Refunds on failure (including query endpoint) return amounts to both wallets.
 - **2026-02-28**: Rewards integration
   - Successful education purchases now earn cashback automatically (if admin has enabled it for `education`)
   - Referral reward checks now trigger on successful education purchase

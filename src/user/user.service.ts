@@ -276,7 +276,7 @@ function getUserTier(user: any): TierInfo {
 
             // Check if existing account is a DVA (has provider in metadata)
            
-            const [latest_transaction_history, accounts, referralConfig, cashbackConfig, firstTxConfig, firstTxAlreadyReceived] = await Promise.all([
+            const [latest_transaction_history, accounts, referralConfig, cashbackConfig, firstTxConfig] = await Promise.all([
                 this.prisma.transactionHistory.findMany({
                     where: { user_id: userPayload.sub },
                     orderBy: { createdAt: 'desc' },
@@ -289,7 +289,6 @@ function getUserTier(user: any): TierInfo {
                 this.prisma.referralConfig.findUnique({ where: { id: 'referral_config' } }),
                 this.prisma.cashbackConfig.findUnique({ where: { id: 'cashback_config' } }),
                 this.prisma.firstTxRewardConfig.findUnique({ where: { id: 'first_tx_reward_config' } }),
-                this.prisma.firstTxRewardHistory.findUnique({ where: { user_id: userPayload.sub } }),
             ]);
 
             const createdCurrencies = new Set(accounts.map(account => account.currency));
@@ -321,7 +320,8 @@ function getUserTier(user: any): TierInfo {
                 });
             }
 
-            if (firstTxConfig?.is_active && !firstTxAlreadyReceived) {
+            // Only show first-tx banner if user has not been rewarded yet (single source of truth: user.first_tx_reward_received)
+            if (firstTxConfig?.is_active && !user.first_tx_reward_received) {
                 const now = new Date();
                 const withinWindow =
                     (!firstTxConfig.start_date || now >= firstTxConfig.start_date) &&
@@ -331,7 +331,7 @@ function getUserTier(user: any): TierInfo {
                     reward_banners.push({
                         type: 'first_transaction',
                         title: 'Welcome Bonus 🎉',
-                        message: `Make your first transaction and earn ₦${formatAmount(firstTxConfig.reward_amount)} instantly! This is our gift to you for getting started.`,
+                        message: `Fund your acccount, Make your first transaction and earn ₦${formatAmount(firstTxConfig.reward_amount)} instantly.`,
                         data: {
                             reward_amount: firstTxConfig.reward_amount,
                             min_transaction_amount: firstTxConfig.min_transaction_amount,
@@ -351,6 +351,7 @@ function getUserTier(user: any): TierInfo {
                     last_name: user.last_name || "",
                     email: user.email || "",
                     role: user.role || "",
+                    first_tx_reward_received: user.first_tx_reward_received || false,
                     profile_image: user.profile_image?.secure_url || "",
                     is_email_verified: user.is_email_verified || false
                 },
@@ -442,7 +443,7 @@ function getUserTier(user: any): TierInfo {
                 reward_banners,
             }
             console.log(colors.magenta(`User data for ${user.email} for app homepage successfully retrieved`))
-            // console.log(colors.magenta(`User data for ${user.email} for app homepage successfully retrieved: ${JSON.stringify(formattedResponse)}`))
+            console.log(colors.magenta(`User data for ${user.email} for app homepage successfully retrieved: ${JSON.stringify(formattedResponse, null, 2)}`))
             return new ApiResponseDto(
                 true, 
                 `User data ${user.email} for app homepage successfully retrieved`, 

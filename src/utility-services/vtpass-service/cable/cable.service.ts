@@ -10,7 +10,7 @@ import { EmailService } from 'src/common/mailer/email.service';
 import { AuditLogService } from 'src/common/audit-log/audit-log.service';
 import { StatsService } from 'src/common/stats/stats.service';
 import { PushNotificationService } from 'src/push-notification/push-notification.service';
-import { CashbackService } from 'src/common/cashback/cashback.service';
+import { CashbackService, PaymentSplit } from 'src/common/cashback/cashback.service';
 import { ReferralService } from 'src/referral/referral.service';
 import { FirstTxRewardService } from 'src/common/first-tx-reward/first-tx-reward.service';
 import { AuditStatus } from '@prisma/client';
@@ -341,26 +341,32 @@ export class CableService {
 
       const description = `${dto.serviceID.toUpperCase()} TV`;
       const amountNum = Number(vtpassAmount);
+      let split: PaymentSplit = { walletCharge: amountNum, cashbackCharge: 0, cashbackBefore: 0, cashbackAfter: 0 };
+      split = await this.cashbackService.resolvePayment(userPayload.sub, amountNum, dto.use_cashback === true);
+
       const createdTx = await this.prisma.$transaction(async (tx) => {
         const existing = await tx.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
         if (existing) return existing;
 
         const wallet = await tx.wallet.findUnique({ where: { user_id: userPayload.sub } });
         this.logger.log(`Wallet balance: ${wallet?.current_balance}`);
-        if (!wallet || Number(wallet.current_balance) < amountNum) {
+        if (!wallet || Number(wallet.current_balance) < split.walletCharge) {
           throw this.buildApiError('Insufficient wallet balance', HttpStatus.BAD_REQUEST);
         }
         const balance_before = Number(wallet.current_balance);
-        const balance_after = balance_before - amountNum;
-        await tx.wallet.update({
-          where: { user_id: userPayload.sub },
-          data: {
-            current_balance: balance_after,
-            balance_before,
-            balance_after,
-            all_time_withdrawn: { increment: amountNum },
-          },
-        });
+        const balance_after = balance_before - split.walletCharge;
+        if (split.walletCharge > 0) {
+          await tx.wallet.update({
+            where: { user_id: userPayload.sub },
+            data: {
+              current_balance: balance_after,
+              balance_before,
+              balance_after,
+              all_time_withdrawn: { increment: split.walletCharge },
+            },
+          });
+        }
+        this.logger.log(`Wallet balance before: ${balance_before}, after: ${balance_after}${split.cashbackCharge > 0 ? ` (₦${split.cashbackCharge} from cashback)` : ''}`);
 
         return await tx.transactionHistory.create({
           data: {
@@ -377,7 +383,7 @@ export class CableService {
             transaction_reference: request_id,
             balance_before,
             balance_after,
-            meta_data: payload,
+            meta_data: { ...payload, cashback_used: split.cashbackCharge, wallet_charged: split.walletCharge },
           } as any
         });
       });
@@ -468,7 +474,12 @@ export class CableService {
       });
 
       if (shouldRefund) {
-        await this.prisma.wallet.update({ where: { user_id: userPayload.sub }, data: { current_balance: { increment: Number(vtpassAmount) } } });
+        if (split.walletCharge > 0) {
+          await this.prisma.wallet.update({ where: { user_id: userPayload.sub }, data: { current_balance: { increment: split.walletCharge } } });
+        }
+        if (split.cashbackCharge > 0) {
+          this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge).catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
+        }
         if (shouldThrow) {
           throw this.buildApiError(errorMessage, HttpStatus.BAD_REQUEST);
         }
@@ -525,13 +536,19 @@ export class CableService {
       try {
         const existingForUpdate = await this.prisma.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
         if (existingForUpdate) {
-          await this.prisma.$transaction(async (tx) => {
-            await tx.transactionHistory.update({
-              where: { transaction_reference: request_id },
-              data: { status: 'failed', meta_data: { request_id, payload: ({ ...(dto as any) } as any), vtpass_error: (error.response?.data || error.message || 'Unknown error') } }
-            });
-            await tx.wallet.update({ where: { user_id: userPayload.sub }, data: { current_balance: { increment: Number(vtpassAmount) } } });
+          const meta = (existingForUpdate.meta_data as any) || {};
+          const walletRefund = typeof meta.wallet_charged === 'number' ? meta.wallet_charged : Number(vtpassAmount);
+          const cashbackRefund = typeof meta.cashback_used === 'number' ? meta.cashback_used : 0;
+          await this.prisma.transactionHistory.update({
+            where: { transaction_reference: request_id },
+            data: { status: 'failed', meta_data: { ...meta, request_id, payload: (dto as any), vtpass_error: (error.response?.data || error.message || 'Unknown error') } }
           });
+          if (walletRefund > 0) {
+            await this.prisma.wallet.update({ where: { user_id: userPayload.sub }, data: { current_balance: { increment: walletRefund } } });
+          }
+          if (cashbackRefund > 0) {
+            this.cashbackService.refundCashback(userPayload.sub, cashbackRefund).catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
+          }
         }
       } catch (updateError: any) {
         this.logger.warn(`Could not update transaction status: ${updateError.message || updateError}`);
