@@ -5,13 +5,8 @@ import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
 import { PurchaseInternationalAirtimeDto } from './dto/purchase-international-airtime.dto';
-import { AuditLogService } from 'src/common/audit-log/audit-log.service';
-import { StatsService } from 'src/common/stats/stats.service';
-import { PushNotificationService } from 'src/push-notification/push-notification.service';
-import { CashbackService, PaymentSplit } from 'src/common/cashback/cashback.service';
-import { ReferralService } from 'src/referral/referral.service';
-import { FirstTxRewardService } from 'src/common/first-tx-reward/first-tx-reward.service';
-import { AuditStatus } from '@prisma/client';
+import { CashbackService } from 'src/common/cashback/cashback.service';
+import { VtpassTransactionOrchestrator, generateVtpassRequestId } from '../vtpass-transaction.orchestrator';
 
 @Injectable()
 export class InternationalAirtimeService {
@@ -26,12 +21,8 @@ export class InternationalAirtimeService {
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
-    private readonly auditLogService: AuditLogService,
-    private readonly statsService: StatsService,
-    private readonly pushNotificationService: PushNotificationService,
     private readonly cashbackService: CashbackService,
-    private readonly referralService: ReferralService,
-    private readonly firstTxRewardService: FirstTxRewardService,
+    private readonly orchestrator: VtpassTransactionOrchestrator,
   ) {
     this.credentials = VtpassCredentialsHelper.getCredentials(configService);
     this.apiKey = this.credentials.apiKey;
@@ -73,16 +64,6 @@ export class InternationalAirtimeService {
       'secret-key': this.secretKey,
       'Content-Type': 'application/json',
     };
-  }
-
-  private generateVtpassRequestId(): string {
-    const now = new Date();
-    const pad = (n: number, len = 2) => String(n).padStart(len, '0');
-    const dateStr =
-      `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
-      `${pad(now.getHours())}${pad(now.getMinutes())}`;
-    const rand = Math.random().toString(36).slice(2, 14);
-    return `${dateStr}${rand}`;
   }
 
   private buildApiError(message: string, status: HttpStatus, data?: any): HttpException {
@@ -189,265 +170,55 @@ export class InternationalAirtimeService {
 
   async purchase(userPayload: any, dto: PurchaseInternationalAirtimeDto) {
     const serviceID = 'foreign-airtime';
-    const request_id = dto.request_id || this.generateVtpassRequestId();
-    const url = `${this.getBaseUrl()}/pay`;
+    const request_id = dto.request_id || generateVtpassRequestId();
 
     this.logger.log(
       `Purchasing International Airtime: country=${dto.country_code}, operator=${dto.operator_id}, variation=${dto.variation_code}, phone=${dto.billersCode}, request_id=${request_id}`,
     );
+
+    // Resolve vtpassAmount from operator info or dto.amount
+    const vtpassAmount = dto.amount ?? 0;
 
     const payload: Record<string, any> = {
       request_id,
       serviceID,
       billersCode: dto.billersCode,
       variation_code: dto.variation_code,
-      amount: dto.amount ?? 0,
+      amount: vtpassAmount,
       phone: dto.phone,
       operator_id: dto.operator_id,
       country_code: dto.country_code,
       product_type_id: dto.product_type_id,
     };
 
-    const description = `International Airtime - ${dto.country_code} - operator=${dto.operator_id} - ${dto.billersCode}`;
-    let createdTx: any;
-    const vtpassAmount = dto.amount ?? 0;
-    let split: PaymentSplit = { walletCharge: vtpassAmount, cashbackCharge: 0, cashbackBefore: 0, cashbackAfter: 0 };
-    if (vtpassAmount > 0) {
-      split = await this.cashbackService.resolvePayment(userPayload.sub, vtpassAmount, dto.use_cashback === true);
-    }
-    let walletRefundedInTryBlock = false;
-    let cashbackRefundedInTryBlock = false;
+    const description = `International Airtime - ${dto.country_code} ${dto.phone}`;
 
-    try {
-      createdTx = await this.prisma.$transaction(async (tx) => {
-        const existing = await tx.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
-        if (existing) return existing;
+    return this.orchestrator.executePurchase({
+      transactionType: 'airtime',
+      serviceLabel: 'International Airtime',
+      auditAction: 'AIRTIME_PURCHASE',
+      auditFailAction: 'AIRTIME_PURCHASE_FAILED',
+      cashbackServiceType: 'international_airtime',
+      userId: userPayload.sub,
+      requestId: request_id,
+      chargeAmount: vtpassAmount,
+      useCashback: dto.use_cashback === true,
+      vtpassPayload: payload,
+      description,
+      provider: serviceID,
+      recipientIdentifier: dto.phone,
+      auditMetadata: { serviceID, country_code: dto.country_code, operator_id: dto.operator_id },
+    });
+  }
 
-        const wallet = await tx.wallet.findUnique({ where: { user_id: userPayload.sub } });
-        this.logger.log(`Wallet balance: ${wallet?.current_balance}`);
-        if (!wallet || (split.walletCharge > 0 && Number(wallet.current_balance) < split.walletCharge)) {
-          throw this.buildApiError('Insufficient wallet balance', HttpStatus.BAD_REQUEST);
-        }
-
-        const balance_before = Number(wallet.current_balance);
-        const balance_after = balance_before - split.walletCharge;
-        if (split.walletCharge > 0) {
-          await tx.wallet.update({
-            where: { user_id: userPayload.sub },
-            data: {
-              current_balance: balance_after,
-              balance_before,
-              balance_after,
-              all_time_withdrawn: { increment: split.walletCharge },
-            },
-          });
-        }
-        this.logger.log(`Wallet balance before: ${balance_before}, after: ${balance_after}${split.cashbackCharge > 0 ? ` (₦${split.cashbackCharge} from cashback)` : ''}`);
-
-        return await tx.transactionHistory.create({
-          data: {
-            user_id: userPayload.sub,
-            amount: vtpassAmount,
-            provider: serviceID,
-            transaction_type: 'airtime',
-            credit_debit: 'debit',
-            description,
-            status: 'pending',
-            recipient_mobile: dto.billersCode,
-            payment_method: 'wallet',
-            payment_channel: 'other',
-            transaction_reference: request_id,
-            balance_before,
-            balance_after,
-            meta_data: { ...payload, cashback_used: split.cashbackCharge, wallet_charged: split.walletCharge },
-          } as any,
-        });
-      });
-
-      const response = await axios.post(url, payload, { headers: this.getPostHeaders() });
-
-      const txContent = response.data?.content?.transactions || {};
-      const responseCode = response.data?.code || '';
-      const txStatus = txContent.status?.toLowerCase() || '';
-      const responseDescription = response.data?.response_description || '';
-
-      const isProcessing =
-        (responseCode === '000' && (txStatus === 'pending' || txStatus === 'initiated')) ||
-        responseCode === '099' ||
-        responseDescription.includes('PROCESSING') ||
-        responseDescription.includes('PENDING');
-      const isDelivered = responseCode === '000' && txStatus === 'delivered';
-      const isReversed = responseCode === '040' || txStatus === 'reversed';
-      const isFailed =
-        responseCode === '016' ||
-        (responseCode === '000' && txStatus === 'failed') ||
-        (!isProcessing && !isDelivered && !isReversed && responseCode !== '000');
-
-      let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
-      let shouldRefund = false;
-      let shouldThrow = false;
-      let errorMessage = '';
-
-      if (isDelivered) {
-        finalStatus = 'success';
-      } else if (isReversed) {
-        finalStatus = 'failed';
-        shouldRefund = true;
-        errorMessage = responseDescription || 'Transaction was reversed';
-        shouldThrow = true;
-      } else if (isFailed) {
-        finalStatus = 'failed';
-        shouldRefund = true;
-        errorMessage = responseDescription || `Transaction failed with code: ${responseCode}`;
-        shouldThrow = true;
-      } else if (isProcessing) {
-        finalStatus = 'pending';
-        this.logger.log(`Transaction is processing: ${responseDescription || `Status: ${txStatus}`}`);
-      } else {
-        finalStatus = 'pending';
-        this.logger.warn(`Unknown transaction status. Code: ${responseCode}, Status: ${txStatus}, Description: ${responseDescription}`);
-      }
-
-      await this.prisma.transactionHistory.update({
-        where: { transaction_reference: request_id },
-        data: {
-          status: finalStatus,
-          transaction_number: txContent.transactionId?.toString() || null,
-          fee: typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || 0,
-          meta_data: {
-            ...(createdTx.meta_data as any),
-            vtpass_response: response.data,
-            vtpass_status: txStatus,
-            vtpass_code: responseCode,
-          },
-        },
-      });
-
-      if (shouldRefund) {
-        if (split.walletCharge > 0) {
-          await this.prisma.wallet.update({
-            where: { user_id: userPayload.sub },
-            data: { current_balance: { increment: split.walletCharge } },
-          });
-          walletRefundedInTryBlock = true;
-        }
-        if (split.cashbackCharge > 0) {
-          await this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge);
-          cashbackRefundedInTryBlock = true;
-        }
-        this.logger.log(`Refunded ₦${split.walletCharge} to wallet${split.cashbackCharge > 0 ? `, ₦${split.cashbackCharge} to cashback` : ''} for user ${userPayload.sub}`);
-        if (shouldThrow) {
-          throw this.buildApiError(errorMessage, HttpStatus.BAD_REQUEST);
-        }
-      }
-
-      // Fire-and-forget: audit log + stats
-      this.auditLogService
-        .logTransaction(
-          finalStatus === 'success' ? 'AIRTIME_PURCHASE' : finalStatus === 'failed' ? 'AIRTIME_PURCHASE_FAILED' : 'AIRTIME_PURCHASE',
-          finalStatus === 'success' ? AuditStatus.SUCCESS : finalStatus === 'failed' ? AuditStatus.FAILURE : AuditStatus.PENDING,
-          null,
-          { amount: vtpassAmount, currency: 'NGN', balance_before: Number(createdTx.balance_before), balance_after: Number(createdTx.balance_after), transaction_ref: request_id },
-          { user_id: userPayload.sub, resource_type: 'TransactionHistory', resource_id: createdTx.id, metadata: { serviceID, country_code: dto.country_code, operator_id: dto.operator_id, vtpass_code: responseCode }, description: `International airtime purchase - ${dto.country_code}` },
-        )
-        .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
-
-      this.statsService.onTransactionCreated(vtpassAmount, finalStatus, 0).catch((e) => this.logger.warn(`Stats update failed: ${e.message}`));
-      if (vtpassAmount > 0) {
-        this.statsService.onWalletDebited(vtpassAmount).catch((e) => this.logger.warn(`Stats wallet debit failed: ${e.message}`));
-      }
-
-      if (isProcessing) {
-        const formattedResponse = {
-          id: createdTx.id,
-          ...response.data,
-          status: 'processing',
-          message: 'Transaction is being processed. Use the query endpoint with request_id to check status.',
-          wallet_balance: Number(createdTx.balance_after),
-        };
-        return new ApiResponseDto(true, 'Transaction is being processed', formattedResponse);
-      }
-
-      const formattedResponse: any = {
-        id: createdTx.id,
-        ...response.data,
-        wallet_balance: Number(createdTx.balance_after),
-      };
-
-      if (finalStatus === 'success') {
-        this.pushNotificationService
-          .sendTransactionNotification(userPayload.sub, 'airtime', vtpassAmount, 'success', createdTx.id)
-          .catch((e) => this.logger.warn(`Push notification failed: ${e.message}`));
-
-        this.cashbackService
-          .processCashback({ userId: userPayload.sub, amount: vtpassAmount, serviceType: 'international_airtime', transactionRef: request_id })
-          .catch((e) => this.logger.warn(`Cashback processing failed: ${e.message}`));
-
-        this.referralService
-          .checkAndTriggerReward(userPayload.sub, vtpassAmount)
-          .catch((e) => this.logger.warn(`Referral reward check failed: ${e.message}`));
-
-        this.firstTxRewardService
-          .checkAndReward({ userId: userPayload.sub, amount: vtpassAmount, transactionType: 'airtime', transactionRef: request_id })
-          .catch((e) => this.logger.warn(`First-tx reward check failed: ${e.message}`));
-      }
-
-      this.logger.log('International airtime purchase request completed');
-      return new ApiResponseDto(true, 'International airtime purchase successful', formattedResponse);
-    } catch (error: any) {
-      this.logger.error(`Error purchasing international airtime: ${error.message}`);
-
-      try {
-        const existingForUpdate = await this.prisma.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
-
-        const errorMeta = {
-          request_id,
-          payload: { ...(dto as any) },
-          vtpass_error: error.response?.data || error.message || 'Unknown error',
-        };
-
-        if (existingForUpdate) {
-          if (walletRefundedInTryBlock) {
-            await this.prisma.transactionHistory.update({
-              where: { transaction_reference: request_id },
-              data: { status: 'failed', meta_data: { ...(existingForUpdate.meta_data as any), ...errorMeta } },
-            });
-            this.logger.warn(`Intl Airtime catch-block: VTpass already indicated failed. Marking tx failed, no refund (already done in try).`);
-          } else {
-            await this.prisma.transactionHistory.update({
-              where: { transaction_reference: request_id },
-              data: {
-                status: 'pending',
-                meta_data: {
-                  ...(existingForUpdate.meta_data as any),
-                  ...errorMeta,
-                  catch_block_reason: 'No definitive VTpass response. Kept pending for requery.',
-                },
-              },
-            });
-            this.logger.warn(`Intl Airtime catch-block: No definitive VTpass response (network/timeout/error). Keeping tx PENDING for requery. NO REFUND.`);
-          }
-        }
-      } catch (updateError: any) {
-        this.logger.warn(`Could not update transaction status: ${updateError.message || updateError}`);
-      }
-
-      this.auditLogService
-        .logTransaction('AIRTIME_PURCHASE_FAILED', AuditStatus.FAILURE, null,
-          { amount: vtpassAmount, currency: 'NGN', transaction_ref: request_id },
-          { user_id: userPayload.sub, error_message: error.message, metadata: { serviceID: 'foreign-airtime', country_code: dto.country_code, operator_id: dto.operator_id }, description: 'International airtime purchase failed' },
-        )
-        .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
-
-      this.statsService.onTransactionCreated(vtpassAmount, 'failed', 0).catch((e) => this.logger.warn(`Stats update failed: ${e.message}`));
-
-      if (error instanceof HttpException) throw error;
-      if (error.response) {
-        const msg = error.response.data?.response_description || error.response.data?.message || 'Failed to purchase international airtime';
-        throw this.buildApiError(msg, error.response.status || HttpStatus.BAD_REQUEST);
-      }
-      throw this.buildApiError('Failed to purchase international airtime', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
+  async requeryPendingTransaction(requestId: string): Promise<{ updated: boolean; status?: string }> {
+    return this.orchestrator.requeryTransaction(requestId, {
+      transactionType: 'airtime',
+      serviceLabel: 'International Airtime',
+      auditAction: 'AIRTIME_PURCHASE',
+      auditFailAction: 'AIRTIME_PURCHASE_FAILED',
+      cashbackServiceType: 'international_airtime',
+    });
   }
 
   async queryTransaction(userPayload: any, request_id: string) {

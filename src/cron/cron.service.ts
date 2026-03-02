@@ -3,9 +3,16 @@ import * as cron from 'node-cron';
 import axios from 'axios';
 import * as colors from 'colors';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { DataService } from 'src/utility-services/vtpass-service/data/data.service';
-import { AirtimeService } from 'src/utility-services/vtpass-service/airtime/airtime.service';
+import { VtpassTransactionOrchestrator } from 'src/utility-services/vtpass-service/vtpass-transaction.orchestrator';
 import { BankingService } from 'src/banking/banking.service';
+
+const VTPASS_REQUERY_MAP: Record<string, { serviceLabel: string; auditAction: string; auditFailAction: string; cashbackServiceType: string }> = {
+  airtime:     { serviceLabel: 'Airtime',     auditAction: 'AIRTIME_PURCHASE',     auditFailAction: 'AIRTIME_PURCHASE_FAILED',     cashbackServiceType: 'airtime' },
+  data:        { serviceLabel: 'Data',         auditAction: 'DATA_PURCHASE',        auditFailAction: 'DATA_PURCHASE_FAILED',        cashbackServiceType: 'data' },
+  cable:       { serviceLabel: 'Cable',        auditAction: 'CABLE_PURCHASE',       auditFailAction: 'CABLE_PURCHASE_FAILED',       cashbackServiceType: 'cable' },
+  electricity: { serviceLabel: 'Electricity',  auditAction: 'ELECTRICITY_PURCHASE', auditFailAction: 'ELECTRICITY_PURCHASE_FAILED', cashbackServiceType: 'electricity' },
+  education:   { serviceLabel: 'Education',    auditAction: 'EDUCATION_PURCHASE',   auditFailAction: 'EDUCATION_PURCHASE_FAILED',   cashbackServiceType: 'education' },
+};
 
 @Injectable()
 export class CronService implements OnModuleInit {
@@ -13,8 +20,7 @@ export class CronService implements OnModuleInit {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly dataService: DataService,
-    private readonly airtimeService: AirtimeService,
+    private readonly orchestrator: VtpassTransactionOrchestrator,
     private readonly bankingService: BankingService,
   ) {}
 
@@ -50,77 +56,62 @@ export class CronService implements OnModuleInit {
   }
 
   /**
-   * Requery pending VTpass transactions (data and airtime)
-   * Runs every 29 mins, queries transactions up to 2 times max
+   * Requery ALL pending VTpass transactions (airtime, data, cable, electricity, education)
+   * via the centralized orchestrator.
    */
   private async requeryPendingVtpassTransactions(): Promise<void> {
     try {
       this.logger.log('[Cron] Starting requery of pending VTpass transactions...');
 
-      // Find pending transactions (data and airtime) created in the last 30 minutes
       const twentyNineMinutesAgo = new Date(Date.now() - 29 * 60 * 1000);
-      
+
       const pendingTransactions = await this.prisma.transactionHistory.findMany({
         where: {
           status: 'pending',
-          transaction_type: {
-            in: ['data', 'airtime'],
-          },
-          createdAt: {
-            gte: twentyNineMinutesAgo,
-          },
-          transaction_reference: {
-            not: null,
-          },
+          transaction_type: { in: Object.keys(VTPASS_REQUERY_MAP) as any },
+          createdAt: { gte: twentyNineMinutesAgo },
+          transaction_reference: { not: null },
         },
-        select: {
-          id: true,
-          transaction_reference: true,
-          transaction_type: true,
-        },
-        take: 50, // Limit to 50 transactions per run to avoid overwhelming the API
+        select: { id: true, transaction_reference: true, transaction_type: true },
+        take: 50,
       });
 
       if (pendingTransactions.length === 0) {
-        this.logger.log('[Cron] No pending transactions to requery');
+        this.logger.log('[Cron] No pending VTpass transactions to requery');
         return;
       }
 
-      this.logger.log(`[Cron] Found ${pendingTransactions.length} pending transactions to requery`);
+      this.logger.log(`[Cron] Found ${pendingTransactions.length} pending VTpass transactions to requery`);
 
-      // Process transactions in batches to avoid rate limiting
       const batchSize = 5;
       for (let i = 0; i < pendingTransactions.length; i += batchSize) {
         const batch = pendingTransactions.slice(i, i + batchSize);
-        
+
         await Promise.all(
           batch.map(async (tx) => {
             if (!tx.transaction_reference) return;
+            const cfg = VTPASS_REQUERY_MAP[tx.transaction_type ?? ''];
+            if (!cfg) return;
 
             try {
-              // Use appropriate service based on transaction type
-              if (tx.transaction_type === 'data') {
-                await this.dataService.requeryPendingTransaction(tx.transaction_reference);
-              } else if (tx.transaction_type === 'airtime') {
-                await this.airtimeService.requeryPendingTransaction(tx.transaction_reference);
-              }
+              await this.orchestrator.requeryTransaction(tx.transaction_reference, {
+                transactionType: tx.transaction_type ?? '',
+                ...cfg,
+              });
             } catch (error: any) {
-              this.logger.error(
-                `[Cron] Error requerying transaction ${tx.transaction_reference}: ${error.message}`
-              );
+              this.logger.error(`[Cron] Error requerying ${tx.transaction_reference}: ${error.message}`);
             }
-          })
+          }),
         );
 
-        // Small delay between batches to avoid rate limiting
         if (i + batchSize < pendingTransactions.length) {
-          await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       }
 
-      this.logger.log('[Cron] Finished requerying pending transactions');
+      this.logger.log('[Cron] Finished requerying pending VTpass transactions');
     } catch (error: any) {
-      this.logger.error(`[Cron] Error in requery job: ${error.message}`, error.stack);
+      this.logger.error(`[Cron] Error in VTpass requery job: ${error.message}`, error.stack);
     }
   }
 

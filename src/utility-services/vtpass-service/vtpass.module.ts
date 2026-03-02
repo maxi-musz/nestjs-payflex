@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { VtpassSharedModule } from './vtpass-shared.module';
 import { AirtimeModule } from './airtime/airtime.module';
 import { DataModule } from './data/data.module';
 import { ElectricityModule } from './electricity/electricity.module';
@@ -8,6 +9,7 @@ import { InsuranceModule } from './insurance/insurance.module';
 
 @Module({
   imports: [
+    VtpassSharedModule,
     AirtimeModule,
     DataModule,
     ElectricityModule,

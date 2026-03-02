@@ -7,13 +7,8 @@ import { PurchaseEducationDto } from './dto/purchase-education.dto';
 import { VerifyJambProfileDto } from './dto/verify-jamb-profile.dto';
 import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
 import { EmailService } from 'src/common/mailer/email.service';
-import { AuditLogService } from 'src/common/audit-log/audit-log.service';
-import { StatsService } from 'src/common/stats/stats.service';
-import { PushNotificationService } from 'src/push-notification/push-notification.service';
-import { CashbackService, PaymentSplit } from 'src/common/cashback/cashback.service';
-import { ReferralService } from 'src/referral/referral.service';
-import { FirstTxRewardService } from 'src/common/first-tx-reward/first-tx-reward.service';
-import { AuditStatus } from '@prisma/client';
+import { CashbackService } from 'src/common/cashback/cashback.service';
+import { VtpassTransactionOrchestrator, generateVtpassRequestId } from '../vtpass-transaction.orchestrator';
 import * as colors from 'colors';
 
 @Injectable()
@@ -36,12 +31,8 @@ export class EducationService {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
-    private readonly auditLogService: AuditLogService,
-    private readonly statsService: StatsService,
-    private readonly pushNotificationService: PushNotificationService,
     private readonly cashbackService: CashbackService,
-    private readonly referralService: ReferralService,
-    private readonly firstTxRewardService: FirstTxRewardService,
+    private readonly orchestrator: VtpassTransactionOrchestrator,
   ) {
     this.credentials = VtpassCredentialsHelper.getCredentials(configService);
     this.apiKey = this.credentials.apiKey;
@@ -95,16 +86,6 @@ export class EducationService {
 
   private getServiceLabel(serviceID: string): string {
     return EducationService.SERVICE_LABELS[serviceID] || serviceID.toUpperCase();
-  }
-
-  private generateVtpassRequestId(): string {
-    const now = new Date();
-    const pad = (n: number, len = 2) => String(n).padStart(len, '0');
-    const dateStr =
-      `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
-      `${pad(now.getHours())}${pad(now.getMinutes())}`;
-    const rand = Math.random().toString(36).slice(2, 14);
-    return `${dateStr}${rand}`;
   }
 
   /**
@@ -251,7 +232,7 @@ export class EducationService {
     const serviceLabel = this.getServiceLabel(dto.serviceID);
     this.logger.log(colors.cyan(`Education purchase: ${serviceLabel} | variation=${dto.variation_code} | phone=${dto.phone}`));
 
-    const request_id = dto.request_id || this.generateVtpassRequestId();
+    const request_id = dto.request_id || generateVtpassRequestId();
     const quantity = dto.quantity || 1;
 
     // Resolve the amount from the variation codes (education products have fixed prices)
@@ -295,201 +276,36 @@ export class EducationService {
       payload.billersCode = dto.billersCode;
     }
 
-    const url = `${this.getBaseUrl()}/pay`;
     const description = `${serviceLabel} - ${dto.variation_code}${quantity > 1 ? ` × ${quantity}` : ''}`;
 
     this.logger.log(`VTpass payload: ${JSON.stringify({ ...payload, request_id: '***' })}`);
 
-    let split: PaymentSplit = { walletCharge: resolvedAmount, cashbackCharge: 0, cashbackBefore: 0, cashbackAfter: 0 };
-    split = await this.cashbackService.resolvePayment(userPayload.sub, resolvedAmount, dto.use_cashback === true);
-    let walletRefundedInTryBlock = false;
-    let cashbackRefundedInTryBlock = false;
-
-    let createdTx: any;
-
-    try {
-      // Atomic: check idempotency, debit wallet, create transaction
-      createdTx = await this.prisma.$transaction(async (tx) => {
-        const existing = await tx.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
-        if (existing) return existing;
-
-        const wallet = await tx.wallet.findUnique({ where: { user_id: userPayload.sub } });
-        this.logger.log(`Wallet balance: ${wallet?.current_balance}`);
-        if (!wallet || Number(wallet.current_balance) < split.walletCharge) {
-          throw this.buildApiError('Insufficient wallet balance', HttpStatus.BAD_REQUEST);
-        }
-
-        const balance_before = Number(wallet.current_balance);
-        const balance_after = balance_before - split.walletCharge;
-        if (split.walletCharge > 0) {
-          await tx.wallet.update({
-            where: { user_id: userPayload.sub },
-            data: {
-              current_balance: balance_after,
-              balance_before,
-              balance_after,
-              all_time_withdrawn: { increment: split.walletCharge },
-            },
-          });
-        }
-        this.logger.log(`Wallet balance before: ${balance_before}, after: ${balance_after}${split.cashbackCharge > 0 ? ` (₦${split.cashbackCharge} from cashback)` : ''}`);
-
-        return await tx.transactionHistory.create({
-          data: {
-            user_id: userPayload.sub,
-            amount: resolvedAmount,
-            provider: dto.serviceID,
-            transaction_type: 'education',
-            credit_debit: 'debit',
-            description,
-            status: 'pending',
-            recipient_mobile: dto.phone,
-            payment_method: 'wallet',
-            payment_channel: 'other',
-            transaction_reference: request_id,
-            balance_before,
-            balance_after,
-            meta_data: { ...payload, cashback_used: split.cashbackCharge, wallet_charged: split.walletCharge },
-          } as any,
-        });
-      });
-
-      // Call VTpass
-      const response = await axios.post(url, payload, { headers: this.getPostHeaders() });
-
-      const txContent = response.data?.content?.transactions || {};
-      const responseCode = response.data?.code || '';
-      const txStatus = txContent.status?.toLowerCase() || '';
-      const responseDescription = response.data?.response_description || '';
-
-      // Status determination (same pattern as other services)
-      const isProcessing =
-        (responseCode === '000' && (txStatus === 'pending' || txStatus === 'initiated')) ||
-        responseCode === '099' ||
-        responseDescription.includes('PROCESSING') ||
-        responseDescription.includes('PENDING');
-      const isDelivered = responseCode === '000' && txStatus === 'delivered';
-      const isReversed = responseCode === '040' || txStatus === 'reversed';
-      const isFailed =
-        responseCode === '016' ||
-        (responseCode === '000' && txStatus === 'failed') ||
-        (!isProcessing && !isDelivered && !isReversed && responseCode !== '000');
-
-      let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
-      let shouldRefund = false;
-      let shouldThrow = false;
-      let errorMessage = '';
-
-      if (isDelivered) {
-        finalStatus = 'success';
-      } else if (isReversed) {
-        finalStatus = 'failed';
-        shouldRefund = true;
-        errorMessage = responseDescription || 'Transaction was reversed';
-        shouldThrow = true;
-      } else if (isFailed) {
-        finalStatus = 'failed';
-        shouldRefund = true;
-        errorMessage = responseDescription || `Transaction failed with code: ${responseCode}`;
-        shouldThrow = true;
-      } else if (isProcessing) {
-        finalStatus = 'pending';
-        this.logger.log(`Transaction is processing: ${responseDescription || `Status: ${txStatus}`}`);
-      } else {
-        finalStatus = 'pending';
-        this.logger.warn(`Unknown transaction status. Code: ${responseCode}, Status: ${txStatus}, Description: ${responseDescription}`);
-      }
-
-      // Extract credentials (tokens, PINs, cards)
-      const credentials = this.extractCredentials(dto.serviceID, response.data);
-
-      // Update transaction record
-      await this.prisma.transactionHistory.update({
-        where: { transaction_reference: request_id },
-        data: {
-          status: finalStatus,
-          transaction_number: txContent.transactionId?.toString() || null,
-          fee: typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || 0,
-          meta_data: {
-            ...(createdTx.meta_data as any),
-            vtpass_response: response.data,
-            vtpass_status: txStatus,
-            vtpass_code: responseCode,
-            credentials,
-          },
-        },
-      });
-
-      // Refund if needed
-      if (shouldRefund) {
-        if (split.walletCharge > 0) {
-          await this.prisma.wallet.update({
-            where: { user_id: userPayload.sub },
-            data: { current_balance: { increment: split.walletCharge } },
-          });
-          walletRefundedInTryBlock = true;
-        }
-        if (split.cashbackCharge > 0) {
-          await this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge);
-          cashbackRefundedInTryBlock = true;
-        }
-        this.logger.log(`Refunded ₦${split.walletCharge} to wallet${split.cashbackCharge > 0 ? `, ₦${split.cashbackCharge} to cashback` : ''} for user ${userPayload.sub}`);
-        if (shouldThrow) {
-          throw this.buildApiError(this.humanizeVtpassError(errorMessage, dto.serviceID), HttpStatus.BAD_REQUEST);
-        }
-      }
-
-      // Fire-and-forget: audit log + stats
-      this.auditLogService
-        .logTransaction(
-          finalStatus === 'success' ? 'EDUCATION_PURCHASE' : finalStatus === 'failed' ? 'EDUCATION_PURCHASE_FAILED' : 'EDUCATION_PURCHASE',
-          finalStatus === 'success' ? AuditStatus.SUCCESS : finalStatus === 'failed' ? AuditStatus.FAILURE : AuditStatus.PENDING,
-          null,
-          { amount: resolvedAmount, currency: 'NGN', balance_before: Number(createdTx.balance_before), balance_after: Number(createdTx.balance_after), transaction_ref: request_id },
-          { user_id: userPayload.sub, resource_type: 'TransactionHistory', resource_id: createdTx.id, metadata: { serviceID: dto.serviceID, variation_code: dto.variation_code, vtpass_code: responseCode } },
-        )
-        .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
-
-      this.statsService.onTransactionCreated(resolvedAmount, finalStatus, 0).catch((e) => this.logger.warn(`Stats update failed: ${e.message}`));
-      this.statsService.onWalletDebited(resolvedAmount).catch((e) => this.logger.warn(`Stats wallet debit failed: ${e.message}`));
-
-      // Processing response
-      if (isProcessing) {
-        const formattedResponse = {
-          id: createdTx.id,
-          ...response.data,
-          status: 'processing',
-          message: 'Transaction is being processed. Use the query endpoint with request_id to check status.',
-          wallet_balance: Number(createdTx.balance_after),
-          credentials,
-        };
-        return new ApiResponseDto(true, 'Transaction is being processed', formattedResponse);
-      }
-
-      // Success response
-      const formattedResponse: any = {
-        id: createdTx.id,
-        ...response.data,
-        wallet_balance: Number(createdTx.balance_after),
-        credentials,
-      };
-
-      if (finalStatus === 'success') {
-        this.pushNotificationService
-          .sendTransactionNotification(userPayload.sub, 'education', resolvedAmount, 'success', createdTx.id)
-          .catch((e) => this.logger.warn(`Push notification failed: ${e.message}`));
+    return this.orchestrator.executePurchase({
+      transactionType: 'education',
+      serviceLabel: 'Education',
+      auditAction: 'EDUCATION_PURCHASE',
+      auditFailAction: 'EDUCATION_PURCHASE_FAILED',
+      cashbackServiceType: 'education',
+      userId: userPayload.sub,
+      requestId: request_id,
+      chargeAmount: resolvedAmount,
+      useCashback: dto.use_cashback === true,
+      vtpassPayload: payload,
+      description,
+      provider: dto.serviceID,
+      recipientIdentifier: dto.billersCode || dto.phone || '',
+      auditMetadata: { serviceID: dto.serviceID, variation_code: dto.variation_code },
+      humanizeError: (msg) => this.humanizeVtpassError(msg, dto.serviceID),
+      onProcessResponse: (vtpassResponse) => {
+        const credentials = this.extractCredentials(dto.serviceID, vtpassResponse);
+        return { credentials };
+      },
+      onSuccess: async (vtpassResponse, txRecord) => {
         try {
-          const user = await this.prisma.user.findUnique({
-            where: { id: userPayload.sub },
-            select: { email: true, first_name: true },
-          });
-
+          const credentials = this.extractCredentials(dto.serviceID, vtpassResponse);
+          const user = await this.prisma.user.findUnique({ where: { id: userPayload.sub }, select: { email: true, first_name: true } });
           if (user?.email) {
-            const transactionDate = new Date().toLocaleString('en-NG', {
-              dateStyle: 'long',
-              timeStyle: 'short',
-            });
-
+            const transactionDate = new Date().toLocaleString('en-NG', { dateStyle: 'long', timeStyle: 'short' });
             await this.emailService.sendEmail(
               user.email,
               `✅ ${serviceLabel} Purchase Successful`,
@@ -499,86 +315,19 @@ export class EducationService {
                 dto.serviceID,
                 dto.variation_code,
                 resolvedAmount,
-                request_id,
+                txRecord.transaction_reference,
                 transactionDate,
                 quantity,
                 credentials,
               ),
             );
           }
-        } catch (emailError: any) {
-          this.logger.error(`Failed to send education purchase success email: ${emailError.message}`);
+        } catch (e: any) {
+          this.logger.error(`Failed to send education success email: ${e.message}`);
         }
-
-        this.cashbackService
-          .processCashback({ userId: userPayload.sub, amount: resolvedAmount, serviceType: 'education', transactionRef: request_id })
-          .catch((e) => this.logger.warn(`Cashback processing failed: ${e.message}`));
-
-        this.referralService
-          .checkAndTriggerReward(userPayload.sub, resolvedAmount)
-          .catch((e) => this.logger.warn(`Referral reward check failed: ${e.message}`));
-
-        this.firstTxRewardService
-          .checkAndReward({ userId: userPayload.sub, amount: resolvedAmount, transactionType: 'education', transactionRef: request_id })
-          .catch((e) => this.logger.warn(`First-tx reward check failed: ${e.message}`));
-      }
-
-      this.logger.log('Education purchase request completed');
-      return new ApiResponseDto(true, 'Education purchase successful', formattedResponse);
-    } catch (error: any) {
-      this.logger.error(`Error purchasing education product: ${error.message}`);
-
-      try {
-        const existingForUpdate = await this.prisma.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
-
-        const errorMeta = {
-          request_id,
-          payload: { ...(dto as any) },
-          vtpass_error: error.response?.data || error.message || 'Unknown error',
-        };
-
-        if (existingForUpdate) {
-          if (walletRefundedInTryBlock) {
-            await this.prisma.transactionHistory.update({
-              where: { transaction_reference: request_id },
-              data: { status: 'failed', meta_data: { ...(existingForUpdate.meta_data as any), ...errorMeta } },
-            });
-            this.logger.warn(`Education catch-block: VTpass already indicated failed. Marking tx failed, no refund (already done in try).`);
-          } else {
-            await this.prisma.transactionHistory.update({
-              where: { transaction_reference: request_id },
-              data: {
-                status: 'pending',
-                meta_data: {
-                  ...(existingForUpdate.meta_data as any),
-                  ...errorMeta,
-                  catch_block_reason: 'No definitive VTpass response. Kept pending for requery.',
-                },
-              },
-            });
-            this.logger.warn(`Education catch-block: No definitive VTpass response (network/timeout/error). Keeping tx PENDING for requery. NO REFUND.`);
-          }
-        }
-      } catch (updateError: any) {
-        this.logger.warn(`Could not update transaction status: ${updateError.message || updateError}`);
-      }
-
-      this.auditLogService
-        .logTransaction('EDUCATION_PURCHASE_FAILED', AuditStatus.FAILURE, null,
-          { amount: resolvedAmount, currency: 'NGN', transaction_ref: request_id },
-          { user_id: userPayload.sub, error_message: error.message, metadata: { serviceID: dto.serviceID, variation_code: dto.variation_code } },
-        )
-        .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
-
-      this.statsService.onTransactionCreated(resolvedAmount, 'failed', 0).catch((e) => this.logger.warn(`Stats update failed: ${e.message}`));
-
-      if (error instanceof HttpException) throw error;
-      if (error.response) {
-        const rawMessage = error.response.data?.response_description || error.response.data?.message || 'Failed to purchase education product';
-        throw this.buildApiError(this.humanizeVtpassError(rawMessage, dto.serviceID), error.response.status || HttpStatus.BAD_REQUEST);
-      }
-      throw this.buildApiError('Failed to purchase education product', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
+      },
+      onEnrichResponse: (vtpassResponse, extraMeta) => ({ credentials: extraMeta.credentials || {} }),
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -675,144 +424,44 @@ export class EducationService {
   // 5. Requery Pending (for cron/background use)
   // ---------------------------------------------------------------------------
 
-  async requeryPendingTransaction(requestId: string) {
-    const url = `${this.getBaseUrl()}/requery`;
-    this.logger.log(`[Cron] Requerying education transaction: ${requestId}`);
-
-    try {
-      const transaction = await this.prisma.transactionHistory.findUnique({
-        where: { transaction_reference: requestId },
-      });
-
-      if (!transaction || transaction.status !== 'pending') {
-        this.logger.log(`[Cron] Transaction ${requestId} not pending or not found, skipping`);
-        return { updated: false };
-      }
-
-      const metaData = (transaction.meta_data as any) || {};
-      const requeryCount = metaData.requery_count || 0;
-      if (requeryCount >= 5) {
-        this.logger.warn(`[Cron] Transaction ${requestId} has been requeried ${requeryCount} times, skipping`);
-        return { updated: false };
-      }
-
-      const transactionAge = Date.now() - transaction.createdAt.getTime();
-      const maxAge = 30 * 60 * 1000;
-      if (transactionAge > maxAge) {
-        this.logger.warn(`[Cron] Transaction ${requestId} is too old (${Math.round(transactionAge / 60000)} minutes), skipping`);
-        return { updated: false };
-      }
-
-      const payload = { request_id: requestId };
-      const response = await axios.post(url, payload, { headers: this.getPostHeaders() });
-
-      const txContent = response.data?.content?.transactions || {};
-      const responseCode = response.data?.code || '';
-      const txStatus = txContent.status?.toLowerCase() || '';
-      const responseDescription = response.data?.response_description || '';
-
-      const isDelivered = responseCode === '000' && txStatus === 'delivered';
-      const isReversed = responseCode === '040' || txStatus === 'reversed';
-      const isFailed = responseCode === '016' || (responseCode === '000' && txStatus === 'failed');
-      const isProcessing =
-        (responseCode === '000' && (txStatus === 'pending' || txStatus === 'initiated')) ||
-        responseCode === '099' ||
-        responseDescription.includes('PROCESSING') ||
-        responseDescription.includes('PENDING');
-
-      let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
-      let shouldRefund = false;
-
-      if (isDelivered) {
-        finalStatus = 'success';
-        this.logger.log(`[Cron] Transaction ${requestId} delivered successfully`);
-      } else if (isReversed || isFailed) {
-        finalStatus = 'failed';
-        shouldRefund = true;
-        this.logger.warn(`[Cron] Transaction ${requestId} ${isReversed ? 'reversed' : 'failed'}`);
-      } else if (isProcessing) {
-        finalStatus = 'pending';
-        this.logger.log(`[Cron] Transaction ${requestId} still processing`);
-      } else {
-        finalStatus = 'pending';
-        this.logger.warn(`[Cron] Unknown status for transaction ${requestId}: ${responseCode}/${txStatus}`);
-      }
-
-      const serviceID = metaData?.serviceID || transaction.provider || '';
-      const credentials = finalStatus === 'success' ? this.extractCredentials(serviceID, response.data) : {};
-
-      await this.prisma.$transaction(async (tx) => {
-        await tx.transactionHistory.update({
-          where: { transaction_reference: requestId },
-          data: {
-            status: finalStatus,
-            transaction_number: txContent.transactionId?.toString() || transaction.transaction_number,
-            fee: typeof txContent.commission === 'number'
-              ? txContent.commission
-              : Number(txContent.commission) || transaction.fee || 0,
-            meta_data: {
-              ...metaData,
-              vtpass_response: response.data,
-              vtpass_status: txStatus,
-              vtpass_code: responseCode,
-              requery_count: requeryCount + 1,
-              last_requery_at: new Date().toISOString(),
-              ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
-            },
-          },
-        });
-
-        if (shouldRefund && transaction.status !== 'failed') {
-          const refundAmount = transaction.amount || 0;
-          if (refundAmount > 0) {
-            await tx.wallet.update({
-              where: { user_id: transaction.user_id },
-              data: { current_balance: { increment: Number(refundAmount) } },
-            });
-            this.logger.log(`[Cron] Refunded ${refundAmount} to user ${transaction.user_id}`);
+  async requeryPendingTransaction(requestId: string): Promise<{ updated: boolean; status?: string }> {
+    return this.orchestrator.requeryTransaction(requestId, {
+      transactionType: 'education',
+      serviceLabel: 'Education',
+      auditAction: 'EDUCATION_PURCHASE',
+      auditFailAction: 'EDUCATION_PURCHASE_FAILED',
+      cashbackServiceType: 'education',
+      maxRequeryAttempts: 5,
+      onSuccess: async (vtpassResponse, txRecord) => {
+        try {
+          const serviceID = (txRecord.meta_data as any)?.serviceID || txRecord.provider || '';
+          const credentials = this.extractCredentials(serviceID, vtpassResponse);
+          const user = await this.prisma.user.findUnique({ where: { id: txRecord.user_id }, select: { email: true, first_name: true } });
+          if (user?.email) {
+            const serviceLabel = this.getServiceLabel(serviceID);
+            const meta = (txRecord.meta_data as any) || {};
+            const transactionDate = new Date().toLocaleString('en-NG', { dateStyle: 'long', timeStyle: 'short' });
+            await this.emailService.sendEmail(
+              user.email,
+              `✅ ${serviceLabel} Purchase Successful`,
+              this.buildEducationSuccessEmailHtml(
+                user.first_name || 'Valued Customer',
+                serviceLabel,
+                serviceID,
+                meta.variation_code || '',
+                Number(txRecord.amount || 0),
+                txRecord.transaction_reference,
+                transactionDate,
+                meta.quantity || 1,
+                credentials,
+              ),
+            );
           }
+        } catch (e: any) {
+          this.logger.error(`Failed to send education requery success email: ${e.message}`);
         }
-      });
-
-      if (finalStatus !== 'pending') {
-        this.auditLogService
-          .logTransaction(
-            finalStatus === 'success' ? 'EDUCATION_PURCHASE' : 'EDUCATION_PURCHASE_FAILED',
-            finalStatus === 'success' ? AuditStatus.SUCCESS : AuditStatus.FAILURE,
-            null,
-            { amount: transaction.amount || 0, currency: 'NGN', transaction_ref: requestId },
-            { user_id: transaction.user_id, resource_type: 'TransactionHistory', resource_id: transaction.id, description: `[Cron requery] Education transaction resolved to ${finalStatus}` },
-          )
-          .catch((e) => this.logger.warn(`[Cron] Audit log failed: ${e.message}`));
-
-        this.statsService
-          .onTransactionStatusChanged('pending', finalStatus, transaction.amount || 0, 0)
-          .catch((e) => this.logger.warn(`[Cron] Stats update failed: ${e.message}`));
-
-        if (finalStatus === 'success') {
-          this.pushNotificationService
-            .sendTransactionNotification(transaction.user_id, 'education', transaction.amount || 0, 'success', transaction.id)
-            .catch((e) => this.logger.warn(`[Cron] Push notification failed: ${e.message}`));
-
-          this.cashbackService
-            .processCashback({ userId: transaction.user_id, amount: Number(transaction.amount || 0), serviceType: 'education', transactionRef: requestId })
-            .catch((e) => this.logger.warn(`[Cron] Cashback processing failed: ${e.message}`));
-
-          this.referralService
-            .checkAndTriggerReward(transaction.user_id, Number(transaction.amount || 0))
-            .catch((e) => this.logger.warn(`[Cron] Referral reward check failed: ${e.message}`));
-
-          this.firstTxRewardService
-            .checkAndReward({ userId: transaction.user_id, amount: Number(transaction.amount || 0), transactionType: 'education', transactionRef: requestId })
-            .catch((e) => this.logger.warn(`[Cron] First-tx reward check failed: ${e.message}`));
-        }
-      }
-
-      return { updated: true, status: finalStatus };
-    } catch (error: any) {
-      this.logger.error(`[Cron] Error querying transaction ${requestId}: ${error.message}`);
-      return { updated: false };
-    }
+      },
+    });
   }
 
   // ---------------------------------------------------------------------------
