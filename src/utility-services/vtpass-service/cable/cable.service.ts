@@ -263,6 +263,9 @@ export class CableService {
     }
 
     let vtpassAmount = 0;
+    // Track if refunds have already been applied in the main try-block
+    let walletRefundedInTryBlock = false;
+    let cashbackRefundedInTryBlock = false;
     try {
       const isDstvOrGotv = dto.serviceID === 'dstv' || dto.serviceID === 'gotv';
       const isStartimesOrShowmax = dto.serviceID === 'startimes' || dto.serviceID === 'showmax';
@@ -476,9 +479,11 @@ export class CableService {
       if (shouldRefund) {
         if (split.walletCharge > 0) {
           await this.prisma.wallet.update({ where: { user_id: userPayload.sub }, data: { current_balance: { increment: split.walletCharge } } });
+          walletRefundedInTryBlock = true;
         }
         if (split.cashbackCharge > 0) {
-          this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge).catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
+          await this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge);
+          cashbackRefundedInTryBlock = true;
         }
         if (shouldThrow) {
           throw this.buildApiError(errorMessage, HttpStatus.BAD_REQUEST);
@@ -535,19 +540,33 @@ export class CableService {
       this.logger.error(`Error purchasing cable: ${error.message}`);
       try {
         const existingForUpdate = await this.prisma.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
+
+        const errorMeta = {
+          request_id,
+          payload: dto as any,
+          vtpass_error: error.response?.data || error.message || 'Unknown error',
+        };
+
         if (existingForUpdate) {
-          const meta = (existingForUpdate.meta_data as any) || {};
-          const walletRefund = typeof meta.wallet_charged === 'number' ? meta.wallet_charged : Number(vtpassAmount);
-          const cashbackRefund = typeof meta.cashback_used === 'number' ? meta.cashback_used : 0;
-          await this.prisma.transactionHistory.update({
-            where: { transaction_reference: request_id },
-            data: { status: 'failed', meta_data: { ...meta, request_id, payload: (dto as any), vtpass_error: (error.response?.data || error.message || 'Unknown error') } }
-          });
-          if (walletRefund > 0) {
-            await this.prisma.wallet.update({ where: { user_id: userPayload.sub }, data: { current_balance: { increment: walletRefund } } });
-          }
-          if (cashbackRefund > 0) {
-            this.cashbackService.refundCashback(userPayload.sub, cashbackRefund).catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
+          if (walletRefundedInTryBlock) {
+            await this.prisma.transactionHistory.update({
+              where: { transaction_reference: request_id },
+              data: { status: 'failed', meta_data: { ...(existingForUpdate.meta_data as any), ...errorMeta } },
+            });
+            this.logger.warn(`Cable catch-block: VTpass already indicated failed. Marking tx failed, no refund (already done in try).`);
+          } else {
+            await this.prisma.transactionHistory.update({
+              where: { transaction_reference: request_id },
+              data: {
+                status: 'pending',
+                meta_data: {
+                  ...(existingForUpdate.meta_data as any),
+                  ...errorMeta,
+                  catch_block_reason: 'No definitive VTpass response. Kept pending for requery.',
+                },
+              },
+            });
+            this.logger.warn(`Cable catch-block: No definitive VTpass response (network/timeout/error). Keeping tx PENDING for requery. NO REFUND.`);
           }
         }
       } catch (updateError: any) {
@@ -563,9 +582,7 @@ export class CableService {
 
       this.statsService.onTransactionCreated(Number(vtpassAmount), 'failed', 0).catch((e) => this.logger.warn(`Stats update failed: ${e.message}`));
 
-      if (error instanceof HttpException) {
-        throw error;
-      }
+      if (error instanceof HttpException) throw error;
       if (error.response) {
         const message = error.response.data?.response_description || error.response.data?.message || 'Failed to purchase cable';
         throw this.buildApiError(message, error.response.status || HttpStatus.BAD_REQUEST);

@@ -215,6 +215,8 @@ export class InternationalAirtimeService {
     if (vtpassAmount > 0) {
       split = await this.cashbackService.resolvePayment(userPayload.sub, vtpassAmount, dto.use_cashback === true);
     }
+    let walletRefundedInTryBlock = false;
+    let cashbackRefundedInTryBlock = false;
 
     try {
       createdTx = await this.prisma.$transaction(async (tx) => {
@@ -327,9 +329,11 @@ export class InternationalAirtimeService {
             where: { user_id: userPayload.sub },
             data: { current_balance: { increment: split.walletCharge } },
           });
+          walletRefundedInTryBlock = true;
         }
         if (split.cashbackCharge > 0) {
-          this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge).catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
+          await this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge);
+          cashbackRefundedInTryBlock = true;
         }
         this.logger.log(`Refunded ₦${split.walletCharge} to wallet${split.cashbackCharge > 0 ? `, ₦${split.cashbackCharge} to cashback` : ''} for user ${userPayload.sub}`);
         if (shouldThrow) {
@@ -395,30 +399,33 @@ export class InternationalAirtimeService {
 
       try {
         const existingForUpdate = await this.prisma.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
-        if (existingForUpdate && existingForUpdate.status === 'pending') {
-          const meta = (existingForUpdate.meta_data as any) || {};
-          const walletRefund = typeof meta.wallet_charged === 'number' ? meta.wallet_charged : vtpassAmount;
-          const cashbackRefund = typeof meta.cashback_used === 'number' ? meta.cashback_used : 0;
-          await this.prisma.transactionHistory.update({
-            where: { transaction_reference: request_id },
-            data: {
-              status: 'failed',
-              meta_data: {
-                ...meta,
-                request_id,
-                payload: { ...(dto as any) },
-                vtpass_error: error.response?.data || error.message || 'Unknown error',
-              },
-            },
-          });
-          if (walletRefund > 0) {
-            await this.prisma.wallet.update({
-              where: { user_id: userPayload.sub },
-              data: { current_balance: { increment: walletRefund } },
+
+        const errorMeta = {
+          request_id,
+          payload: { ...(dto as any) },
+          vtpass_error: error.response?.data || error.message || 'Unknown error',
+        };
+
+        if (existingForUpdate) {
+          if (walletRefundedInTryBlock) {
+            await this.prisma.transactionHistory.update({
+              where: { transaction_reference: request_id },
+              data: { status: 'failed', meta_data: { ...(existingForUpdate.meta_data as any), ...errorMeta } },
             });
-          }
-          if (cashbackRefund > 0) {
-            this.cashbackService.refundCashback(userPayload.sub, cashbackRefund).catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
+            this.logger.warn(`Intl Airtime catch-block: VTpass already indicated failed. Marking tx failed, no refund (already done in try).`);
+          } else {
+            await this.prisma.transactionHistory.update({
+              where: { transaction_reference: request_id },
+              data: {
+                status: 'pending',
+                meta_data: {
+                  ...(existingForUpdate.meta_data as any),
+                  ...errorMeta,
+                  catch_block_reason: 'No definitive VTpass response. Kept pending for requery.',
+                },
+              },
+            });
+            this.logger.warn(`Intl Airtime catch-block: No definitive VTpass response (network/timeout/error). Keeping tx PENDING for requery. NO REFUND.`);
           }
         }
       } catch (updateError: any) {

@@ -170,6 +170,10 @@ export class AirtimeService {
 
     // default split — full amount from wallet, 0 from cashback
     let split: PaymentSplit = { walletCharge: Number(dto.amount), cashbackCharge: 0, cashbackBefore: 0, cashbackAfter: 0 };
+    // Tracks whether we've already refunded in the main try-block
+    // so we don't accidentally refund again in the catch block.
+    let walletRefundedInTryBlock = false;
+    let cashbackRefundedInTryBlock = false;
 
     try {
       // Validate credentials before making the request
@@ -300,16 +304,38 @@ export class AirtimeService {
 
       // Only refund and throw error for actual failures or reversals
       if (shouldRefund) {
+        this.logger.warn(
+          `Airtime VTpass indicates refund required. walletCharge=${split.walletCharge}, cashbackCharge=${split.cashbackCharge}, ` +
+          `status=${finalStatus}, code=${responseCode}, txStatus=${txStatus}`,
+        );
+
         if (split.walletCharge > 0) {
           await this.prisma.wallet.update({
             where: { user_id: userPayload.sub },
             data: { current_balance: { increment: split.walletCharge } }
           });
+          walletRefundedInTryBlock = true;
+          const walletAfterRefund = await this.prisma.wallet.findFirst({
+            where: { user_id: userPayload.sub },
+          });
+          this.logger.warn(
+            `Airtime wallet refunded in main flow. amount=${split.walletCharge}, ` +
+            `walletRefundedInTryBlock=${walletRefundedInTryBlock}, ` +
+            `wallet_balance_now=${walletAfterRefund?.current_balance}`,
+          );
         }
         // return cashback portion to cashback wallet
         if (split.cashbackCharge > 0) {
-          this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge)
-            .catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
+          await this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge);
+          cashbackRefundedInTryBlock = true;
+          const cashbackWalletAfter = await this.prisma.cashbackWallet.findUnique({
+            where: { user_id: userPayload.sub },
+          });
+          this.logger.warn(
+            `Airtime cashback refunded in main flow. amount=${split.cashbackCharge}, ` +
+            `cashbackRefundedInTryBlock=${cashbackRefundedInTryBlock}, ` +
+            `cashback_balance_now=${cashbackWalletAfter?.current_balance}`,
+          );
         }
         
         if (shouldThrow) {
@@ -413,25 +439,47 @@ export class AirtimeService {
         };
 
         if (existingTx) {
-          // Transaction was created (wallet was debited) — mark failed + refund
-          await this.prisma.$transaction(async (tx) => {
-            await tx.transactionHistory.update({
+          // Transaction was created (wallet was debited) — only refund if we already
+          // refunded in the main try-block (VTpass explicitly returned Failed/Reversed).
+          // For No Response, Timeout, or other errors we don't know the outcome —
+          // keep as pending, do NOT refund, let cron requery reconcile.
+          if (walletRefundedInTryBlock) {
+            // We already refunded in try block (VTpass said failed). Just mark failed.
+            await this.prisma.transactionHistory.update({
               where: { transaction_reference: request_id },
               data: { status: 'failed', meta_data: errorMeta },
             });
-            if (split.walletCharge > 0) {
-              await tx.wallet.update({
-                where: { user_id: userPayload.sub },
-                data: { current_balance: { increment: split.walletCharge } },
-              });
-            }
-          });
-          // return cashback portion to cashback wallet
-          if (split.cashbackCharge > 0) {
-            this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge)
-              .catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
+            this.logger.warn(
+              `Airtime catch-block: VTpass already indicated failed. Marking tx failed, no refund (already done in try).`,
+            );
+          } else {
+            // No definitive Failed from VTpass (e.g. network error, timeout, no response).
+            // Keep as pending — do NOT refund. Cron requery will reconcile.
+            await this.prisma.transactionHistory.update({
+              where: { transaction_reference: request_id },
+              data: {
+                status: 'pending',
+                meta_data: {
+                  ...(existingTx.meta_data as any),
+                  ...errorMeta,
+                  catch_block_reason: 'No definitive VTpass response. Kept pending for requery.',
+                },
+              },
+            });
+            this.logger.warn(
+              `Airtime catch-block: No definitive VTpass response (network/timeout/error). ` +
+              `Keeping tx PENDING for requery. NO REFUND.`,
+            );
           }
-          this.logger.log(`Transaction ${request_id} marked as failed, wallet refunded`);
+
+          // Final balance confirmation for debugging
+          const [finalWallet, finalCashback] = await Promise.all([
+            this.prisma.wallet.findFirst({ where: { user_id: userPayload.sub } }),
+            this.prisma.cashbackWallet.findUnique({ where: { user_id: userPayload.sub } }),
+          ]);
+          this.logger.warn(
+            `Airtime tx ${request_id} — FINAL BALANCES: wallet=${finalWallet?.current_balance}, cashback=${finalCashback?.current_balance}`,
+          );
         } else {
           // Transaction was never created (error before DB commit) — create a failed record
           await this.prisma.transactionHistory.create({

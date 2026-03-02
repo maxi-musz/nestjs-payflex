@@ -443,7 +443,7 @@ function getUserTier(user: any): TierInfo {
                 reward_banners,
             }
             console.log(colors.magenta(`User data for ${user.email} for app homepage successfully retrieved`))
-            console.log(colors.magenta(`User data for ${user.email} for app homepage successfully retrieved: ${JSON.stringify(formattedResponse, null, 2)}`))
+            // console.log(colors.magenta(`User data for ${user.email} for app homepage successfully retrieved: ${JSON.stringify(formattedResponse, null, 2)}`))
             return new ApiResponseDto(
                 true, 
                 `User data ${user.email} for app homepage successfully retrieved`, 

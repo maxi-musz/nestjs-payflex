@@ -276,6 +276,10 @@ export class DataService {
     let markupValue = 0;
     // default split — full amount from wallet, 0 from cashback
     let split: PaymentSplit = { walletCharge: 0, cashbackCharge: 0, cashbackBefore: 0, cashbackAfter: 0 };
+    // Tracks whether we've already refunded in the main try-block
+    // so we don't accidentally refund again in the catch block.
+    let walletRefundedInTryBlock = false;
+    let cashbackRefundedInTryBlock = false;
 
     try {
       // Get variation amount if not provided
@@ -459,10 +463,11 @@ export class DataService {
             where: { user_id: userPayload.sub },
             data: { current_balance: { increment: split.walletCharge } }
           });
+          walletRefundedInTryBlock = true;
         }
         if (split.cashbackCharge > 0) {
-          this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge)
-            .catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
+          await this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge);
+          cashbackRefundedInTryBlock = true;
         }
         
         if (shouldThrow) {
@@ -545,48 +550,59 @@ export class DataService {
     } catch (error: any) {
       this.logger.error(`Error purchasing data: ${error.message}`);
       
-      // Update transaction status to failed and refund only if the pending transaction exists
       try {
         const existingForUpdate = await this.prisma.transactionHistory.findUnique({ where: { transaction_reference: request_id } });
+
+        const errorMeta = {
+          request_id,
+          payload: { request_id, serviceID: dto.serviceID, billersCode: dto.billersCode, variation_code: dto.variation_code, vtpass_amount: vtpassAmount, smipay_amount: smipayAmount, markup_percent: markupPercent, markup_value: markupValue, phone: dto.phone },
+          vtpass_error: error.response?.data || error.message || 'Unknown error',
+        };
+
         if (existingForUpdate) {
-          await this.prisma.$transaction(async (tx) => {
-            await tx.transactionHistory.update({
+          if (walletRefundedInTryBlock) {
+            await this.prisma.transactionHistory.update({
               where: { transaction_reference: request_id },
-              data: { 
-                status: 'failed', 
-                meta_data: { 
-                  request_id, 
-                  payload: {
-                    request_id,
-                    serviceID: dto.serviceID,
-                    billersCode: dto.billersCode,
-                    variation_code: dto.variation_code,
-                    vtpass_amount: vtpassAmount,
-                    smipay_amount: smipayAmount,
-                    markup_percent: markupPercent,
-                    markup_value: markupValue,
-                    phone: dto.phone,
-                  },
-                  vtpass_error: (error.response?.data || error.message || 'Unknown error')
-                } 
-              }
+              data: { status: 'failed', meta_data: errorMeta },
             });
-            if (split.walletCharge > 0) {
-              await tx.wallet.update({
-                where: { user_id: userPayload.sub },
-                data: { current_balance: { increment: split.walletCharge } }
-              });
-            }
+            this.logger.warn(`Data catch-block: VTpass already indicated failed. Marking tx failed, no refund (already done in try).`);
+          } else {
+            await this.prisma.transactionHistory.update({
+              where: { transaction_reference: request_id },
+              data: {
+                status: 'pending',
+                meta_data: {
+                  ...(existingForUpdate.meta_data as any),
+                  ...errorMeta,
+                  catch_block_reason: 'No definitive VTpass response. Kept pending for requery.',
+                },
+              },
+            });
+            this.logger.warn(`Data catch-block: No definitive VTpass response (network/timeout/error). Keeping tx PENDING for requery. NO REFUND.`);
+          }
+        } else {
+          await this.prisma.transactionHistory.create({
+            data: {
+              user_id: userPayload.sub,
+              amount: smipayAmount,
+              provider: dto.serviceID,
+              transaction_type: 'data',
+              credit_debit: 'debit',
+              description: `${dto.serviceID.toUpperCase()} DATA - ${dto.billersCode}`,
+              status: 'failed',
+              recipient_mobile: dto.billersCode,
+              payment_method: 'wallet',
+              payment_channel: 'other',
+              transaction_reference: request_id,
+              balance_before: 0,
+              balance_after: 0,
+              meta_data: errorMeta,
+            },
           });
+          this.logger.log(`Failed data transaction ${request_id} recorded (no wallet debit occurred)`);
         }
       } catch (updateError: any) {
         this.logger.warn(`Could not update transaction status: ${updateError.message || updateError}`);
-      }
-
-      // return cashback portion to cashback wallet (covers both tx-exists and pre-tx-failure cases)
-      if (split.cashbackCharge > 0) {
-        this.cashbackService.refundCashback(userPayload.sub, split.cashbackCharge)
-          .catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
       }
 
       this.auditLogService
@@ -600,6 +616,7 @@ export class DataService {
         .onTransactionCreated(smipayAmount, 'failed', 0)
         .catch((e) => this.logger.warn(`Stats update failed: ${e.message}`));
 
+      if (error instanceof HttpException) throw error;
       if (error.response) {
         try {
           this.logger.error('VTpass API Error Response: ' + JSON.stringify(error.response.data));
