@@ -28,19 +28,6 @@ export class CronService implements OnModuleInit {
       url = 'http://localhost:3000/api/v1/auth/health';
     }
 
-    // Keep-alive ping (only in production)
-    if (process.env.NODE_ENV === 'production') {
-      // cron.schedule('*/3 * * * *', async () => {  // Runs every 3 minutes
-      //   try {
-      //     this.logger.log("Pinging service to keep alive...");
-      //     await axios.get(url); // Replace with your actual endpoint
-      //     this.logger.log(colors.america("Service is up"));
-      //   } catch (error: any) {
-      //     this.logger.error("Failed to ping service:", error.message);
-      //   }
-      // });
-    }
-
     // VTpass transaction requery - runs every 3 minutes - production only
     if (process.env.NODE_ENV === 'production') {
       cron.schedule('*/3 * * * *', async () => {
@@ -48,28 +35,30 @@ export class CronService implements OnModuleInit {
         });
     }
 
-    // Paystack transaction requery - runs every 5 minutes (pending deposits)
-    cron.schedule('*/5 * * * *', async () => {
-      await this.requeryPendingPaystackTransactions();
-    });
+    // Paystack transaction requery - runs every 20 minutes (pending deposits)
+    if (process.env.NODE_ENV === 'production') {
+      cron.schedule('*/2 * * * *', async () => {
+        await this.requeryPendingPaystackTransactions();
+      });
+    }
 
-    // Stale Paystack transaction cleanup - runs every hour
+    // Stale Paystack transaction cleanup - runs every 30 mins
     // Catches abandoned/failed payments that slipped through (user closed browser, network issues)
-    cron.schedule('0 * * * *', async () => {
+    cron.schedule('*/3 * * * *', async () => {
       await this.cleanupStalePaystackTransactions();
     });
   }
 
   /**
    * Requery pending VTpass transactions (data and airtime)
-   * Runs every 25 minutes, queries transactions up to 2 times max
+   * Runs every 29 mins, queries transactions up to 2 times max
    */
   private async requeryPendingVtpassTransactions(): Promise<void> {
     try {
       this.logger.log('[Cron] Starting requery of pending VTpass transactions...');
 
       // Find pending transactions (data and airtime) created in the last 30 minutes
-      const twentyFiveMinutesAgo = new Date(Date.now() - 25 * 60 * 1000);
+      const twentyNineMinutesAgo = new Date(Date.now() - 29 * 60 * 1000);
       
       const pendingTransactions = await this.prisma.transactionHistory.findMany({
         where: {
@@ -78,7 +67,7 @@ export class CronService implements OnModuleInit {
             in: ['data', 'airtime'],
           },
           createdAt: {
-            gte: twentyFiveMinutesAgo,
+            gte: twentyNineMinutesAgo,
           },
           transaction_reference: {
             not: null,
@@ -137,20 +126,20 @@ export class CronService implements OnModuleInit {
 
   /**
    * Requery pending Paystack (deposit) transactions.
-   * Runs every 25 minutes.
+   * Runs every 30 minutes.
    */
   private async requeryPendingPaystackTransactions(): Promise<void> {
     try {
       this.logger.log(colors.america('[Cron] Starting requery of pending Paystack transactions...'));
 
-      const twentyFiveMinutesAgo = new Date(Date.now() - 25 * 60 * 1000);
+      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
       const pending = await this.prisma.transactionHistory.findMany({
         where: {
           status: 'pending',
           transaction_type: 'deposit',
           payment_method: 'paystack',
           transaction_reference: { not: null },
-          createdAt: { gte: twentyFiveMinutesAgo },
+          createdAt: { gte: thirtyMinutesAgo },
         },
         select: { transaction_reference: true },
         take: 50,
