@@ -55,6 +55,8 @@ export class RateLimitGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    if (process.env.NODE_ENV !== 'production') return true;
+
     const request = context.switchToHttp().getRequest();
     const handler = context.getHandler();
 
