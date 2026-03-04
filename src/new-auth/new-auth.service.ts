@@ -27,6 +27,10 @@ import type { RequestEmailVerificationDto } from './dto/request-email-verificati
 import type { RequestPasswordResetDto } from './dto/request-password-reset.dto';
 import type { VerifyPasswordResetOtpDto } from './dto/verify-password-reset-otp.dto';
 import type { ResetPasswordDto } from './dto/reset-password.dto';
+import type { CreateTransactionPinDto } from './dto/create-transaction-pin.dto';
+import type { UpdateTransactionPinDto } from './dto/update-transaction-pin.dto';
+import type { RefreshTokenDto } from './dto/refresh-token.dto';
+import * as colors from 'colors';
 
 @Injectable()
 export class NewAuthService {
@@ -61,6 +65,24 @@ export class NewAuthService {
     const secret = this.config.get('JWT_SECRET');
     const expiresIn = this.config.get('JWT_EXPIRES_IN') || '7d';
     return this.jwt.signAsync(payload, { expiresIn, secret });
+  }
+
+  private async createAndStoreRefreshToken(userId: string): Promise<string> {
+    const refreshSecret = this.config.get('JWT_REFRESH_SECRET') || this.config.get('JWT_SECRET');
+    const expiresIn = this.config.get('JWT_REFRESH_EXPIRES_IN') || this.config.get('USER_REFRESH_TOKEN_EXPIRATION_TIME') || '7d';
+    const token = await this.jwt.signAsync(
+      { sub: userId, type: 'refresh' },
+      { secret: refreshSecret, expiresIn },
+    );
+    const decoded = this.jwt.decode(token) as { exp?: number };
+    const expiresAt = decoded?.exp ? new Date(decoded.exp * 1000) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    await this.prisma.refreshToken.upsert({
+      where: { userId },
+      create: { token, userId, expiresAt },
+      update: { token, expiresAt },
+    });
+    return token;
   }
 
   private deviceFields(req: Request) {
@@ -124,6 +146,7 @@ export class NewAuthService {
       user.phone_number,
       user.role ?? null,
     );
+    const refresh_token = await this.createAndStoreRefreshToken(user.id);
 
     // Login successful
     this.audit.logAuth(AuditAction.LOGIN, AuditStatus.SUCCESS, req, {
@@ -160,7 +183,7 @@ export class NewAuthService {
 
     return new ApiResponseDto(true, 'Welcome back', {
       access_token,
-      refresh_token: null as string | null,
+      refresh_token,
       user: formattedUser,
     });
   }
@@ -267,6 +290,13 @@ export class NewAuthService {
       throw new BadRequestException('Invalid or expired OTP. Request a new verification code.');
     }
 
+    this.logger.debug(
+      `OTP verify for ${dto.email}: ` +
+      `sent_otp="${dto.otp}", db_otp="${record.otp}", ` +
+      `expires_at=${record.otp_expires_at?.toISOString()}, now=${new Date().toISOString()}, ` +
+      `expired=${new Date() > new Date(record.otp_expires_at)}`,
+    );
+
     if (record.otp !== dto.otp) {
       await this.audit.logAuth(AuditAction.EMAIL_OTP_VERIFY, AuditStatus.FAILURE, req, {
         description: `Email verification failed — wrong OTP for ${dto.email}`,
@@ -282,7 +312,7 @@ export class NewAuthService {
         metadata: { email: dto.email, reason: 'expired_otp' },
         ...this.deviceFields(req),
       });
-      throw new BadRequestException('Invalid or expired OTP provided');
+      throw new BadRequestException('OTP has expired. Please request a new verification code.');
     }
 
     await this.prisma.emailVerification.update({
@@ -434,6 +464,7 @@ export class NewAuthService {
       newUser.phone_number,
       fullUser?.role ?? 'user',
     );
+    const refresh_token = await this.createAndStoreRefreshToken(newUser.id);
 
     this.audit.logAuth(AuditAction.LOGIN, AuditStatus.SUCCESS, req, {
       user_id: newUser.id,
@@ -470,7 +501,7 @@ export class NewAuthService {
 
     return new ApiResponseDto(true, 'Account created successfully', {
       access_token,
-      refresh_token: null as string | null,
+      refresh_token,
       user: formattedUser,
     });
   }
@@ -672,6 +703,14 @@ export class NewAuthService {
       where: { email: dto.email, otp: dto.otp },
     });
 
+    const dbUser = userWithOtp ?? user;
+    this.logger.debug(
+      `Password reset OTP for ${dto.email}: ` +
+      `sent_otp="${dto.otp}", db_otp="${dbUser.otp}", ` +
+      `expires_at=${dbUser.otp_expires_at ? new Date(dbUser.otp_expires_at).toISOString() : 'null'}, now=${new Date().toISOString()}, ` +
+      `expired=${!dbUser.otp_expires_at || new Date() > new Date(dbUser.otp_expires_at)}, otp_match=${!!userWithOtp}`,
+    );
+
     if (!userWithOtp) {
       this.audit.logAuth(AuditAction.PASSWORD_RESET_COMPLETE, AuditStatus.FAILURE, req, {
         user_id: user.id,
@@ -696,7 +735,7 @@ export class NewAuthService {
         metadata: { email: dto.email, reason: 'expired_otp', expired_at: userWithOtp.otp_expires_at },
         ...this.deviceFields(req),
       });
-      throw new BadRequestException('Invalid or expired OTP provided');
+      throw new BadRequestException('OTP has expired. Please request a new verification code.');
     }
 
     const hashedPassword = await argon.hash(dto.new_password);
@@ -727,6 +766,113 @@ export class NewAuthService {
     });
 
     return new ApiResponseDto(true, 'Password reset successfully');
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // TRANSACTION PIN (4-digit checkout PIN, like OPay)
+  // ──────────────────────────────────────────────────────────
+
+  async createTransactionPin(userId: string, dto: CreateTransactionPinDto, req: Request) {
+    this.logger.log(`Creating transaction PIN for user ${userId}`);
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, transactionPinHash: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.transactionPinHash) {
+      await this.audit.logAuth(AuditAction.TRANSACTION_PIN_SETUP, AuditStatus.FAILURE, req, {
+        user_id: userId,
+        description: 'Transaction PIN setup failed — PIN already exists. Use update endpoint.',
+        resource_type: 'User',
+        resource_id: userId,
+        metadata: { reason: 'already_exists' },
+        ...this.deviceFields(req),
+      });
+      throw new BadRequestException('Transaction PIN already set. Use the update endpoint to change it.');
+    }
+
+    const hash = await argon.hash(dto.pin);
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { transactionPinHash: hash },
+    });
+
+    await this.audit.logAuth(AuditAction.TRANSACTION_PIN_SETUP, AuditStatus.SUCCESS, req, {
+      user_id: userId,
+      description: 'Transaction PIN created successfully',
+      resource_type: 'User',
+      resource_id: userId,
+      ...this.deviceFields(req),
+    });
+
+    this.logger.log(`Transaction PIN created successfully for user ${userId}`);
+    return new ApiResponseDto(true, 'Transaction PIN created successfully');
+  }
+
+  async updateTransactionPin(userId: string, dto: UpdateTransactionPinDto, req: Request) {
+    this.logger.log(`Updating transaction PIN for user ${userId}`);
+
+    if (dto.current_pin === dto.new_pin) {
+      throw new BadRequestException('New PIN must be different from current PIN');
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, transactionPinHash: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (!user.transactionPinHash) {
+      await this.audit.logAuth(AuditAction.TRANSACTION_PIN_UPDATE, AuditStatus.FAILURE, req, {
+        user_id: userId,
+        description: 'Transaction PIN update failed — no PIN set. Use create endpoint first.',
+        resource_type: 'User',
+        resource_id: userId,
+        metadata: { reason: 'not_set' },
+        ...this.deviceFields(req),
+      });
+      throw new BadRequestException('No transaction PIN set. Use the create endpoint first.');
+    }
+
+    const isValid = await argon.verify(user.transactionPinHash, dto.current_pin);
+    if (!isValid) {
+      await this.audit.logAuth(AuditAction.TRANSACTION_PIN_UPDATE, AuditStatus.FAILURE, req, {
+        user_id: userId,
+        description: 'Transaction PIN update failed — incorrect current PIN',
+        resource_type: 'User',
+        resource_id: userId,
+        metadata: { reason: 'wrong_current_pin' },
+        ...this.deviceFields(req),
+      });
+      throw new BadRequestException('Incorrect current PIN');
+    }
+
+    const hash = await argon.hash(dto.new_pin);
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { transactionPinHash: hash },
+    });
+
+    await this.audit.logAuth(AuditAction.TRANSACTION_PIN_UPDATE, AuditStatus.SUCCESS, req, {
+      user_id: userId,
+      description: 'Transaction PIN updated successfully',
+      resource_type: 'User',
+      resource_id: userId,
+      ...this.deviceFields(req),
+    });
+
+    this.logger.log(`Transaction PIN updated successfully for user ${userId}`);
+    return new ApiResponseDto(true, 'Transaction PIN updated successfully');
   }
 
   // ──────────────────────────────────────────────────────────
@@ -761,6 +907,96 @@ export class NewAuthService {
     this.logger.log(`Onboarding completed for user ${userId}`);
     return new ApiResponseDto(true, 'Onboarding completed', {
       has_completed_onboarding: true,
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // REFRESH TOKEN
+  // ──────────────────────────────────────────────────────────
+
+  async refreshTokens(dto: RefreshTokenDto, req: Request) {
+    this.logger.log(colors.america('Refresh token request'));
+
+    const refreshSecret = this.config.get('JWT_REFRESH_SECRET') || this.config.get('JWT_SECRET');
+
+    let payload: { sub?: string; type?: string };
+    try {
+      payload = await this.jwt.verifyAsync(dto.refresh_token, { secret: refreshSecret });
+    } catch {
+      await this.audit.logAuth(AuditAction.TOKEN_REFRESH, AuditStatus.FAILURE, req, {
+        description: 'Refresh token invalid or expired',
+        metadata: { reason: 'invalid_token' },
+        ...this.deviceFields(req),
+      });
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+
+    if (payload?.type !== 'refresh' || !payload?.sub) {
+      await this.audit.logAuth(AuditAction.TOKEN_REFRESH, AuditStatus.FAILURE, req, {
+        description: 'Refresh token invalid',
+        metadata: { reason: 'invalid_payload' },
+        ...this.deviceFields(req),
+      });
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    const stored = await this.prisma.refreshToken.findUnique({
+      where: { userId: payload.sub },
+      include: { user: { include: { profile_image: true, kyc_verification: true } } },
+    });
+
+    if (!stored || stored.token !== dto.refresh_token || new Date() > stored.expiresAt) {
+      if (stored) {
+        await this.prisma.refreshToken.delete({ where: { userId: payload.sub } }).catch(() => {});
+      }
+      await this.audit.logAuth(AuditAction.TOKEN_REFRESH, AuditStatus.FAILURE, req, {
+        user_id: payload.sub,
+        description: 'Refresh token revoked or expired',
+        metadata: { reason: 'token_not_found_or_expired' },
+        ...this.deviceFields(req),
+      });
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+
+    const user = stored.user;
+    const access_token = await this.signToken(
+      user.id,
+      user.email,
+      user.phone_number,
+      user.role ?? null,
+    );
+    const refresh_token = await this.createAndStoreRefreshToken(user.id);
+
+    await this.audit.logAuth(AuditAction.TOKEN_REFRESH, AuditStatus.SUCCESS, req, {
+      user_id: user.id,
+      description: 'Access token refreshed',
+      resource_type: 'User',
+      resource_id: user.id,
+      ...this.deviceFields(req),
+    });
+
+    const formattedUser = {
+      id: user.id,
+      email: user.email,
+      name: `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim(),
+      first_name: user.first_name,
+      last_name: user.last_name,
+      phone_number: user.phone_number ?? null,
+      is_email_verified: user.is_email_verified,
+      role: user.role ?? null,
+      gender: user.gender ?? null,
+      date_of_birth: user.date_of_birth ?? null,
+      profile_image: user.profile_image?.secure_url ?? null,
+      kyc_verified: user.kyc_verification?.is_verified ?? false,
+      isTransactionPinSetup: !!user.transactionPinHash,
+      has_completed_onboarding: user.has_completed_onboarding,
+      created_at: formatDate(user.createdAt),
+    };
+
+    return new ApiResponseDto(true, 'Token refreshed', {
+      access_token,
+      refresh_token,
+      user: formattedUser,
     });
   }
 

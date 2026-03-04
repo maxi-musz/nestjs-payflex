@@ -298,7 +298,7 @@ Call this after the user enters the OTP they received. On success, the email is 
   "message": "Account created successfully",
   "data": {
     "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "refresh_token": null,
+    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "user": {
       "id": "uuid",
       "email": "user@example.com",
@@ -392,7 +392,7 @@ Used in flows where a **user already exists** and has an OTP stored (e.g. legacy
   "message": "Welcome back",
   "data": {
     "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "refresh_token": null,
+    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "user": {
       "id": "uuid",
       "email": "user@example.com",
@@ -426,6 +426,64 @@ Used in flows where a **user already exists** and has an OTP stored (e.g. legacy
 
 Use `access_token` in the `Authorization` header for protected endpoints:  
 `Authorization: Bearer <access_token>`.
+
+Store `refresh_token` securely (e.g. secure storage). Use it to call `POST /new-auth/refresh` when the access token expires.
+
+---
+
+### 3.5a Refresh token
+
+**Endpoint:** `POST /new-auth/refresh`
+
+Call this when the access token expires to get a new `access_token` and `refresh_token` without requiring the user to sign in again. The refresh token is returned on sign-in and register.
+
+**Request body:**
+
+| Field | Type | Required |
+|-------|------|----------|
+| `refresh_token` | string | Yes | The refresh token from sign-in or a previous refresh. |
+
+**Example request:**
+
+```json
+{
+  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+**Success response (200):**
+
+```json
+{
+  "success": true,
+  "message": "Token refreshed",
+  "data": {
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user": {
+      "id": "uuid",
+      "email": "user@example.com",
+      "name": "Jane Doe",
+      "first_name": "Jane",
+      "last_name": "Doe",
+      "phone_number": "2348012345678",
+      "is_email_verified": true,
+      "role": "user",
+      "isTransactionPinSetup": false,
+      "has_completed_onboarding": true,
+      "created_at": "Feb 17, 2026, 10:30 AM"
+    }
+  }
+}
+```
+
+**Error response:**
+
+| statusCode | message |
+|------------|---------|
+| 401 | `Invalid or expired refresh token` |
+
+**Frontend flow:** When an API call returns 401, call `POST /new-auth/refresh` with the stored `refresh_token`. If it succeeds, store the new `access_token` and `refresh_token`, then retry the original request. If refresh fails, redirect the user to sign-in.
 
 ---
 
@@ -601,7 +659,106 @@ If already completed (idempotent):
 
 ---
 
-### 3.10 Logout
+### 3.10 Transaction PIN (create & update)
+
+The transaction PIN is a **4-digit PIN** used at checkout (like OPay, Kuda, etc.) to authorize payments. Users must create it before they can use it for transactions.
+
+**Auth:** `Authorization: Bearer <access_token>` (required)
+
+**Rate limit:** 10 requests per IP / 5 per device per hour (production only).
+
+---
+
+#### 3.10.1 Create transaction PIN
+
+**Endpoint:** `POST /new-auth/create-transaction-pin`
+
+Call this when the user sets their transaction PIN for the **first time**. If a PIN already exists, use the update endpoint instead.
+
+**Request body:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `pin` | string | Yes | Exactly 4 digits (e.g. `"1234"`). |
+
+**Example request:**
+
+```json
+{
+  "pin": "1234"
+}
+```
+
+**Success response (200):**
+
+```json
+{
+  "success": true,
+  "message": "Transaction PIN created successfully"
+}
+```
+
+**Error responses:**
+
+| statusCode | message |
+|------------|---------|
+| 400 | `Transaction PIN already set. Use the update endpoint to change it.` |
+| 401 | `Unauthorized` (missing or invalid token) |
+
+---
+
+#### 3.10.2 Update transaction PIN
+
+**Endpoint:** `POST /new-auth/update-transaction-pin`
+
+Call this when the user wants to **change** their existing transaction PIN. Requires the current PIN for verification.
+
+**Request body:**
+
+| Field | Type | Required | Constraints |
+|-------|------|----------|-------------|
+| `current_pin` | string | Yes | Exactly 4 digits (current PIN). |
+| `new_pin` | string | Yes | Exactly 4 digits (must be different from `current_pin`). |
+
+**Example request:**
+
+```json
+{
+  "current_pin": "1234",
+  "new_pin": "5678"
+}
+```
+
+**Success response (200):**
+
+```json
+{
+  "success": true,
+  "message": "Transaction PIN updated successfully"
+}
+```
+
+**Error responses:**
+
+| statusCode | message |
+|------------|---------|
+| 400 | `No transaction PIN set. Use the create endpoint first.` |
+| 400 | `Incorrect current PIN` |
+| 400 | `New PIN must be different from current PIN` |
+| 401 | `Unauthorized` (missing or invalid token) |
+
+---
+
+#### Frontend flow for transaction PIN
+
+1. **Check if user has PIN:** Use `user.isTransactionPinSetup` from sign-in/register response (if exposed). If not, show "Create PIN" flow.
+2. **Create flow:** Show a 4-digit PIN input screen. On submit, call `POST /new-auth/create-transaction-pin` with `{ "pin": "1234" }`.
+3. **Update flow (Settings):** Show "Change PIN" with two inputs: current PIN and new PIN. Call `POST /new-auth/update-transaction-pin` with `{ "current_pin": "...", "new_pin": "..." }`.
+4. **Security:** Store the PIN **never** in plain text. Do not persist it. Use it only for the create/update API call; for transaction verification, the backend will prompt or use a separate verify endpoint.
+
+---
+
+### 3.11 Logout
 
 **Endpoint:** `POST /new-auth/logout`
 
@@ -671,9 +828,11 @@ The backend captures the user's location through a **two-layer approach**:
 | **Geolocation** | Send `x-latitude` / `x-longitude` headers for precise location tracking. If omitted, the backend falls back to IP-based city-level geolocation. |
 | **Body** | Do not send device metadata in the request body. |
 | **Auth** | After sign in, send `Authorization: Bearer <access_token>` on protected requests. |
+| **Refresh** | When access token expires (401), call `POST /new-auth/refresh` with `{ "refresh_token": "..." }` to get new tokens. Store and retry. |
+| **Transaction PIN** | 4-digit PIN for checkout. Create: `POST /new-auth/create-transaction-pin` with `{ "pin": "1234" }`. Update: `POST /new-auth/update-transaction-pin` with `{ "current_pin": "...", "new_pin": "..." }`. Both require JWT. |
 | **Response** | Use the envelope `success`, `message`, and optional `data` for all success responses; use `statusCode` and `message` for errors. |
 
 ---
 
-**Document version:** 1.6  
-**Last updated:** 2026-02-25
+**Document version:** 1.7  
+**Last updated:** 2026-03-04

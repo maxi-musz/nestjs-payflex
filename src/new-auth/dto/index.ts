@@ -5,3 +5,6 @@ export * from './request-email-verification.dto';
 export * from './request-password-reset.dto';
 export * from './verify-password-reset-otp.dto';
 export * from './reset-password.dto';
+export * from './create-transaction-pin.dto';
+export * from './update-transaction-pin.dto';
+export * from './refresh-token.dto';

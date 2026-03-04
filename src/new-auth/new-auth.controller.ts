@@ -9,8 +9,11 @@ import {
   RequestPasswordResetDto,
   VerifyPasswordResetOtpDto,
   ResetPasswordDto,
+  CreateTransactionPinDto,
+  UpdateTransactionPinDto,
+  RefreshTokenDto,
 } from './dto';
-import { RateLimitGuard } from '../common/guards/rate-limit.guard';
+import { RateLimitGuard, RateLimit } from '../common/guards/rate-limit.guard';
 
 @Controller('new-auth')
 export class NewAuthController {
@@ -61,6 +64,15 @@ export class NewAuthController {
     return this.newAuthService.signin(dto, req);
   }
 
+  @Post('refresh')
+  @UseGuards(RateLimitGuard)
+  refreshTokens(
+    @Body() dto: RefreshTokenDto,
+    @Req() req: Request,
+  ) {
+    return this.newAuthService.refreshTokens(dto, req);
+  }
+
   @Post('forgot-password')
   @UseGuards(RateLimitGuard)
   requestPasswordReset(
@@ -92,6 +104,26 @@ export class NewAuthController {
   @UseGuards(AuthGuard('jwt'))
   completeOnboarding(@Req() req: any) {
     return this.newAuthService.completeOnboarding(req.user.sub);
+  }
+
+  @Post('create-transaction-pin')
+  @UseGuards(AuthGuard('jwt'), RateLimitGuard)
+  @RateLimit({ ipLimit: 5, deviceLimit: 5, windowMs: 60 * 60 * 1000 }) // 5 requests per hour per IP and device
+  createTransactionPin(
+    @Body() dto: CreateTransactionPinDto,
+    @Req() req: any,
+  ) {
+    return this.newAuthService.createTransactionPin(req.user.sub, dto, req);
+  }
+
+  @Post('update-transaction-pin')
+  @UseGuards(AuthGuard('jwt'), RateLimitGuard)
+  @RateLimit({ ipLimit: 5, deviceLimit: 5, windowMs: 60 * 60 * 1000 }) // 5 requests per hour per IP and device
+  updateTransactionPin(
+    @Body() dto: UpdateTransactionPinDto,
+    @Req() req: any,
+  ) {
+    return this.newAuthService.updateTransactionPin(req.user.sub, dto, req);
   }
 
   @Post('logout')
