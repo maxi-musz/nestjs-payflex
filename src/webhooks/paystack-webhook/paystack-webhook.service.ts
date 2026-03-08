@@ -21,7 +21,7 @@ export class PaystackWebhookService {
    * Verify Paystack webhook signature
    */
   verifySignature(rawBody: Buffer, signature: string): boolean {
-    this.logger.log(colors.cyan(`Verifying Paystack webhook signature for reference: ${rawBody}`));
+    this.logger.log(colors.cyan(`Verifying Paystack webhook signature (body length: ${rawBody?.length ?? 0} bytes)`));
     const secretKey = 
       process.env.NODE_ENV === 'development'
         ? this.configService.get<string>('PAYSTACK_TEST_SECRET_KEY')

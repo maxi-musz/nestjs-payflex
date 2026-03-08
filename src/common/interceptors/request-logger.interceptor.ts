@@ -26,7 +26,7 @@ export class RequestLoggerInterceptor implements NestInterceptor {
     const userId = user?.sub || user?.id || 'Anonymous';
     const userEmail = user?.email || 'N/A';
 
-    // Sanitize sensitive data from body
+    // Sanitize sensitive data from body (skip Buffers - e.g. Paystack webhook raw body)
     const sanitizedBody = this.sanitizeRequestBody(body);
 
     // Log incoming request
@@ -36,8 +36,10 @@ export class RequestLoggerInterceptor implements NestInterceptor {
       ),
     );
 
-    // Log request body if present (sanitized)
-    if (sanitizedBody && typeof sanitizedBody === 'object' && Object.keys(sanitizedBody).length > 0) {
+    // Log request body if present (sanitized). Skip Buffers - spreading them produces index→byte noise.
+    if (Buffer.isBuffer(body)) {
+      this.logger.debug(colors.blue(`  Body: [raw Buffer, ${body.length} bytes]`));
+    } else if (sanitizedBody && typeof sanitizedBody === 'object' && Object.keys(sanitizedBody).length > 0) {
       this.logger.debug(
         colors.blue(`  Body: ${JSON.stringify(sanitizedBody, null, 2)}`),
       );
@@ -114,7 +116,7 @@ export class RequestLoggerInterceptor implements NestInterceptor {
    * Sanitize request body to remove sensitive information
    */
   private sanitizeRequestBody(body: any): any {
-    if (!body || typeof body !== 'object') {
+    if (!body || typeof body !== 'object' || Buffer.isBuffer(body)) {
       return body;
     }
 
