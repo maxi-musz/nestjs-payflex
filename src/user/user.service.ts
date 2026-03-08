@@ -3,7 +3,7 @@ import { PrismaService } from "src/prisma/prisma.service";
 import { ConfigService } from "@nestjs/config";
 import * as colors from "colors";
 import { ApiResponseDto } from "src/common/dto/api-response.dto";
-import { KycVerificationDto, UpdateUserDto, VerifyBvnDto, SetupTransactionPinDto, UpdateTransactionPinDto } from "./dto/user.dto";
+import { KycVerificationDto, UpdateUserDto, VerifyBvnDto, SetupTransactionPinDto, UpdateTransactionPinDto, RequestAccountDeletionDto } from "./dto/user.dto";
 import { formatAmount, formatDate } from "src/common/helper_functions/formatter";
 import { first } from "rxjs";
 import * as bcrypt from "bcrypt";
@@ -12,6 +12,7 @@ import { StatsService } from "src/common/stats/stats.service";
 import { CashbackService } from "src/common/cashback/cashback.service";
 import { ReferralService } from "src/referral/referral.service";
 import { FirstTxRewardService } from "src/common/first-tx-reward/first-tx-reward.service";
+import { EmailService } from "src/common/mailer/email.service";
 
 function maskAccountNumber(accountNumber: string): string {
     if (!accountNumber) return "";
@@ -126,6 +127,7 @@ function getUserTier(user: any): TierInfo {
         private cashbackService: CashbackService,
         private referralService: ReferralService,
         private firstTxRewardService: FirstTxRewardService,
+        private emailService: EmailService,
     ) {}
 
     async fetchUserDashboard(userPayload: any) {
@@ -353,7 +355,8 @@ function getUserTier(user: any): TierInfo {
                     role: user.role || "",
                     first_tx_reward_received: user.first_tx_reward_received || false,
                     profile_image: user.profile_image?.secure_url || "",
-                    is_email_verified: user.is_email_verified || false
+                    is_email_verified: user.is_email_verified || false,
+                    requested_account_deletion: user.requested_account_deletion ?? false,
                 },
 
                 accounts: accounts.map(account => ({
@@ -483,6 +486,15 @@ function getUserTier(user: any): TierInfo {
 
             // console.log(colors.magenta(`User profile data retrieved successfully for: ${fullUserDetails?.email}`))
 
+            const userId = fullUserDetails?.id;
+
+            const [availableTiers, referralAnalysis] = await Promise.all([
+                this.getAvailableTiers(fullUserDetails?.tier_id),
+                userId ? this.getReferralAnalysisForUser(userId) : null,
+            ]);
+
+            const referralConfig = referralAnalysis?.config;
+
             // Format the response
             const formattedResponse = {
                 user: {
@@ -496,11 +508,13 @@ function getUserTier(user: any): TierInfo {
                     profile_image: fullUserDetails?.profile_image?.secure_url || "",
                     gender: fullUserDetails?.gender || "",
                     date_of_birth: fullUserDetails?.date_of_birth || "",
-                    // role: fullUserDetails?.role || "",
                     joined: fullUserDetails?.createdAt ? formatDate(fullUserDetails.createdAt) : "N/A",
                     totalCards: fullUserDetails?.cards?.length || 0,
                     totalAccounts: fullUserDetails?.accounts?.length || 0,
                     wallet_balance: fullUserDetails?.wallet?.current_balance || 0,
+                    referral_code: fullUserDetails?.referral_code || fullUserDetails?.smipay_tag || "",
+                    smipay_tag: fullUserDetails?.smipay_tag || "",
+                    requested_account_deletion: fullUserDetails?.requested_account_deletion ?? false,
                 },
 
                 address: {
@@ -545,7 +559,29 @@ function getUserTier(user: any): TierInfo {
                     is_active: fullUserDetails.tier.is_active,
                 } : null,
 
-                available_tiers: await this.getAvailableTiers(fullUserDetails?.tier_id),
+                available_tiers: availableTiers,
+
+                referral_analysis: referralAnalysis
+                    ? {
+                          total_referred: referralAnalysis.total_referred,
+                          by_status: referralAnalysis.by_status,
+                          referrer_rewards_issued: referralAnalysis.referrer_rewards_issued,
+                          referrer_rewards_total_amount: referralAnalysis.referrer_rewards_total_amount,
+                          referee_rewards_issued: referralAnalysis.referee_rewards_issued,
+                          referee_rewards_total_amount: referralAnalysis.referee_rewards_total_amount,
+                          slots_remaining: referralAnalysis.slots_remaining,
+                          program_config: referralConfig
+                              ? {
+                                    is_active: referralConfig.is_active,
+                                    referrer_reward_amount: referralConfig.referrer_reward_amount,
+                                    referee_reward_amount: referralConfig.referee_reward_amount,
+                                    reward_trigger: referralConfig.reward_trigger,
+                                    max_referrals_per_user: referralConfig.max_referrals_per_user,
+                                    min_transaction_amount: referralConfig.min_transaction_amount,
+                                }
+                              : null,
+                      }
+                    : null,
             }
 
             return new ApiResponseDto(
@@ -581,6 +617,55 @@ function getUserTier(user: any): TierInfo {
             },
             is_current: t.id === currentTierId,
         }));
+    }
+
+    private async getReferralAnalysisForUser(userId: string) {
+        const [config, statusGroups, referrerRewards, refereeRewards] = await Promise.all([
+            this.prisma.referralConfig.findUnique({ where: { id: 'referral_config' } }),
+            this.prisma.referral.groupBy({
+                by: ['status'],
+                where: { referrer_id: userId },
+                _count: { id: true },
+            }),
+            this.prisma.referral.aggregate({
+                where: { referrer_id: userId, referrer_reward_given: true },
+                _count: { id: true },
+                _sum: { referrer_reward_amount: true },
+            }),
+            this.prisma.referral.aggregate({
+                where: { referrer_id: userId, referee_reward_given: true },
+                _count: { id: true },
+                _sum: { referee_reward_amount: true },
+            }),
+        ]);
+
+        const by_status: Record<string, number> = {
+            pending: 0,
+            eligible: 0,
+            rewarded: 0,
+            partially_rewarded: 0,
+            expired: 0,
+            rejected: 0,
+        };
+        let total_referred = 0;
+        for (const g of statusGroups) {
+            by_status[g.status] = g._count.id;
+            total_referred += g._count.id;
+        }
+
+        const maxReferrals = config?.max_referrals_per_user ?? 50;
+        const slots_remaining = Math.max(0, maxReferrals - total_referred);
+
+        return {
+            total_referred,
+            by_status,
+            referrer_rewards_issued: referrerRewards._count.id,
+            referrer_rewards_total_amount: referrerRewards._sum.referrer_reward_amount ?? 0,
+            referee_rewards_issued: refereeRewards._count.id,
+            referee_rewards_total_amount: refereeRewards._sum.referee_reward_amount ?? 0,
+            slots_remaining,
+            config: config ?? null,
+        };
     }
 
     async fetchUserProfile(userPayload: any) {
@@ -1059,5 +1144,70 @@ function getUserTier(user: any): TierInfo {
         }
     }
 
-    
- }
+    /**
+     * Request account deletion. Sets requested_account_deletion = true and sends confirmation email.
+     */
+    async requestAccountDeletion(userPayload: any, dto?: RequestAccountDeletionDto) {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userPayload.sub },
+            select: { id: true, first_name: true, email: true, requested_account_deletion: true },
+        });
+        if (!user) throw new NotFoundException('User not found');
+        if (user.requested_account_deletion) {
+            return new ApiResponseDto(
+                true,
+                'You have already requested account deletion. We will notify you via email once it is completed.',
+                { requested_account_deletion: true },
+            );
+        }
+        await this.prisma.user.update({
+            where: { id: user.id },
+            data: {
+                requested_account_deletion: true,
+                account_deletion_requested_at: new Date(),
+            },
+        });
+        if (user.email) {
+            this.emailService
+                .sendAccountDeletionRequestEmail(user.email, user.first_name || 'User')
+                .catch((e) => this.logger.warn(`Account deletion email failed: ${e?.message}`));
+        }
+        this.logger.log(colors.cyan(`Account deletion requested for user ${user.id}`));
+        return new ApiResponseDto(
+            true,
+            'Your account deletion request has been received. You will be notified via email once your account is deleted. This may take up to 7 business days.',
+            { requested_account_deletion: true },
+        );
+    }
+
+    /**
+     * Cancel account deletion request. Sets requested_account_deletion = false.
+     */
+    async cancelAccountDeletionRequest(userPayload: any) {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userPayload.sub },
+            select: { id: true, requested_account_deletion: true },
+        });
+        if (!user) throw new NotFoundException('User not found');
+        if (!user.requested_account_deletion) {
+            return new ApiResponseDto(
+                true,
+                'You have no pending account deletion request.',
+                { requested_account_deletion: false },
+            );
+        }
+        await this.prisma.user.update({
+            where: { id: user.id },
+            data: {
+                requested_account_deletion: false,
+                account_deletion_requested_at: null,
+            },
+        });
+        this.logger.log(colors.green(`Account deletion request cancelled for user ${user.id}`));
+        return new ApiResponseDto(
+            true,
+            'Your account deletion request has been cancelled.',
+            { requested_account_deletion: false },
+        );
+    }
+}

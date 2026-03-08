@@ -29,7 +29,8 @@ Returns everything the app homepage needs: user info, wallet, accounts (DVA), re
       "email": "john@example.com",
       "role": "user",
       "profile_image": "https://res.cloudinary.com/...",
-      "is_email_verified": true
+      "is_email_verified": true,
+      "requested_account_deletion": false
     },
 
     "accounts": [
@@ -156,7 +157,7 @@ Returns everything the app homepage needs: user info, wallet, accounts (DVA), re
 **GET** `/user/fetch-user-profile`
 *(Also available at `/user/app-user-profile-page` — same response)*
 
-Returns user profile, address, KYC, wallet, **current tier**, and **all available tiers** so the user can see upgrade paths.
+Returns user profile, address, KYC, wallet, **current tier**, **all available tiers**, **referral code**, **smipay tag**, and **full referral analysis** (referrals given, rewards issued, status breakdown, etc.).
 
 ### Response
 
@@ -179,7 +180,10 @@ Returns user profile, address, KYC, wallet, **current tier**, and **all availabl
       "joined": "15 Jan 2026",
       "totalCards": 2,
       "totalAccounts": 1,
-      "wallet_balance": 5000
+      "wallet_balance": 5000,
+      "referral_code": "JOHN7ABC",
+      "smipay_tag": "johndoe",
+      "requested_account_deletion": false
     },
 
     "address": {
@@ -228,6 +232,31 @@ Returns user profile, address, KYC, wallet, **current tier**, and **all availabl
         "airtimeDaily": 50000
       },
       "is_active": true
+    },
+
+    "referral_analysis": {
+      "total_referred": 5,
+      "by_status": {
+        "pending": 2,
+        "eligible": 0,
+        "rewarded": 3,
+        "partially_rewarded": 0,
+        "expired": 0,
+        "rejected": 0
+      },
+      "referrer_rewards_issued": 3,
+      "referrer_rewards_total_amount": 600,
+      "referee_rewards_issued": 3,
+      "referee_rewards_total_amount": 300,
+      "slots_remaining": 45,
+      "program_config": {
+        "is_active": true,
+        "referrer_reward_amount": 200,
+        "referee_reward_amount": 100,
+        "reward_trigger": "first_transaction",
+        "max_referrals_per_user": 50,
+        "min_transaction_amount": 100
+      }
     },
 
     "available_tiers": [
@@ -298,6 +327,28 @@ Returns user profile, address, KYC, wallet, **current tier**, and **all availabl
 }
 ```
 
+### User profile fields (fetch-user-profile)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user.referral_code` | string | User's referral code for sharing (e.g. `JOHN7ABC`). Use `smipay_tag` if this is empty. |
+| `user.smipay_tag` | string | Unique SmiPay tag (e.g. `johndoe`). Often used as the shareable referral identifier. |
+
+### Referral analysis fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `referral_analysis.total_referred` | number | Total number of people the user has referred. |
+| `referral_analysis.by_status` | object | Counts per status: `pending`, `eligible`, `rewarded`, `partially_rewarded`, `expired`, `rejected`. |
+| `referral_analysis.referrer_rewards_issued` | number | How many referral rewards the user has received (as referrer). |
+| `referral_analysis.referrer_rewards_total_amount` | number | Total amount (NGN) the user has earned from referrals. |
+| `referral_analysis.referee_rewards_issued` | number | How many of the user's referred friends have received their bonus. |
+| `referral_analysis.referee_rewards_total_amount` | number | Total amount (NGN) given to referred friends. |
+| `referral_analysis.slots_remaining` | number | How many more referrals the user can make (max minus total). |
+| `referral_analysis.program_config` | object | Current program settings: `referrer_reward_amount`, `referee_reward_amount`, `reward_trigger`, `max_referrals_per_user`, `min_transaction_amount`. |
+
+**Status meanings:** `pending` = friend signed up, awaiting first transaction; `eligible` = conditions met, reward ready; `rewarded` = both sides paid; `expired` = no first tx within expiry; `rejected` = admin rejected.
+
 ### Error Response
 
 ```json
@@ -326,6 +377,62 @@ Updates user profile fields (name, gender, date of birth, etc.).
 
 ---
 
+## 5. Account Deletion
+
+### Request account deletion
+
+**POST** `/user/request-account-deletion`
+
+Submits a request to delete the user's account. The user receives a confirmation email. Actual deletion is processed manually or via a scheduled job (typically within 7 business days).
+
+**Request body (optional):**
+```json
+{
+  "reason": "Optional feedback (max 500 chars)"
+}
+```
+
+**Success response (200):**
+```json
+{
+  "success": true,
+  "message": "Your account deletion request has been received. You will be notified via email once your account is deleted. This may take up to 7 business days.",
+  "data": {
+    "requested_account_deletion": true
+  }
+}
+```
+
+If the user has already requested deletion, the same message is returned (idempotent).
+
+### Cancel account deletion request
+
+**POST** `/user/cancel-account-deletion-request`
+
+Cancels a pending account deletion request. No body required.
+
+**Success response (200):**
+```json
+{
+  "success": true,
+  "message": "Your account deletion request has been cancelled.",
+  "data": {
+    "requested_account_deletion": false
+  }
+}
+```
+
+If there is no pending request, returns: `"You have no pending account deletion request."`
+
+### Frontend UI guidance
+
+- **`requested_account_deletion`** is returned in `user` from `fetch-user-profile` and `fetch-app-homepage-details`.
+- When `requested_account_deletion === false`: Show "Request account deletion" or "Delete my account" button.
+- When `requested_account_deletion === true`: Show "Account deletion pending" message and a "Cancel deletion request" button.
+- After a successful request, refetch user data to update the UI.
+
+---
+
 ## Field Notes
 
 ### User
@@ -337,6 +444,7 @@ Updates user profile fields (name, gender, date of birth, etc.).
 | `is_email_verified` | boolean | Email verification status |
 | `profile_image` | string | Cloudinary URL or `""` |
 | `wallet_balance` | number | Raw balance (profile endpoint only) |
+| `requested_account_deletion` | boolean | `true` if user has requested account deletion; use to show "Cancel deletion request" vs "Request deletion" |
 
 ### Current Tier
 | Field | Type | Notes |

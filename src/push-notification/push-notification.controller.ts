@@ -55,7 +55,8 @@ export class PushNotificationController {
   }
 
   /**
-   * Send push notification to current user (for testing)
+   * Send push notification to current user.
+   * Intended for development/testing only; restrict or disable in production.
    * POST /api/v1/push-notification/send
    */
   @UseGuards(AuthGuard('jwt'))

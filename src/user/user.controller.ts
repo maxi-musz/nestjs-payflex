@@ -2,7 +2,7 @@ import { Body, Controller, Get, Post, Put, UseGuards } from "@nestjs/common";
 import { Request } from '@nestjs/common'
 import { UserService } from "./user.service";
 import { AuthGuard } from "@nestjs/passport";
-import { KycVerificationDto, UpdateUserDto, SetupTransactionPinDto, UpdateTransactionPinDto } from "./dto/user.dto";
+import { KycVerificationDto, UpdateUserDto, SetupTransactionPinDto, UpdateTransactionPinDto, RequestAccountDeletionDto } from "./dto/user.dto";
 
 @Controller('user')
 export class UserController{
@@ -60,5 +60,17 @@ export class UserController{
     @Put('update-transaction-pin')
     updateTransactionPin(@Body() dto: UpdateTransactionPinDto, @Request() req) {
         return this.userService.updateTransactionPin(dto, req.user)
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Post('request-account-deletion')
+    requestAccountDeletion(@Body() dto: RequestAccountDeletionDto, @Request() req) {
+        return this.userService.requestAccountDeletion(req.user, dto)
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Post('cancel-account-deletion-request')
+    cancelAccountDeletionRequest(@Request() req) {
+        return this.userService.cancelAccountDeletionRequest(req.user)
     }
 } 

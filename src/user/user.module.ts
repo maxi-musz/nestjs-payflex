@@ -6,9 +6,10 @@ import { AdminUserService } from './admin-user/admin-user.service';
 import { AdminTierController } from './admin-user/tier/admin-tier.controller';
 import { TierService } from './admin-user/tier/tier.service';
 import { BankingModule } from 'src/banking/banking.module';
+import { EmailModule } from 'src/common/mailer/email.module';
 
 @Module({
-    imports: [BankingModule],
+    imports: [BankingModule, EmailModule],
     controllers: [UserController, AdminUserController, AdminTierController],
     providers: [UserService, AdminUserService, TierService]
 })

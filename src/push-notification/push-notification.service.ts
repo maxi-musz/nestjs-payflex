@@ -3,38 +3,168 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import * as colors from 'colors';
-import { RegisterDeviceTokenDto, SendPushNotificationDto } from './dto/push-notification.dto';
+import {
+  RegisterDeviceTokenDto,
+  SendPushNotificationDto,
+} from './dto/push-notification.dto';
 import { ApiResponseDto } from '../common/dto/api-response.dto';
+
+const EXPO_MAX_MESSAGES_PER_REQUEST = 100;
+const EXPO_RETRY_MAX_ATTEMPTS = 3;
+const EXPO_RETRY_BASE_MS = 1000;
+/** Dedupe window: don't send the same "notifications-off" confirmation to the same token twice within this ms */
+const CONFIRMATION_OFF_DEDUPE_MS = 60_000;
 
 @Injectable()
 export class PushNotificationService {
   private readonly logger = new Logger(PushNotificationService.name);
   private readonly expoPushUrl = 'https://exp.host/--/api/v2/push/send';
+  /** Tokens we've sent "notifications-off" to recently (token -> timestamp) to avoid duplicate delivery */
+  private readonly recentOffConfirmations = new Map<string, number>();
 
   constructor(
     private prisma: PrismaService,
     private config: ConfigService,
-  ) {
-  }
+  ) {}
 
   /**
-   * Send a batch of messages to Expo Push API
+   * Send a batch of messages to Expo Push API with retry on 429/5xx.
    */
-  private async sendToExpo(messages: Array<Record<string, any>>) {
-    this.logger.log(colors.cyan(`Sending messages to Expo Push API: ${JSON.stringify(messages)}`));
+  private async sendToExpo(
+    messages: Array<Record<string, any>>,
+  ): Promise<{ data?: any[]; errors?: any[] }> {
+    if (messages.length === 0) {
+      return {};
+    }
+    if (messages.length > EXPO_MAX_MESSAGES_PER_REQUEST) {
+      this.logger.warn(
+        colors.yellow(
+          `Batch size ${messages.length} exceeds Expo limit ${EXPO_MAX_MESSAGES_PER_REQUEST}; sending in chunks`,
+        ),
+      );
+    }
+
     const headers: Record<string, string> = {
       Accept: 'application/json',
       'Accept-encoding': 'gzip, deflate',
       'Content-Type': 'application/json',
     };
-
     const expoAccessToken = this.config.get<string>('EXPO_ACCESS_TOKEN');
     if (expoAccessToken) {
       headers.Authorization = `Bearer ${expoAccessToken}`;
     }
 
-    const { data } = await axios.post(this.expoPushUrl, messages, { headers });
-    return data;
+    const chunks: Array<Record<string, any>[]> = [];
+    for (let i = 0; i < messages.length; i += EXPO_MAX_MESSAGES_PER_REQUEST) {
+      chunks.push(messages.slice(i, i + EXPO_MAX_MESSAGES_PER_REQUEST));
+    }
+
+    const allData: any[] = [];
+    for (const chunk of chunks) {
+      let lastError: any;
+      for (let attempt = 0; attempt < EXPO_RETRY_MAX_ATTEMPTS; attempt++) {
+        try {
+          const { data, status } = await axios.post(this.expoPushUrl, chunk, {
+            headers,
+            validateStatus: () => true,
+          });
+          if (data?.errors?.length) {
+            this.logger.error(
+              colors.red(
+                `Expo request error: ${JSON.stringify(data.errors)}`,
+              ),
+            );
+            throw new BadRequestException(
+              data.errors.map((e: any) => e.message || e.code).join('; '),
+            );
+          }
+          if (status === 429 || (status >= 500 && status < 600)) {
+            const delay =
+              EXPO_RETRY_BASE_MS * Math.pow(2, attempt) +
+              Math.random() * 500;
+            this.logger.warn(
+              colors.yellow(
+                `Expo returned ${status}; retry ${attempt + 1}/${EXPO_RETRY_MAX_ATTEMPTS} in ${Math.round(delay)}ms`,
+              ),
+            );
+            await new Promise((r) => setTimeout(r, delay));
+            lastError = new BadRequestException(
+              `Expo Push API temporarily unavailable (${status})`,
+            );
+            continue;
+          }
+          if (status !== 200) {
+            throw new BadRequestException(
+              `Expo Push API error: ${status} ${JSON.stringify(data)}`,
+            );
+          }
+          if (Array.isArray(data?.data)) {
+            allData.push(...data.data);
+          }
+          lastError = null;
+          break;
+        } catch (err: any) {
+          if (axios.isAxiosError(err) && err.response) {
+            const status = err.response.status;
+            if (status === 429 || (status >= 500 && status < 600)) {
+              const delay =
+                EXPO_RETRY_BASE_MS * Math.pow(2, attempt) +
+                Math.random() * 500;
+              this.logger.warn(
+                colors.yellow(
+                  `Expo request failed ${status}; retry ${attempt + 1}/${EXPO_RETRY_MAX_ATTEMPTS} in ${Math.round(delay)}ms`,
+                ),
+              );
+              await new Promise((r) => setTimeout(r, delay));
+              lastError = err;
+              continue;
+            }
+          }
+          throw err;
+        }
+      }
+      if (lastError) {
+        throw lastError;
+      }
+    }
+    return { data: allData };
+  }
+
+  /**
+   * Send a one-off confirmation push (e.g. after user turns notifications on/off).
+   * Non-blocking; failures are logged but do not throw (store-friendly, one-time only).
+   */
+  private sendConfirmationPush(
+    token: string,
+    title: string,
+    body: string,
+    context: string,
+  ): void {
+    const message = {
+      to: token,
+      title,
+      body,
+      sound: 'default' as const,
+      priority: 'default' as const,
+      data: { screen: 'settings', type: 'notification_preference', timestamp: new Date().toISOString() },
+    };
+    this.sendToExpo([message])
+      .then(() =>
+        this.logger.log(colors.cyan(`[Push] Confirmation sent (${context})`)),
+      )
+      .catch((err: any) =>
+        this.logger.warn(
+          colors.yellow(`[Push] Confirmation failed (${context}): ${err?.message ?? err}`),
+        ),
+      );
+  }
+
+  /** Prune old entries from recentOffConfirmations to avoid unbounded growth */
+  private pruneRecentOffConfirmations(): void {
+    const cutoff = Date.now() - CONFIRMATION_OFF_DEDUPE_MS;
+    for (const [t, ts] of this.recentOffConfirmations.entries()) {
+      if (ts < cutoff) this.recentOffConfirmations.delete(t);
+    }
   }
 
   /**
@@ -68,13 +198,19 @@ export class PushNotificationService {
           });
 
           this.logger.log(colors.green(`✅ Device token updated for user: ${userId}`));
+          this.sendConfirmationPush(
+            dto.token,
+            "You're all set",
+            "You'll receive important updates like transaction alerts and support messages here. 📬",
+            'notifications-on',
+          );
           return new ApiResponseDto(
             true,
             'Device token updated successfully',
             { token_id: updatedToken.id },
           );
         } else {
-          // Same user, just update metadata
+          // Same user, just update metadata — do not send confirmation (avoids duplicate if app calls register twice)
           const updatedToken = await this.prisma.deviceToken.update({
             where: { token: dto.token },
             data: {
@@ -105,6 +241,12 @@ export class PushNotificationService {
         });
 
         this.logger.log(colors.green(`✅ Device token registered for user: ${userId}`));
+        this.sendConfirmationPush(
+          dto.token,
+          "You're all set",
+          "You'll receive important updates like transaction alerts and support messages here. 📬",
+          'notifications-on',
+        );
         return new ApiResponseDto(
           true,
           'Device token registered successfully',
@@ -118,7 +260,7 @@ export class PushNotificationService {
   }
 
   /**
-   * Remove a device token (when user logs out or uninstalls app)
+   * Remove a device token (when user turns off notifications or logs out)
    */
   async removeDeviceToken(token: string, userId: string): Promise<ApiResponseDto<any>> {
     try {
@@ -134,6 +276,18 @@ export class PushNotificationService {
 
       if (deviceToken.user_id !== userId) {
         throw new BadRequestException('Device token does not belong to this user');
+      }
+
+      this.pruneRecentOffConfirmations();
+      const alreadySentOff = (this.recentOffConfirmations.get(token) ?? 0) > Date.now() - CONFIRMATION_OFF_DEDUPE_MS;
+      if (!alreadySentOff) {
+        this.recentOffConfirmations.set(token, Date.now());
+        this.sendConfirmationPush(
+          token,
+          'Notifications turned off',
+          "You can turn them back on anytime in Settings. 👋",
+          'notifications-off',
+        );
       }
 
       await this.prisma.deviceToken.delete({
@@ -178,32 +332,47 @@ export class PushNotificationService {
         );
       }
 
-      // Parse additional data if provided
+      // Parse additional data if provided (e.g. screen, id for deep links)
       let additionalData: Record<string, any> = {};
       if (notification.data) {
         try {
           additionalData = JSON.parse(notification.data);
         } catch (error) {
-          this.logger.warn(colors.yellow('⚠️  Invalid JSON in notification data, ignoring'));
+          this.logger.warn(
+            colors.yellow('⚠️  Invalid JSON in notification data, ignoring'),
+          );
         }
       }
 
-      // Build Expo messages per token
-      const messages = deviceTokens.map((dt) => ({
-        to: dt.token,
-        sound: 'default',
-        title: notification.title,
-        body: notification.body,
-        data: {
-          ...additionalData,
-          timestamp: new Date().toISOString(),
-        },
-        badge: 1,
-      }));
+      const sound = notification.sound ?? 'default';
+      const priority = notification.priority ?? 'default';
+
+      // Build Expo messages per token (Expo accepts up to 100 per request)
+      const messages = deviceTokens.map((dt) => {
+        const msg: Record<string, any> = {
+          to: dt.token,
+          sound,
+          title: notification.title,
+          body: notification.body,
+          data: {
+            ...additionalData,
+            timestamp: new Date().toISOString(),
+          },
+          badge: 1,
+          priority,
+        };
+        if (notification.channel_id && dt.platform === 'android') {
+          msg.channelId = notification.channel_id;
+        }
+        if (notification.image_url) {
+          msg.richContent = { image: notification.image_url };
+        }
+        return msg;
+      });
 
       const result = await this.sendToExpo(messages);
 
-      // Expo responds with an array of receipts per message
+      // Expo returns push tickets (not receipts); check for per-message errors
       let success = 0;
       let failed = 0;
       if (Array.isArray(result?.data)) {
@@ -212,14 +381,33 @@ export class PushNotificationService {
             success++;
           } else {
             failed++;
-            const err = r?.message || r?.details?.error || 'unknown_error';
-            this.logger.error(colors.red(`Expo send failed for token ${deviceTokens[idx].token}: ${err}`));
-
-            // Deactivate invalid tokens (malformed or device unregistered)
-            if (err.includes('DeviceNotRegistered') || err.includes('InvalidCredentials')) {
+            const errMsg =
+              typeof r?.message === 'string'
+                ? r.message
+                : String(r?.details?.error ?? r?.message ?? 'unknown_error');
+            this.logger.error(
+              colors.red(
+                `Expo ticket error for token [${idx}]: ${errMsg}`,
+              ),
+            );
+            const errorCode =
+              typeof r?.details?.error === 'string'
+                ? r.details.error
+                : errMsg;
+            const shouldDeactivate =
+              errorCode === 'DeviceNotRegistered' ||
+              errorCode === 'InvalidCredentials' ||
+              errMsg.includes('DeviceNotRegistered') ||
+              errMsg.includes('InvalidCredentials');
+            if (shouldDeactivate && deviceTokens[idx]) {
               this.prisma.deviceToken
-                .update({ where: { token: deviceTokens[idx].token }, data: { is_active: false } })
-                .catch((e) => this.logger.error(`Error deactivating token: ${e.message}`));
+                .update({
+                  where: { token: deviceTokens[idx].token },
+                  data: { is_active: false },
+                })
+                .catch((e) =>
+                  this.logger.error(`Error deactivating token: ${e.message}`),
+                );
             }
           }
         });
@@ -277,7 +465,7 @@ export class PushNotificationService {
   }
 
   /**
-   * Send transaction notification (helper method)
+   * Send transaction notification (helper). Uses screen + id for deep link when user taps.
    */
   async sendTransactionNotification(
     userId: string,
@@ -287,27 +475,41 @@ export class PushNotificationService {
     transactionId?: string,
   ): Promise<void> {
     try {
-      const title = status === 'success' ? 'Transaction Successful 🥳' : 'Transaction Failed ❌';
+      const formattedAmount = `₦${amount.toLocaleString()}`;
+      const title =
+        status === 'success'
+          ? 'Transaction Successful 🎉'
+          : 'Transaction Failed ❌';
       const body =
         status === 'success'
-          ? `Your ${transactionType} of ₦${amount.toLocaleString()} was successful`
-          : `Your ${transactionType} of ₦${amount.toLocaleString()} failed`;
+          ? `Your ${transactionType} of ${formattedAmount} was successful. 💰`
+          : `Your ${transactionType} of ${formattedAmount} didn't go through. Tap for details.`;
+
+      const data: Record<string, any> = {
+        screen: 'transaction',
+        type: 'transaction',
+        transaction_type: transactionType,
+        amount,
+        status,
+      };
+      if (transactionId) {
+        data.id = transactionId;
+        data.transaction_id = transactionId;
+      }
 
       await this.sendNotificationToUser(userId, {
         title,
         body,
-        data: transactionId
-          ? JSON.stringify({
-              type: 'transaction',
-              transaction_id: transactionId,
-              transaction_type: transactionType,
-              amount,
-              status,
-            })
-          : undefined,
+        data: JSON.stringify(data),
+        channel_id: 'transactions',
+        priority: 'high' as any,
       });
     } catch (error: any) {
-      this.logger.error(colors.red(`Error sending transaction notification: ${error.message}`));
+      this.logger.error(
+        colors.red(
+          `Error sending transaction notification: ${error.message}`,
+        ),
+      );
       // Don't throw - transaction notifications are non-critical
     }
   }

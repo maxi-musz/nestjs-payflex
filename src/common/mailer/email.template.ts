@@ -389,3 +389,50 @@ export const cablePurchaseSuccessTemplate = (
 
   return wrapInLayout('Cable Subscription Successful', content);
 };
+
+// ──────────────────────────────────────────────────────────
+// ACCOUNT DELETION REQUEST CONFIRMATION
+// ──────────────────────────────────────────────────────────
+
+export const accountDeletionRequestTemplate = (firstName: string): string => {
+  const content = `
+              <table cellpadding="0" cellspacing="0" width="100%" role="presentation">
+                <tr>
+                  <td align="center" class="content-cell" style="padding:32px 40px 0 40px">
+                    <h1 style="margin:0;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;font-size:28px;font-weight:700;line-height:34px;color:${BRAND.heading}">
+                      Account Deletion Request Received
+                    </h1>
+                  </td>
+                </tr>
+                <tr>
+                  <td align="left" class="content-cell" style="padding:20px 40px 0 40px">
+                    <p style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;font-size:16px;line-height:26px;color:${BRAND.text}">
+                      Dear <strong>${firstName}</strong>,
+                    </p>
+                  </td>
+                </tr>
+                <tr>
+                  <td align="left" class="content-cell" style="padding:12px 40px 0 40px">
+                    <p style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;font-size:15px;line-height:26px;color:${BRAND.text}">
+                      We have received your request to delete your ${COMPANY.name} account. Your request is being processed and will typically be completed within 7 business days.
+                    </p>
+                    <p style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;font-size:15px;line-height:26px;color:${BRAND.text};padding-top:12px">
+                      You will receive another email once your account has been successfully deleted.
+                    </p>
+                    <p style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;font-size:15px;line-height:26px;color:${BRAND.text};padding-top:12px">
+                      If you did not request this, please contact our support team immediately.
+                    </p>
+                  </td>
+                </tr>
+                <tr>
+                  <td align="left" class="content-cell" style="padding:12px 40px 32px 40px">
+                    <p style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;font-size:14px;line-height:22px;color:${BRAND.muted}">
+                      Best regards,<br>
+                      <strong>The ${COMPANY.name} Team</strong>
+                    </p>
+                  </td>
+                </tr>
+              </table>`;
+
+  return wrapInLayout('Account Deletion Request Received', content);
+};

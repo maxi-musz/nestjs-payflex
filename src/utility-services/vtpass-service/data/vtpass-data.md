@@ -756,6 +756,105 @@ Use the `variations_categorized` field in the variation codes response to displa
 
 ---
 
+## Frontend Implementation Guide (Data Purchase Flow)
+
+This section describes how to implement a professional data purchase flow in the mobile app, aligned with the airtime flow: layout, contact picker, provider–number validation, and favorites.
+
+### 1. Screen Layout (Amount & Number Input)
+
+After the user selects **provider** and **plan**, show a dedicated screen (not a modal) with:
+
+| Element | Description |
+|--------|-------------|
+| **Plan summary** | Provider logo, plan name, validity (e.g. "1GB / 30 days"), amount to pay |
+| **Amount to pay** | Prominent display of `variation_amount` (final price). Use large, bold typography. |
+| **Phone number input** | Single input for recipient number. Right-aligned contact icon to open contact picker. |
+| **Provider–number disclaimer** | Shown only when there is a mismatch (see §3). |
+| **Proceed / Buy button** | Primary CTA. Disabled until number is valid (11 digits). |
+
+**Navigation:** Use a full screen for amount + number entry (e.g. `DataPurchaseAmountScreen`), not a bottom sheet or overlay on the plan list. This matches the airtime flow and keeps the flow clear.
+
+### 2. Contact Picker Integration
+
+- Add a **contact icon** (e.g. person/contacts) next to the phone number input.
+- On tap, open the device contact picker (e.g. `expo-contacts` or `react-native-contacts`).
+- When the user selects a contact, populate the number input with the contact’s phone number.
+- Normalize the number: strip spaces, dashes, and country code if present. For Nigerian numbers, accept `0XXXXXXXXXX` or `+234XXXXXXXXXX` and normalize to `0XXXXXXXXXX` (11 digits).
+- After populating, run provider–number validation (§3) and show the disclaimer if there is a mismatch.
+
+### 3. Provider vs Number Validation & Disclaimer
+
+Validate that the selected provider matches the phone number prefix. If not, show a disclaimer before purchase.
+
+**Nigerian network prefixes (for validation):**
+
+| Provider | Service ID | Valid prefixes (start of number) |
+|----------|------------|----------------------------------|
+| MTN | `mtn-data` | 0803, 0806, 0703, 0903, 0906, 0813, 0816, 0810, 0814 |
+| Airtel | `airtel-data` | 0802, 0808, 0708, 0902, 0907, 0912 |
+| Glo | `glo-data`, `glo-sme-data` | 0805, 0807, 0705, 0815, 0811 |
+| 9mobile | `etisalat-data` | 0809, 0817, 0818, 0909 |
+
+**Validation logic (client-side):**
+
+```typescript
+const PROVIDER_PREFIXES: Record<string, string[]> = {
+  'mtn-data': ['0803', '0806', '0703', '0903', '0906', '0813', '0816', '0810', '0814'],
+  'airtel-data': ['0802', '0808', '0708', '0902', '0907', '0912'],
+  'glo-data': ['0805', '0807', '0705', '0815', '0811'],
+  'glo-sme-data': ['0805', '0807', '0705', '0815', '0811'],
+  'etisalat-data': ['0809', '0817', '0818', '0909'],
+};
+
+function providerMatchesNumber(serviceId: string, phone: string): boolean {
+  const normalized = phone.replace(/\D/g, '').replace(/^234/, '0');
+  if (normalized.length !== 11 || !normalized.startsWith('0')) return false;
+  const prefixes = PROVIDER_PREFIXES[serviceId];
+  if (!prefixes) return true; // Unknown provider, allow
+  return prefixes.some(p => normalized.startsWith(p));
+}
+```
+
+**Disclaimer UI when mismatch:**
+
+- Show a clear message, e.g.: *"This number may not be on [Provider]. Data will not work if the number is on a different network. Continue anyway?"*
+- Provide two actions: **Cancel** (go back / change number) and **Continue** (proceed with purchase).
+- Do not block purchase; let the user proceed if they confirm.
+
+### 4. Add to Favorites on Successful Purchase
+
+When a data purchase completes successfully (`status === 'success'`):
+
+1. Save to local favorites (e.g. AsyncStorage / SecureStore) or your backend favorites API.
+2. Store: `{ type: 'data', provider: serviceID, providerName, phoneNumber, planName? }`.
+3. Reuse the same structure as airtime favorites for consistency.
+4. On the data purchase screen, show a "Recent" or "Favorites" section so users can quickly select a saved number + provider.
+
+**Example structure:**
+
+```json
+{
+  "type": "data",
+  "provider": "mtn-data",
+  "providerName": "MTN Data",
+  "phoneNumber": "08031234567",
+  "planName": "1GB Monthly",
+  "addedAt": "2026-03-05T12:00:00.000Z"
+}
+```
+
+### 5. Flow Summary
+
+1. User selects provider → plan list → plan.
+2. Navigate to **Amount & Number** screen (full screen).
+3. Show plan summary and amount to pay.
+4. User enters number manually or via contact picker.
+5. Validate number (11 digits). If provider doesn’t match number, show disclaimer.
+6. User taps **Buy** → call purchase API.
+7. On success → add to favorites, show success screen, optionally prompt to share receipt.
+
+---
+
 ## Support
 
 For issues related to:
@@ -768,6 +867,10 @@ For issues related to:
 
 ## Changelog
 
+- **2026-03-05**: Frontend implementation guide
+  - Added "Frontend Implementation Guide" with layout, contact picker, provider–number validation, and favorites
+  - Nigerian network prefixes for MTN, Airtel, Glo, 9mobile
+  - Disclaimer UX for provider–number mismatch
 - **2026-02-26**: Cashback integration
   - Added `use_cashback` field to purchase request
   - Backend now splits payment between cashback wallet and main wallet when `use_cashback: true`

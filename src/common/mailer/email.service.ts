@@ -6,6 +6,7 @@ import {
   otpVerificationCodeTemplate,
   depositNotificationTemplate,
   cablePurchaseSuccessTemplate,
+  accountDeletionRequestTemplate,
 } from './email.template';
 import {
   supportTicketConfirmationTemplate,
@@ -262,6 +263,25 @@ export class EmailService {
       );
       // Don't throw error - email failure shouldn't break message addition
       // Just log it for monitoring
+    }
+  }
+
+  /**
+   * Send account deletion request confirmation email
+   */
+  async sendAccountDeletionRequestEmail(email: string, firstName: string): Promise<void> {
+    try {
+      this.logger.log(`Sending account deletion request confirmation to ${email}...`);
+      const htmlContent = accountDeletionRequestTemplate(firstName);
+      const subject = 'Account Deletion Request Received';
+      await this.emailProvider.sendEmail(email, subject, htmlContent);
+      this.logger.log(`Account deletion request email sent successfully to ${email}`);
+    } catch (error: any) {
+      this.logger.error(
+        `Error sending account deletion request email to ${email}: ${error.message}`,
+        error.stack,
+      );
+      // Don't throw - email failure shouldn't block the request
     }
   }
 

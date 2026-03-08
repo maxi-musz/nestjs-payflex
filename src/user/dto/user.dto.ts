@@ -1,4 +1,4 @@
-import { IsEnum, IsNotEmpty, IsOptional, IsString } from "class-validator";
+import { IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
 
 export enum KycIdType {
     NIGERIAN_BVN_VERIFICATION = "NIGERIAN_BVN_VERIFICATION",
@@ -88,4 +88,11 @@ export class UpdateTransactionPinDto {
     @IsString()
     @IsNotEmpty()
     newPin: string;
+}
+
+export class RequestAccountDeletionDto {
+    @IsString()
+    @IsOptional()
+    @MaxLength(500)
+    reason?: string;
 }

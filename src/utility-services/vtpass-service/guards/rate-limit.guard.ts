@@ -31,7 +31,7 @@ export class RateLimitGuard implements CanActivate {
     // Per-user: requests per window (authenticated users)
     if (user?.sub) {
       const userWindow = Number(this.config.get(`${configPrefix}_RATE_WINDOW_SECONDS`) || 60);
-      const userMax = Number(this.config.get(`${configPrefix}_RATE_MAX_REQUESTS`) || 10);
+      const userMax = Number(this.config.get(`${configPrefix}_RATE_MAX_REQUESTS`) || 30);
       const userKey = `${user.sub}:${serviceName}`;
 
       if (this.isOverLimit(RateLimitGuard.userBuckets, userKey, userWindow * 1000, userMax)) {
@@ -43,7 +43,7 @@ export class RateLimitGuard implements CanActivate {
     // Per-IP: requests per window (catches unauthenticated abuse too)
     if (ip) {
       const ipWindow = Number(this.config.get(`${configPrefix}_IP_RATE_WINDOW_SECONDS`) || 60);
-      const ipMax = Number(this.config.get(`${configPrefix}_IP_RATE_MAX_REQUESTS`) || 30);
+      const ipMax = Number(this.config.get(`${configPrefix}_IP_RATE_MAX_REQUESTS`) || 60);
       const ipKey = `${ip}:${serviceName}`;
 
       if (this.isOverLimit(RateLimitGuard.ipBuckets, ipKey, ipWindow * 1000, ipMax)) {
