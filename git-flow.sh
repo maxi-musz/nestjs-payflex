@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Git Flow Helper  —  portable interactive git workflow script
-# Copy this file into any project; no dependencies beyond git & bash ≥4.
+# Copy this file into any project; no dependencies beyond git & bash 3.2+.
 # Usage:  ./git-flow.sh [--dry-run] [--help]
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -208,7 +208,8 @@ step_stage() {
       success "All changes staged."
       ;;
     "Select specific files")
-      mapfile -t files < <(git status --short | awk '{print $NF}')
+      files=()
+      while IFS= read -r line; do files+=("$line"); done < <(git status --short | awk '{print $NF}')
       select_multi "Select files to stage:" "${files[@]}"
       if (( ${#MULTI_SELECTED[@]} > 0 )); then
         for f in "${MULTI_SELECTED[@]}"; do
@@ -408,7 +409,8 @@ step_push() {
   local branch
   branch="$(current_branch)"
 
-  mapfile -t remotes < <(remote_list)
+  remotes=()
+  while IFS= read -r line; do remotes+=("$line"); done < <(remote_list)
   if (( ${#remotes[@]} == 0 )); then
     warn "No remotes configured; cannot push."
     return
@@ -461,7 +463,8 @@ step_branch_loop() {
 }
 
 branch_update() {
-  mapfile -t branches < <(branch_list)
+  branches=()
+  while IFS= read -r line; do branches+=("$line"); done < <(branch_list)
   if (( ${#branches[@]} == 0 )); then
     warn "No local branches."
     return
@@ -471,7 +474,8 @@ branch_update() {
   local target="$SELECTED"
   run_cmd git checkout "$target"
 
-  mapfile -t sources < <(branch_list)
+  sources=()
+  while IFS= read -r line; do sources+=("$line"); done < <(branch_list)
   select_one "Merge which branch INTO '${target}'?" "${sources[@]}"
   local source="$SELECTED"
 
@@ -487,7 +491,8 @@ branch_update() {
   fi
 
   if confirm "Push '${target}' to a remote?" "y"; then
-    mapfile -t remotes < <(remote_list)
+    remotes=()
+    while IFS= read -r line; do remotes+=("$line"); done < <(remote_list)
     if (( ${#remotes[@]} == 0 )); then
       warn "No remotes configured."
       return
@@ -514,7 +519,8 @@ branch_create() {
   done
 
   local base
-  mapfile -t branches < <(branch_list)
+  branches=()
+  while IFS= read -r line; do branches+=("$line"); done < <(branch_list)
   select_one "Create from which branch?" "${branches[@]}"
   base="$SELECTED"
 
@@ -522,7 +528,8 @@ branch_create() {
   success "Created and switched to '${name}' (from '${base}')."
 
   if confirm "Push '${name}' to a remote with -u (set upstream)?" "n"; then
-    mapfile -t remotes < <(remote_list)
+    remotes=()
+    while IFS= read -r line; do remotes+=("$line"); done < <(remote_list)
     select_one "Select remote:" "${remotes[@]}"
     run_cmd git push -u "$SELECTED" "$name"
     success "Pushed and set upstream."
@@ -530,7 +537,8 @@ branch_create() {
 }
 
 branch_delete() {
-  mapfile -t branches < <(branch_list)
+  branches=()
+  while IFS= read -r line; do branches+=("$line"); done < <(branch_list)
   local current
   current="$(current_branch)"
 
@@ -559,7 +567,8 @@ branch_delete() {
     fi
 
     if confirm "Also delete '${target}' from a remote?" "n"; then
-      mapfile -t remotes < <(remote_list)
+      remotes=()
+      while IFS= read -r line; do remotes+=("$line"); done < <(remote_list)
       select_one "Select remote:" "${remotes[@]}"
       run_cmd git push "$SELECTED" --delete "$target"
       success "Deleted '${target}' from remote '${SELECTED}'."
@@ -586,7 +595,8 @@ create_tag() {
   success "Tag '${tag_name}' created."
 
   if confirm "Push tag to a remote?" "y"; then
-    mapfile -t remotes < <(remote_list)
+    remotes=()
+    while IFS= read -r line; do remotes+=("$line"); done < <(remote_list)
     select_one "Select remote:" "${remotes[@]}"
     run_cmd git push "$SELECTED" "$tag_name"
     success "Tag pushed."
