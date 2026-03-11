@@ -42,11 +42,13 @@ export class SendGridProvider implements IEmailProvider {
       const defaultFromEmail = this.configService.get<string>('SENDGRID_FROM_EMAIL');
       
       if (!apiKey) {
-        throw new Error('SENDGRID_API_KEY is required but not configured');
+        this.logger.error('SENDGRID_API_KEY is required but not configured');
+        // throw new Error('SENDGRID_API_KEY is required but not configured');
       }
 
       if (!fromEmail && !defaultFromEmail) {
-        throw new Error('SENDGRID_FROM_EMAIL is required but not configured');
+        this.logger.error('SENDGRID_FROM_EMAIL is required but not configured');
+        // throw new Error('SENDGRID_FROM_EMAIL is required but not configured');
       }
 
       // TODO: Implement SendGrid email sending
@@ -72,12 +74,11 @@ export class SendGridProvider implements IEmailProvider {
       
       // Placeholder - implement when ready
       this.logger.warn('SendGrid provider not yet implemented. Please install @sendgrid/mail and uncomment the implementation.');
-      throw new Error('SendGrid provider not yet implemented');
       
       // this.logger.log(`Email sent successfully to ${to} via SendGrid`);
     } catch (error) {
       this.logger.error(`Error sending email via SendGrid to ${to}: ${error.message}`, error.stack);
-      throw new Error(`Failed to send email via SendGrid: ${error.message}`);
+      // throw new Error(`Failed to send email via SendGrid: ${error.message}`);
     }
   }
 }

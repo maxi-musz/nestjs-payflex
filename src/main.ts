@@ -40,8 +40,14 @@ async function bootstrap() {
   app.useGlobalInterceptors(new RequestLoggerInterceptor());
 
   // health endpoint 
-  app.getHttpAdapter().get('/api/v1/auth/health', (req: express.Request, res: express.Response) => {
-    res.json({ status: 'OK', message: 'Service is running' });
+  app.getHttpAdapter().get('/health', (req: express.Request, res: express.Response) => {
+    res.json({ 
+      status: 'OK', 
+      message: 'Service is running',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+     });
   });
 
   const port = parseInt(process.env.PORT || '3000', 10);

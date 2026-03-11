@@ -25,11 +25,15 @@ export class BridgeCardService {
   ) {
     this.apiUrl = this.configService.get<string>('BRIDGECARD_API_URL') || '';
     if (!this.apiUrl) {
-      throw new Error('BRIDGECARD_API_URL is not defined in the configuration');
+      this.logger.warn(
+        'BRIDGECARD_API_URL is not defined in the configuration. BridgeCard features may be disabled.',
+      );
     }
     this.apiKey = this.configService.get('BRIDGECARD_TEST_AUTH_TOKEN') || '';
     if (!this.apiKey) {
-      throw new Error('BRIDGECARD_TEST_AUTH_TOKEN is not defined in the configuration');
+      this.logger.warn(
+        'BRIDGECARD_TEST_AUTH_TOKEN is not defined in the configuration. BridgeCard features may be disabled.',
+      );
     }
   }
 

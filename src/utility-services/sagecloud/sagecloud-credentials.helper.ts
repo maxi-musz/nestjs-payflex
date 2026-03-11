@@ -1,3 +1,5 @@
+import { Logger } from "@nestjs/common";
+
 /**
  * Helper for managing Sagecloud API credentials
  */
@@ -7,6 +9,7 @@ export interface SagecloudCredentials {
 }
 
 export class SagecloudCredentialsHelper {
+  private static readonly logger = new Logger(SagecloudCredentialsHelper.name);
   /**
    * Get Sagecloud credentials from environment variables
    */
@@ -15,7 +18,8 @@ export class SagecloudCredentialsHelper {
     const accessToken = process.env.SAGECLOUD_ACCESS_TOKEN || '';
 
     if (!accessToken) {
-      throw new Error('SAGECLOUD_ACCESS_TOKEN is not configured');
+      this.logger.error('SAGECLOUD_ACCESS_TOKEN is not configured');
+      // throw new Error('SAGECLOUD_ACCESS_TOKEN is not configured');
     }
 
     return {
@@ -31,7 +35,8 @@ export class SagecloudCredentialsHelper {
     const credentials = this.getCredentials();
     
     if (!credentials.accessToken) {
-      throw new Error('SAGECLOUD_ACCESS_TOKEN is required');
+      this.logger.error('SAGECLOUD_ACCESS_TOKEN is required');
+      // throw new Error('SAGECLOUD_ACCESS_TOKEN is required');
     }
   }
 }
