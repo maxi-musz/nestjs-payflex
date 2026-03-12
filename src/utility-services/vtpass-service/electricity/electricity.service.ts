@@ -316,16 +316,66 @@ export class ElectricityService {
       auditMetadata: { serviceID: dto.serviceID, billersCode: dto.billersCode, variation_code: dto.variation_code },
       humanizeError: (msg) => this.humanizeVtpassError(msg, dto.serviceID),
       onProcessResponse: (vtpassResponse) => {
-        const token = dto.variation_code === 'prepaid'
-          ? this.extractToken(vtpassResponse?.content?.transactions || vtpassResponse)
+        const isPrepaid = dto.variation_code === 'prepaid';
+        const txSection = vtpassResponse?.content?.transactions;
+
+        const tokenFromTx = isPrepaid && txSection
+          ? this.extractToken(txSection)
           : null;
+
+        const tokenFromRoot = isPrepaid
+          ? this.extractToken(vtpassResponse)
+          : null;
+
+        const token = tokenFromTx || tokenFromRoot;
+
+        if (!token && isPrepaid && vtpassResponse?.code === '000') {
+          this.logger.warn(
+            `Electricity purchase delivered but no token extracted. serviceID=${dto.serviceID}, request_id=${request_id}`,
+          );
+        }
+
         return token ? { electricity_token: token } : {};
       },
       onSuccess: async (vtpassResponse, txRecord) => {
         try {
-          const token = dto.variation_code === 'prepaid'
-            ? this.extractToken(vtpassResponse?.content?.transactions || vtpassResponse)
+          const isPrepaid = dto.variation_code === 'prepaid';
+          const txSection = vtpassResponse?.content?.transactions;
+
+          const tokenFromTx = isPrepaid && txSection
+            ? this.extractToken(txSection)
             : null;
+
+          const tokenFromRoot = isPrepaid
+            ? this.extractToken(vtpassResponse)
+            : null;
+
+          const token = tokenFromTx || tokenFromRoot;
+
+          // Monitoring: if VTpass says success but no token was extracted, notify admin (non-blocking)
+          if (!token && isPrepaid && vtpassResponse?.code === '000') {
+            try {
+              const adminEmail = 'bernardmayowaa@gmail.com';
+              const subject = `⚠️ Electricity token extraction failed for ${dto.serviceID} (${request_id})`;
+              const html = `
+                <p>Electricity purchase completed with VTpass code 000 (delivered), but no token was extracted.</p>
+                <ul>
+                  <li><strong>ServiceID:</strong> ${dto.serviceID}</li>
+                  <li><strong>Meter:</strong> ${dto.billersCode}</li>
+                  <li><strong>Variation:</strong> ${dto.variation_code}</li>
+                  <li><strong>Amount:</strong> ₦${amountNum.toLocaleString()}</li>
+                  <li><strong>Request ID:</strong> ${request_id}</li>
+                  <li><strong>Transaction ID:</strong> ${txRecord.id}</li>
+                </ul>
+                <p><strong>Raw VTpass response (truncated):</strong></p>
+                <pre style="font-size:12px; white-space:pre-wrap;">${JSON.stringify(vtpassResponse).slice(0, 4000)}</pre>
+              `;
+              await this.emailService.sendEmail(adminEmail, subject, html);
+            } catch (notifyErr: any) {
+              this.logger.error(`Failed to send admin alert for missing electricity token: ${notifyErr.message}`);
+            }
+          }
+
           const user = await this.prisma.user.findUnique({
             where: { id: userPayload.sub },
             select: { email: true, first_name: true },

@@ -147,6 +147,8 @@ Only categories that have at least 1 transaction will appear. If a user has neve
 Returns full details for a single transaction.
 
 ### Response
+
+**Example (deposit):**
 ```json
 {
   "success": true,
@@ -163,10 +165,63 @@ Returns full details for a single transaction.
     "created_on": "Feb 24, 2026, 10:30 PM",
     "updated_on": "Feb 24, 2026, 10:30 PM",
     "sender": "John Doe",
-    "icon": "https://..."
+    "icon": "https://...",
+    "meta": {}
   }
 }
 ```
+
+**Example (electricity prepaid):**
+```json
+{
+  "success": true,
+  "message": "Single transaction retrieved",
+  "data": {
+    "id": "uuid",
+    "amount": "12,000",
+    "type": "electricity",
+    "description": "IBEDC prepaid - 0159001256456",
+    "provider": "ibadan-electric",
+    "status": "success",
+    "recipient_mobile": null,
+    "tx_reference": "202603121630e4jp4dot",
+    "created_on": "Mar 12, 2026, 4:30 PM",
+    "updated_on": "Mar 12, 2026, 4:30 PM",
+    "sender": null,
+    "icon": "https://...",
+    "meta": {
+      "electricity_token": "0189 6657 9514 4895 9630",
+      "units": "107.89",
+      "meter_number": "0159001256456",
+      "meter_type": "prepaid",
+      "customer_name": "ONAPITAN GRACE(MR)",
+      "customer_address": "ALAKA AREA OYO",
+      "disco": "IBEDC - Ibadan Electricity Distribution Company"
+    }
+  }
+}
+```
+
+> **Note:** `meta` is type-specific. For electricity, it contains token + meter details. For airtime, data, cable, education, etc., it contains different fields.
+
+#### `meta` for electricity transactions (`type: "electricity"`)
+
+When `data.type === "electricity"`, the `data.meta` object has:
+
+| Field | Type | Description |
+|---|---|---|
+| `electricity_token` | string \| null | **Primary token** the user must load on the meter (already cleaned; no `"Token : "` prefix). Always use this for display + copy button. |
+| `units` | string \| null | Units purchased, e.g. `"79.9 kWh"` or `"107.89"`. |
+| `meter_number` | string \| null | Meter number (from request payload or VTpass `meterNumber`). |
+| `meter_type` | string \| null | `"prepaid"` / `"postpaid"` (from request `variation_code`). |
+| `customer_name` | string \| null | Customer name from provider (null when VTpass sends `"N/A"` or omits it). |
+| `customer_address` | string \| null | Customer address from provider (null when `"N/A"` or missing). |
+| `disco` | string \| null | Provider label, e.g. `"Ikeja Electric Payment - IKEDC"`, `"IBEDC - Ibadan Electricity Distribution Company"`. |
+
+**Frontend rule (electricity detail screen):**
+
+- Always read the token from `data.meta.electricity_token`. Do **not** parse raw VTpass JSON on the frontend.
+- If `status === "success"` but `meta.electricity_token` is `null` (should be extremely rare), show a safe fallback state (e.g. "Token not available") and surface a support action. The backend logs and emails admins when this anomaly happens.
 
 ---
 

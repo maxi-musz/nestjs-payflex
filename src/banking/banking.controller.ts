@@ -12,7 +12,7 @@ export class BankingController {
 
     // tighter limit — each call creates a pending tx + hits paystack API
     @UseGuards(SecurityHeadersGuard, RateLimitGuard, AuthGuard('jwt'))
-    @RateLimit({ ipLimit: 10, deviceLimit: 5, windowMs: 60 * 60 * 1000 })
+    @RateLimit({ ipLimit: 10, deviceLimit: 5, windowMs: 3 * 60 * 1000 }) // 10 requests per 3 minutes
     @Post('initialise-paystack-funding')
     initiatePaystackFunding(@Body() dto: PaystackFundingDto, @Request() req){
         return this.bankingService.initialisePaystackFunding(dto, req.user)
@@ -20,14 +20,14 @@ export class BankingController {
 
     // slightly more lenient — users may retry verification if the page reloads
     @UseGuards(SecurityHeadersGuard, RateLimitGuard, AuthGuard('jwt'))
-    @RateLimit({ ipLimit: 20, deviceLimit: 10, windowMs: 60 * 60 * 1000 })
+    @RateLimit({ ipLimit: 20, deviceLimit: 10, windowMs: 3 * 60 * 1000 }) // 20 requests per 3 minutes
     @Post('verify-paystack-funding')
     verifyPaystackFunding(@Body() dto: PaystackFundingVerifyDto, @Request() req) {
         return this.bankingService.verifyPaystackFunding(dto, req.user)
     }
 
     @UseGuards(SecurityHeadersGuard, RateLimitGuard, AuthGuard('jwt'))
-    @RateLimit({ ipLimit: 20, deviceLimit: 10, windowMs: 60 * 60 * 1000 })
+    @RateLimit({ ipLimit: 20, deviceLimit: 10, windowMs: 3 * 60 * 1000 }) // 20 requests per 3 minutes
     @Post('cancel-paystack-funding')
     cancelPaystackFunding(@Body() dto: PaystackFundingCancelDto, @Request() req) {
         return this.bankingService.cancelPaystackFunding(dto, req.user)
@@ -35,46 +35,9 @@ export class BankingController {
 
     // creating a bank account is heavy — keep it tight
     @UseGuards(SecurityHeadersGuard, RateLimitGuard, AuthGuard('jwt'))
-    @RateLimit({ ipLimit: 5, deviceLimit: 3, windowMs: 60 * 60 * 1000 })
+    @RateLimit({ ipLimit: 5, deviceLimit: 3, windowMs: 60 * 60 * 1000 }) // 5 requests per hour
     @Post('create-virtual-bank-account')
     createVirtualIntlBankAccountNumber(@Body() dto: CreateVirtualAccountDto, @Request() req) {
         return this.bankingService.createVirtualIntlBankAccountNumber(dto, req.user)
     }
-
-    // flw
-    // @UseGuards(AuthGuard('jwt'))
-    // @Post('/flw/create-one-time-virtual-account')
-    // createTemporaryVirtualAccount(@Body() dto: CreateTempVirtualLocalAccountDto, @Request() req) {
-    //     return this.bankingService.createTemporaryVirtualAccount(dto, req.user)
-    // }
-
-    // @UseGuards(AuthGuard('jwt'))
-    // @Post('/flw/create-permanent-virtual-account')
-    // createPermanentVirtualAccount(@Request() req) {
-    //     return this.bankingService.createPermanentVirtualAccount(req.user)
-    // }
-
-    // @UseGuards(AuthGuard('jwt'))
-    // @Get('fetch-user-virtual-accounts')
-    // getAllUserVirtualAccounts(@Request() req) {
-    //     return this.bankingService.getAllUserVirtualAccounts(req.user)
-    // }
-
-    // // @UseGuards(AuthGuard('jwt'))
-    // @Get('fetch-all-banks')
-    // fetchAllBanks(@Request() req) {
-    //     return this.bankingService.fetchAllBanks()
-    // }
-
-    // @UseGuards(AuthGuard('jwt'))
-    // @Post('verify-account-number')
-    // verifyAccountNumberPaystack(@Body() dto: VerifyAccountNumberDto, @Request() req) {
-    //     return this.bankingService.verifyAccountNumber(dto, req.user)
-    // }
-
-    // @UseGuards(AuthGuard('jwt'))
-    // @Post('send-ngn-money')
-    // initiateTransferFlutterwave(@Body() dto: InitiateTransferDto, @Request() req) {
-    //     return this.bankingService.initiateNewTransferFlutterwave(dto, req.user)
-    // }
 }

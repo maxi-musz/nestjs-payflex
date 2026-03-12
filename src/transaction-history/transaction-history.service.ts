@@ -128,10 +128,19 @@ export class TransactionHistoryService {
         });
 
         if (!transaction) {
+            this.logger.error(`Transaction not found: ${transactionId}`);
             throw new NotFoundException('Transaction not found');
         }
 
         const meta = (transaction.meta_data as Record<string, any>) || {};
+
+        // Ensure electricity_token in meta stays in sync with dedicated column (if present)
+        if (transaction.transaction_type === 'electricity') {
+            const columnToken = (transaction as any).electricity_token;
+            if (typeof columnToken === 'string' && columnToken && !meta.electricity_token) {
+                meta.electricity_token = columnToken;
+            }
+        }
 
         const formattedResponse: Record<string, any> = {
             id: transaction.id,
@@ -183,12 +192,46 @@ export class TransactionHistoryService {
 
         switch (type) {
             case 'electricity': {
+                // Token (normalized and backfilled)
                 base.electricity_token = meta.electricity_token || null;
-                base.units = vtpass.units || transactions.units || content.units || null;
-                base.meter_number = meta.payload?.billersCode || null;
+
+                // Units — handle different casing/locations
+                base.units =
+                    vtpass.units ||
+                    vtpass.Units ||
+                    transactions.units ||
+                    content.units ||
+                    null;
+
+                // Meter number — prefer payload, then VTpass top-level
+                base.meter_number =
+                    meta.payload?.billersCode ||
+                    vtpass.meterNumber ||
+                    vtpass.MeterNumber ||
+                    null;
+
                 base.meter_type = meta.payload?.variation_code || null;
-                base.customer_name = vtpass.customerName || content.Customer_Name || null;
-                base.customer_address = vtpass.customerAddress || content.Address || null;
+
+                // Customer name / address — support multiple key variants, ignore obvious "N/A"
+                const rawName =
+                    vtpass.customerName ||
+                    vtpass.CustomerName ||
+                    content.Customer_Name ||
+                    null;
+                const rawAddress =
+                    vtpass.customerAddress ||
+                    vtpass.CustomerAddress ||
+                    content.Address ||
+                    null;
+
+                const clean = (v: any) =>
+                    typeof v === 'string' && v.trim().toUpperCase() === 'N/A'
+                        ? null
+                        : v;
+
+                base.customer_name = clean(rawName);
+                base.customer_address = clean(rawAddress);
+
                 base.disco = transactions.product_name || null;
                 break;
             }

@@ -48,9 +48,10 @@ export class CronService implements OnModuleInit {
       });
     }
 
-    // Stale Paystack transaction cleanup - runs every 30 mins
+    // Stale Paystack transaction cleanup
     // Catches abandoned/failed payments that slipped through (user closed browser, network issues)
-    cron.schedule('*/3 * * * *', async () => {
+    // Runs every 30 minutes to reduce noise while still keeping the ledger clean.
+    cron.schedule('*/30 * * * *', async () => {
       await this.cleanupStalePaystackTransactions();
     });
   }

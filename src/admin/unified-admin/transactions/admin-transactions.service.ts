@@ -24,6 +24,7 @@ const TX_LIST_SELECT = {
   fee: true,
   balance_before: true,
   balance_after: true,
+  electricity_token: true,
   transaction_number: true,
   transaction_reference: true,
   session_id: true,
@@ -289,6 +290,8 @@ export class AdminTransactionsService {
         counterpart = { ...counterpartTx, user: counterpartUser };
       }
     }
+
+    // this.logger.log(`Transaction fetched: ${JSON.stringify(transaction, null, 2)}`);
 
     return new ApiResponseDto(true, 'Transaction fetched', {
       ...transaction,

@@ -251,6 +251,7 @@ Returns full transaction details including VTU markup data, metadata, and the us
     "fee": 0.0,
     "balance_before": 60000.00,
     "balance_after": 50000.00,
+    "electricity_token": null,
     "transaction_number": null,
     "transaction_reference": "SMI-TXN-xyz789",
     "authorization_url": null,
@@ -306,12 +307,16 @@ Returns full transaction details including VTU markup data, metadata, and the us
 | Field | Type | Description |
 |---|---|---|
 | `account_id` | string \| null | Linked account UUID |
+| `balance_before` | number | Wallet balance immediately before this transaction (for this user) |
+| `balance_after` | number | Wallet balance immediately after this transaction (for this user) |
+| `user.wallet.current_balance` | number | User's **current** wallet balance at the time of the admin query (may differ from `balance_after` if they have done more transactions since) |
+| `electricity_token` | string \| null | For electricity transactions: normalized prepaid token value (same as user-facing `meta.electricity_token`). `null` for non-electricity transactions. |
 | `vtpass_amount` | number \| null | Raw amount sent to VTpass (for VTU transactions) |
 | `smipay_amount` | number \| null | Amount charged to customer (after markup) |
 | `markup_percent` | number \| null | Markup percentage applied |
 | `authorization_url` | string \| null | Paystack authorization URL (for deposits) |
 | `meta_data` | object \| null | Arbitrary JSON metadata (transfer details, provider responses, etc.) |
-| `user.wallet` | object | `{ current_balance }` — user's current wallet balance |
+| `user.wallet` | object | `{ current_balance }` — user's current wallet balance (see above) |
 | `user.tier` | object \| null | `{ tier, name }` — user's current tier |
 | `counterpart` | object \| null | The other side of a P2P transfer (only for `smipay_tag` payment channel). Includes the counterpart transaction + user info. `null` for non-transfer transactions. |
 

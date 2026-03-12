@@ -202,6 +202,10 @@ export class VtpassTransactionOrchestrator {
           status: finalStatus,
           transaction_number: txContent.transactionId?.toString() || null,
           fee: typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || 0,
+          // Persist selected critical fields into dedicated columns when present in extraMeta
+          ...(typeof (extraMeta as any).electricity_token === 'string' && (extraMeta as any).electricity_token
+            ? { electricity_token: (extraMeta as any).electricity_token }
+            : {}),
           meta_data: {
             ...(createdTx.meta_data as any),
             vtpass_response: response.data,
