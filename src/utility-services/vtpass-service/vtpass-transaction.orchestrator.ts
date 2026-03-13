@@ -173,6 +173,9 @@ export class VtpassTransactionOrchestrator {
             transaction_reference: requestId,
             balance_before,
             balance_after,
+            cashback_balance_before: split.cashbackBefore,
+            cashback_used: split.cashbackCharge,
+            cashback_balance_after: split.cashbackAfter,
             meta_data: { ...vtpassPayload, cashback_used: split.cashbackCharge, wallet_charged: split.walletCharge },
             ...extraTxFields,
           } as any,
@@ -245,14 +248,29 @@ export class VtpassTransactionOrchestrator {
         )
         .catch((e) => this.logger.warn(`[${serviceLabel}] Audit log failed: ${e.message}`));
 
-      this.statsService.onTransactionCreated(chargeAmount, finalStatus, markupValue || 0).catch((e) => this.logger.warn(`[${serviceLabel}] Stats failed: ${e.message}`));
+      const vtpassCommission =
+        typeof txContent.commission === 'number'
+          ? txContent.commission
+          : Number(txContent.commission) || 0;
+      this.statsService
+        .onTransactionCreated(chargeAmount, finalStatus, markupValue || 0, vtpassCommission)
+        .catch((e) => this.logger.warn(`[${serviceLabel}] Stats failed: ${e.message}`));
       this.statsService.onWalletDebited(chargeAmount).catch((e) => this.logger.warn(`[${serviceLabel}] Stats debit failed: ${e.message}`));
 
       // ── 11. Success rewards + callback ──────────────────────────────
       if (finalStatus === 'success') {
-        this.cashbackService
+        const cashbackResult = await this.cashbackService
           .processCashback({ userId, amount: chargeAmount, serviceType: cashbackServiceType as any, transactionRef: requestId })
-          .catch((e) => this.logger.warn(`[${serviceLabel}] Cashback reward failed: ${e.message}`));
+          .catch((e) => {
+            this.logger.warn(`[${serviceLabel}] Cashback reward failed: ${e.message}`);
+            return { credited: false, cashbackAmount: 0 };
+          });
+        if (cashbackResult.credited && cashbackResult.cashbackAmount > 0) {
+          await this.prisma.transactionHistory.update({
+            where: { transaction_reference: requestId },
+            data: { cashback_earned: cashbackResult.cashbackAmount },
+          });
+        }
         this.referralService
           .checkAndTriggerReward(userId, chargeAmount)
           .catch((e) => this.logger.warn(`[${serviceLabel}] Referral reward failed: ${e.message}`));
@@ -338,6 +356,9 @@ export class VtpassTransactionOrchestrator {
               transaction_reference: requestId,
               balance_before: 0,
               balance_after: 0,
+              cashback_balance_before: split.cashbackBefore,
+              cashback_used: split.cashbackCharge,
+              cashback_balance_after: split.cashbackAfter,
               meta_data: errorMeta,
             },
           });

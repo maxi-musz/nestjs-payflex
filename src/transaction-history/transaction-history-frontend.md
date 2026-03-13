@@ -63,6 +63,7 @@ GET /api/v1/history/fetch-all-history?search=MTN
         "transaction_type": "deposit",
         "description": "Wallet Funding Via Gateway",
         "status": "success",
+        "data_plan_name": null,
         "date": "Feb 24, 2026, 10:30 PM",
         "reference": "ref-abc123",
         "sender": "John Doe",
@@ -79,11 +80,29 @@ GET /api/v1/history/fetch-all-history?search=MTN
         "transaction_type": "airtime",
         "description": "MTN ₦500 Airtime - 08012345678",
         "status": "success",
+        "data_plan_name": null,
         "date": "Feb 24, 2026, 9:15 PM",
         "reference": "ref-xyz789",
         "sender": null,
         "icon": "https://...",
         "payment_channel": "vtpass",
+        "payment_method": "wallet"
+      },
+      {
+        "id": "uuid",
+        "amount": "537",
+        "raw_amount": 537,
+        "type": "data",
+        "credit_debit": "debit",
+        "transaction_type": "data",
+        "description": "MTN DATA - 08039587072",
+        "status": "success",
+        "data_plan_name": "MTN 500MB Daily",
+        "date": "Mar 12, 2026, 6:11 PM",
+        "reference": "2026031217118kbkqzcn",
+        "sender": null,
+        "icon": "https://...",
+        "payment_channel": "other",
         "payment_method": "wallet"
       }
     ]
@@ -131,6 +150,7 @@ Only categories that have at least 1 transaction will appear. If a user has neve
 | `credit_debit` | string | `"credit"` (money in) or `"debit"` (money out) |
 | `transaction_type` | string | Same as `type` — kept for backward compatibility |
 | `description` | string | Human-readable description |
+| `data_plan_name` | string \| null | Data plan name (e.g. `"MTN 1GB Daily"`, `"MTN 500MB Daily"`) for data purchases; `null` for other types or when not available. Display in list and detail for data transactions. |
 | `status` | string | `"pending"`, `"success"`, `"failed"`, `"cancelled"` |
 | `date` | string | Formatted date string, e.g. `"Feb 24, 2026, 10:30 PM"` |
 | `reference` | string \| null | Transaction reference |
@@ -159,6 +179,7 @@ Returns full details for a single transaction.
     "type": "deposit",
     "description": "Wallet Funding Via Gateway",
     "provider": null,
+    "data_plan_name": null,
     "status": "success",
     "recipient_mobile": null,
     "tx_reference": "ref-abc123",
@@ -182,6 +203,7 @@ Returns full details for a single transaction.
     "type": "electricity",
     "description": "IBEDC prepaid - 0159001256456",
     "provider": "ibadan-electric",
+    "data_plan_name": null,
     "status": "success",
     "recipient_mobile": null,
     "tx_reference": "202603121630e4jp4dot",
@@ -203,6 +225,23 @@ Returns full details for a single transaction.
 ```
 
 > **Note:** `meta` is type-specific. For electricity, it contains token + meter details. For airtime, data, cable, education, etc., it contains different fields.
+
+#### Data plan name (`data_plan_name`)
+
+For **data** transactions, `data.data_plan_name` is the plan the user bought (e.g. `"MTN 1GB Daily"`, `"MTN 500MB Daily"`). It is `null` for non-data types (deposit, transfer, airtime, electricity, etc.). Use it on the transaction detail screen to show which data plan was purchased.
+
+#### Cashback tracking (VTpass purchases)
+
+When the user used cashback or earned cashback on this transaction, the response includes:
+
+| Field | Type | Description |
+|---|---|---|
+| `cashback_balance_before` | number \| null | Cashback balance before this transaction. `null` when no cashback was used. |
+| `cashback_used` | number \| null | Cashback amount used for this purchase. `null` when none used. |
+| `cashback_balance_after` | number \| null | Cashback balance after deducting `cashback_used`. `null` when none used. |
+| `cashback_earned` | number \| null | New cashback earned on this transaction (credited after success). `null` if none or not applicable. |
+
+Use these with `balance_before` / `balance_after` so the user can see how wallet + cashback changed (e.g. "Used ₦100 cashback; wallet: ₦1,000 → ₦400").
 
 #### `meta` for electricity transactions (`type: "electricity"`)
 

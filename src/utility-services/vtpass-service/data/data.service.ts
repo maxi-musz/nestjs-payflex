@@ -120,6 +120,38 @@ export class DataService {
     return this.getProviderServiceIds('data');
   }
 
+  /**
+   * Whether data markup is enabled (env: DATA_MARKUP_ENABLED).
+   * When false/0: users see VTpass amount and are debited exactly that.
+   */
+  private isDataMarkupEnabled(): boolean {
+    const v = (process.env.DATA_MARKUP_ENABLED ?? 'true').trim().toLowerCase();
+    return v === 'true' || v === '1' || v === 'yes';
+  }
+
+  /**
+   * Compute effective markup % for data. Same logic for display (variation codes) and purchase.
+   * When markup is disabled, returns 0 so displayed and charged amount = VTpass amount.
+   */
+  private getDataMarkupConfig(userPayload?: any): { markupPercent: number } {
+    if (!this.isDataMarkupEnabled()) {
+      return { markupPercent: 0 };
+    }
+    const isFriendlyUser = Boolean((userPayload as any)?.is_friendly ?? (userPayload as any)?.friendlies);
+    const generalPct = Number(process.env.DATA_MARKUP_PERCENT || 0);
+    const friendlyPct = Number(process.env.DATA_MARKUP_PERCENT_FRIENDLIES ?? generalPct);
+    const markupPercent = isFriendlyUser ? friendlyPct : generalPct;
+    return { markupPercent };
+  }
+
+  private applyMarkupToAmount(vtpassAmount: number, userPayload?: any): number {
+    const { markupPercent } = this.getDataMarkupConfig(userPayload);
+    const underThreshold = vtpassAmount < 300;
+    if (underThreshold || markupPercent <= 0) return vtpassAmount;
+    const markupValue = (vtpassAmount * markupPercent) / 100;
+    return Math.floor(vtpassAmount + markupValue);
+  }
+
   async getVariationCodes(serviceID: string, userPayload?: any) {
     const url = `${this.getBaseUrl()}/service-variations?serviceID=${encodeURIComponent(serviceID)}`;
     this.logger.log(`Fetching variation codes for serviceID='${serviceID}' from: ${url}`);
@@ -135,8 +167,16 @@ export class DataService {
       const content = response.data?.content || {};
       const variations = content.variations || content.varations || [];
 
-      // Return variations exactly as they come from VTpass (no markup applied)
-      const transformed = variations.map((v: any) => ({ ...v }));
+      // Apply markup so variation_amount = what user pays; keep base in vtpass_amount for purchase flow
+      const transformed = variations.map((v: any) => {
+        const vtpassAmount = Number(v.variation_amount ?? v.variationAmount ?? 0);
+        const amountAfterMarkup = this.applyMarkupToAmount(vtpassAmount, userPayload);
+        return {
+          ...v,
+          vtpass_amount: vtpassAmount,
+          variation_amount: String(amountAfterMarkup),
+        };
+      });
 
       // Categorize variations based on original prices/names
       const categorized = categorizeVariations(transformed);
@@ -243,29 +283,27 @@ export class DataService {
       );
     }
 
-    // Resolve amount from variation codes if not provided
+    // Resolve amount and plan name from variation codes (fetch once so we have plan name for the tx record)
     let amount = dto.amount;
+    let dataPlanName: string | null = null;
+    const variationResponse = await this.getVariationCodes(dto.serviceID, userPayload);
+    const variations = (variationResponse.data as any)?.variations || [];
+    const variation = variations.find((v: any) => v.variation_code === dto.variation_code);
+    if (!variation) {
+      throw new HttpException(`Variation code ${dto.variation_code} not found`, HttpStatus.BAD_REQUEST);
+    }
+    dataPlanName = variation.name ?? variation.variation_code ?? null;
     if (!amount) {
-      const variationResponse = await this.getVariationCodes(dto.serviceID);
-      const variations = (variationResponse.data as any)?.variations || [];
-      const variation = variations.find((v: any) => v.variation_code === dto.variation_code);
-      if (variation) {
-        amount = Number(variation.variation_amount);
-        this.logger.log(`Amount determined from variation_code: ${amount}`);
-      } else {
-        throw new HttpException(`Variation code ${dto.variation_code} not found`, HttpStatus.BAD_REQUEST);
-      }
+      amount = Number(variation.vtpass_amount ?? variation.variation_amount);
+      this.logger.log(`Amount determined from variation_code (vtpass base): ${amount}`);
     }
 
-    // Compute markup
-    const isFriendlyUser = Boolean((userPayload as any)?.is_friendly || (userPayload as any)?.friendlies);
-    const generalPct = Number(process.env.DATA_MARKUP_PERCENT || 0);
-    const friendlyPct = Number(process.env.DATA_MARKUP_PERCENT_FRIENDLIES || generalPct);
-    const markupPercent = isFriendlyUser ? friendlyPct : generalPct;
+    // Compute markup (same config as getVariationCodes: when disabled, charge exactly vtpass amount)
+    const { markupPercent } = this.getDataMarkupConfig(userPayload);
     const vtpassAmount = Number(amount);
     const underThreshold = vtpassAmount < 300;
-    const markupValue = underThreshold ? 0 : (vtpassAmount * markupPercent) / 100;
-    const smipayAmount = Math.floor(underThreshold ? vtpassAmount : vtpassAmount + markupValue);
+    const markupValue = underThreshold || markupPercent <= 0 ? 0 : (vtpassAmount * markupPercent) / 100;
+    const smipayAmount = Math.floor(vtpassAmount + markupValue);
 
     const provider = this.getProviderLabelFromServiceId(dto.serviceID);
     const providerName = dto.serviceID.split('-')[0];
@@ -300,6 +338,7 @@ export class DataService {
         smipay_amount: smipayAmount,
         markup_percent: markupPercent,
         markup_value: markupValue,
+        data_plan_name: dataPlanName,
       },
       auditMetadata: { serviceID: dto.serviceID, billersCode: dto.billersCode, markup_value: markupValue },
       markupValue,

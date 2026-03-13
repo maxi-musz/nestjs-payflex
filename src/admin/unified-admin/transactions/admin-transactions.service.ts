@@ -13,6 +13,7 @@ const TX_LIST_SELECT = {
   user_id: true,
   amount: true,
   provider: true,
+  data_plan_name: true,
   transaction_type: true,
   credit_debit: true,
   description: true,
@@ -50,6 +51,11 @@ const TX_DETAIL_SELECT = {
   markup_value: true,
   authorization_url: true,
   meta_data: true,
+  // Cashback tracking (VTpass purchases): before/used/after + earned on this tx
+  cashback_balance_before: true,
+  cashback_used: true,
+  cashback_balance_after: true,
+  cashback_earned: true,
 } satisfies Prisma.TransactionHistorySelect;
 
 const USER_BRIEF_SELECT = {
@@ -114,6 +120,7 @@ export class AdminTransactionsService {
       monthVolume,
       prevMonthVolume,
       totalRevenue,
+      totalCommission,
     ] = await Promise.all([
       this.prisma.transactionHistory.findMany({
         where,
@@ -171,6 +178,10 @@ export class AdminTransactionsService {
       this.prisma.transactionHistory.aggregate({
         _sum: { markup_value: true },
       }),
+      this.prisma.transactionHistory.aggregate({
+        _sum: { fee: true },
+        where: { status: 'success' },
+      }),
     ]);
 
     // Batch-fetch related users
@@ -213,6 +224,9 @@ export class AdminTransactionsService {
           total_transactions: totalAll,
           total_volume: successVolume._sum.amount ?? 0,
           total_revenue: totalRevenue._sum.markup_value ?? 0,
+          vtpass_commission: totalCommission._sum.fee ?? 0,
+          total_revenue_including_commission:
+            (totalRevenue._sum.markup_value ?? 0) + (totalCommission._sum.fee ?? 0),
           avg_amount: avgStats._avg.amount ?? 0,
           min_amount: avgStats._min.amount ?? 0,
           max_amount: avgStats._max.amount ?? 0,

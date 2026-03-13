@@ -51,6 +51,8 @@ GET /api/v1/unified-admin/transactions?transaction_type=transfer&credit_debit=de
         "total_transactions": 5420,
         "total_volume": 125000000.00,
         "total_revenue": 3750000.00,
+        "vtpass_commission": 125000.00,
+        "total_revenue_including_commission": 3875000.00,
         "avg_amount": 23529.41,
         "min_amount": 50.00,
         "max_amount": 5000000.00
@@ -92,6 +94,7 @@ GET /api/v1/unified-admin/transactions?transaction_type=transfer&credit_debit=de
         "user_id": "uuid",
         "amount": 5000.00,
         "provider": "mtn",
+        "data_plan_name": null,
         "transaction_type": "airtime",
         "credit_debit": "debit",
         "description": "MTN Airtime VTU",
@@ -146,7 +149,9 @@ Rendered above the table as cards and charts. Analytics reflect the **full datas
 |---|---|---|
 | `overview.total_transactions` | number | Total transaction count (all-time) |
 | `overview.total_volume` | number | Sum of all successful transaction amounts (NGN) |
-| `overview.total_revenue` | number | Total markup revenue earned across all VTU transactions |
+| `overview.total_revenue` | number | Total markup revenue (our margin: Smipay price − VTpass price) |
+| `overview.vtpass_commission` | number | Total VTpass commission from successful VTU transactions (from provider response) |
+| `overview.total_revenue_including_commission` | number | `total_revenue` + `vtpass_commission` (full revenue from VTU) |
 | `overview.avg_amount` | number | Average successful transaction amount |
 | `overview.min_amount` | number | Smallest successful transaction |
 | `overview.max_amount` | number | Largest successful transaction |
@@ -187,6 +192,7 @@ Rendered above the table as cards and charts. Analytics reflect the **full datas
 | `user_id` | string | Owner user UUID |
 | `amount` | number \| null | Transaction amount in NGN |
 | `provider` | string \| null | Service provider (e.g. `"mtn"`, `"dstv"`) |
+| `data_plan_name` | string \| null | Data/airtime/cable plan name (e.g. `"MTN 1GB Daily"`, `"MTN 500MB Daily"`). Populated for VTpass data purchases; `null` for other types. Use for display in list and detail. |
 | `transaction_type` | string \| null | One of: `transfer`, `deposit`, `airtime`, `data`, `cable`, `education`, `betting` |
 | `credit_debit` | string \| null | `credit` or `debit` |
 | `description` | string \| null | Human-readable description |
@@ -310,12 +316,17 @@ Returns full transaction details including VTU markup data, metadata, and the us
 | `balance_before` | number | Wallet balance immediately before this transaction (for this user) |
 | `balance_after` | number | Wallet balance immediately after this transaction (for this user) |
 | `user.wallet.current_balance` | number | User's **current** wallet balance at the time of the admin query (may differ from `balance_after` if they have done more transactions since) |
+| `data_plan_name` | string \| null | Data plan name (e.g. `"MTN 1GB Daily"`) for data purchases; `null` for non-data or when not available. |
 | `electricity_token` | string \| null | For electricity transactions: normalized prepaid token value (same as user-facing `meta.electricity_token`). `null` for non-electricity transactions. |
 | `vtpass_amount` | number \| null | Raw amount sent to VTpass (for VTU transactions) |
 | `smipay_amount` | number \| null | Amount charged to customer (after markup) |
 | `markup_percent` | number \| null | Markup percentage applied |
 | `authorization_url` | string \| null | Paystack authorization URL (for deposits) |
 | `meta_data` | object \| null | Arbitrary JSON metadata (transfer details, provider responses, etc.) |
+| `cashback_balance_before` | number \| null | Cashback balance before this transaction (VTpass purchases). `null` when no cashback used. |
+| `cashback_used` | number \| null | Cashback amount used for this purchase. `null` when none used. |
+| `cashback_balance_after` | number \| null | Cashback balance after deducting `cashback_used`. `null` when none used. |
+| `cashback_earned` | number \| null | New cashback earned on this transaction (credited after success). `null` if none or not applicable. |
 | `user.wallet` | object | `{ current_balance }` — user's current wallet balance (see above) |
 | `user.tier` | object \| null | `{ tier, name }` — user's current tier |
 | `counterpart` | object \| null | The other side of a P2P transfer (only for `smipay_tag` payment channel). Includes the counterpart transaction + user info. `null` for non-transfer transactions. |
@@ -485,6 +496,7 @@ Suggested columns:
 | User | `user.first_name + last_name` | Show avatar + name. Link to user detail. |
 | Amount | `amount` | Format: `₦5,000.00`. Bold for large amounts. |
 | Type | `transaction_type` | Chip/badge with icon (airtime, transfer, etc.) |
+| Plan | `data_plan_name` | For data (and VTU) transactions: e.g. "MTN 1GB Daily". Show `—` when null. |
 | Status | `status` | Colored badge: green/yellow/red/gray |
 | Direction | `credit_debit` | Green arrow up for credit, red arrow down for debit |
 | Channel | `payment_channel` | `smipay_tag`, `paystack`, etc. |

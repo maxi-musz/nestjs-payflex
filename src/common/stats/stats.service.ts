@@ -75,7 +75,19 @@ export class StatsService {
   // TRANSACTION EVENTS
   // ──────────────────────────────────────────────────────────
 
-  async onTransactionCreated(amount: number, status: string, markupValue?: number): Promise<void> {
+  /**
+   * Call when a VTpass (or other provider) transaction is created.
+   * @param amount - Transaction amount (customer-facing).
+   * @param status - 'success' | 'failed' | 'pending'.
+   * @param markupValue - Our margin (Smipay price − VTpass price); added to markup_revenue on success.
+   * @param vtpassCommission - Commission from VTpass response (content.transactions.commission); added to vtpass_commission_revenue on success.
+   */
+  async onTransactionCreated(
+    amount: number,
+    status: string,
+    markupValue?: number,
+    vtpassCommission?: number,
+  ): Promise<void> {
     await this.safe('onTransactionCreated', async () => {
       const date = this.todayDate();
       const dailyUpdate: Record<string, any> = { transactions_count: { increment: 1 } };
@@ -85,8 +97,11 @@ export class StatsService {
       } else if (status === 'failed') {
         dailyUpdate.transactions_failed = { increment: 1 };
       }
-      if (markupValue && markupValue > 0) {
+      if (markupValue != null && markupValue > 0) {
         dailyUpdate.markup_revenue = { increment: markupValue };
+      }
+      if (status === 'success' && vtpassCommission != null && vtpassCommission > 0) {
+        dailyUpdate.vtpass_commission_revenue = { increment: vtpassCommission };
       }
       await this.prisma.dailyStats.upsert({
         where: { date },
@@ -96,7 +111,9 @@ export class StatsService {
           transactions_volume: status === 'success' ? amount : 0,
           transactions_success: status === 'success' ? 1 : 0,
           transactions_failed: status === 'failed' ? 1 : 0,
-          markup_revenue: markupValue && markupValue > 0 ? markupValue : 0,
+          markup_revenue: markupValue != null && markupValue > 0 ? markupValue : 0,
+          vtpass_commission_revenue:
+            status === 'success' && vtpassCommission != null && vtpassCommission > 0 ? vtpassCommission : 0,
         },
         update: dailyUpdate,
       });
@@ -348,17 +365,40 @@ export class StatsService {
     const today = this.todayDate();
     const weekAgo = new Date(today);
     weekAgo.setDate(weekAgo.getDate() - 6); // last 7 days including today
+    const startOfThisMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+    const startOfLastMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
 
-    const [system, todayStats, weekStats] = await Promise.all([
-      this.getOrCreateSystemStats(),
-      this.prisma.dailyStats.findUnique({ where: { date: today } }),
-      this.prisma.dailyStats.findMany({
-        where: { date: { gte: weekAgo, lte: today } },
-      }),
-    ]);
+    const [system, todayStats, weekStats, revenueThisMonth, revenueLastMonth, revenueAllTime] =
+      await Promise.all([
+        this.getOrCreateSystemStats(),
+        this.prisma.dailyStats.findUnique({ where: { date: today } }),
+        this.prisma.dailyStats.findMany({
+          where: { date: { gte: weekAgo, lte: today } },
+        }),
+        this.prisma.dailyStats.aggregate({
+          where: { date: { gte: startOfThisMonth, lte: today } },
+          _sum: { markup_revenue: true, vtpass_commission_revenue: true },
+        }),
+        this.prisma.dailyStats.aggregate({
+          where: { date: { gte: startOfLastMonth, lt: startOfThisMonth } },
+          _sum: { markup_revenue: true, vtpass_commission_revenue: true },
+        }),
+        this.prisma.dailyStats.aggregate({
+          _sum: { markup_revenue: true, vtpass_commission_revenue: true },
+        }),
+      ]);
 
     const weekTotals = this.sumWeekStats(weekStats);
     const daily = todayStats || this.emptyDailyStats();
+
+    const toRev = (s: { _sum: { markup_revenue: number | null; vtpass_commission_revenue: number | null } }) => ({
+      markup: s._sum.markup_revenue ?? 0,
+      commission: s._sum.vtpass_commission_revenue ?? 0,
+      total: (s._sum.markup_revenue ?? 0) + (s._sum.vtpass_commission_revenue ?? 0),
+    });
+    const revThisMonth = toRev(revenueThisMonth);
+    const revLastMonth = toRev(revenueLastMonth);
+    const revAllTime = toRev(revenueAllTime);
 
     return {
       users: {
@@ -406,6 +446,26 @@ export class StatsService {
       revenue: {
         markup_today: daily.markup_revenue,
         markup_this_week: weekTotals.markup_revenue,
+        vtpass_commission_today: daily.vtpass_commission_revenue,
+        vtpass_commission_this_week: weekTotals.vtpass_commission_revenue,
+        total_revenue_today: (daily.markup_revenue ?? 0) + (daily.vtpass_commission_revenue ?? 0),
+        total_revenue_this_week:
+          (weekTotals.markup_revenue ?? 0) + (weekTotals.vtpass_commission_revenue ?? 0),
+        this_month: {
+          markup: revThisMonth.markup,
+          vtpass_commission: revThisMonth.commission,
+          total: revThisMonth.total,
+        },
+        last_month: {
+          markup: revLastMonth.markup,
+          vtpass_commission: revLastMonth.commission,
+          total: revLastMonth.total,
+        },
+        all_time: {
+          markup: revAllTime.markup,
+          vtpass_commission: revAllTime.commission,
+          total: revAllTime.total,
+        },
       },
       action_items: this.buildActionItems(system, daily),
     };
@@ -528,12 +588,19 @@ export class StatsService {
   }
 
   private sumWeekStats(rows: any[]) {
-    const sum = { new_users: 0, kyc_approved: 0, referrals_count: 0, markup_revenue: 0 };
+    const sum = {
+      new_users: 0,
+      kyc_approved: 0,
+      referrals_count: 0,
+      markup_revenue: 0,
+      vtpass_commission_revenue: 0,
+    };
     for (const r of rows) {
       sum.new_users += r.new_users ?? 0;
       sum.kyc_approved += r.kyc_approved ?? 0;
       sum.referrals_count += r.referrals_count ?? 0;
       sum.markup_revenue += r.markup_revenue ?? 0;
+      sum.vtpass_commission_revenue += r.vtpass_commission_revenue ?? 0;
     }
     return sum;
   }
@@ -551,6 +618,7 @@ export class StatsService {
       cards_issued: 0,
       referrals_count: 0,
       markup_revenue: 0,
+      vtpass_commission_revenue: 0,
       security_events: 0,
     };
   }

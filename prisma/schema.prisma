@@ -215,6 +215,8 @@ model TransactionHistory {
   user_id          String
   amount           Float?
   provider         String? // e.g. mtn, glo, airtel, etc. or specific service identifier
+  /// Data/airtime/cable plan name (e.g. "MTN 1GB Daily"); from variation when available.
+  data_plan_name   String?
   vtpass_amount    Float? // raw amount sent to VTpass (from variation)
   smipay_amount    Float? // amount charged to customer (after markup)
   markup_percent   Float? // percent applied (general or friendlies)
@@ -223,25 +225,31 @@ model TransactionHistory {
   credit_debit     CreditDebit?
   description      String?
 
-  status                TransactionStatus? @default(pending)
-  sender_details        SenderDetails?
+  status                  TransactionStatus? @default(pending)
+  sender_details          SenderDetails?
   /// Critical credential for prepaid electricity (normalized token value).
-  electricity_token     String?
-  recipient_mobile      String?
-  currency_type         CurrencyType?      @default(ngn)
-  payment_method        PaymentMethod?     @default(paystack)
-  payment_channel       PaymentChannel?
-  icon                  TransactionIcon?
-  fee                   Float?             @default(0.0)
-  balance_before        Float              @default(0)
-  balance_after         Float              @default(0)
-  transaction_number    String?
-  transaction_reference String?            @unique
-  authorization_url     String?
-  session_id            String?
-  meta_data             Json?              @default("{}")
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
+  electricity_token       String?
+  recipient_mobile        String?
+  currency_type           CurrencyType?      @default(ngn)
+  payment_method          PaymentMethod?     @default(paystack)
+  payment_channel         PaymentChannel?
+  icon                    TransactionIcon?
+  fee                     Float?             @default(0.0)
+  balance_before          Float              @default(0)
+  balance_after           Float              @default(0)
+  /// Cashback tracking: balance before/used/after for this tx; null when no cashback used.
+  cashback_balance_before Float?
+  cashback_used           Float?
+  cashback_balance_after  Float?
+  /// New cashback earned on this transaction (credited after success); null if none or not yet applied.
+  cashback_earned         Float?
+  transaction_number      String?
+  transaction_reference   String?            @unique
+  authorization_url       String?
+  session_id              String?
+  meta_data               Json?              @default("{}")
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
 }
 
 enum TransactionType {
@@ -1353,8 +1361,9 @@ model DailyStats {
   // Referrals
   referrals_count Int @default(0)
 
-  // Revenue (markup)
-  markup_revenue Float @default(0)
+  // Revenue: our margin (Smipay price − VTpass price) + VTpass commission from response
+  markup_revenue            Float @default(0)
+  vtpass_commission_revenue Float @default(0)
 
   // Security
   security_events Int @default(0)

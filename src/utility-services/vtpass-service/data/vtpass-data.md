@@ -495,16 +495,41 @@ The API uses the following status codes from VTpass:
 
 ### 4. Pricing and Markup
 
-- **Markup Calculation:**
+- **Enable/disable (env):**
+  - `DATA_MARKUP_ENABLED`: Set to `true` / `1` / `yes` to apply markup; set to `false` / `0` to turn markup off.
+  - When **off**: Users see the direct VTpass amount and are debited exactly that (no markup).
+  - When **on**: Markup is applied per the rules below; `variation_amount` in API = amount user pays.
+- **Markup calculation (when enabled):**
   - For amounts **below ₦300**: No markup is applied
   - For amounts **₦300 and above**: Markup percentage is applied
-  - Markup percentage varies based on user type:
-    - Regular users: Uses `DATA_MARKUP_PERCENT` environment variable
-    - Friendly users: Uses `DATA_MARKUP_PERCENT_FRIENDLIES` environment variable (defaults to regular markup if not set)
-- **Price Display:**
-  - `variation_amount`: Final price after markup (what user pays)
+  - Markup percentage varies by user type:
+    - Regular users: `DATA_MARKUP_PERCENT` (e.g. `7.5` for 7.5%)
+    - Friendly users: `DATA_MARKUP_PERCENT_FRIENDLIES` (defaults to regular if not set)
+- **Price display:**
+  - `variation_amount`: Amount user pays (VTpass amount when markup off; VTpass + markup when on)
   - `vtpass_amount`: Original VTpass price (before markup)
-- Prices are rounded down to the nearest whole number for display
+- Prices are rounded down to the nearest whole number when markup is applied
+
+**Environment variables (data markup):**
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATA_MARKUP_ENABLED` | No | `true` | `true`/`1`/`yes` = apply markup; `false`/`0` = show and charge VTpass amount only |
+| `DATA_MARKUP_PERCENT` | No | `0` | Markup percentage for regular users (e.g. `7.5`). Used only when `DATA_MARKUP_ENABLED` is true. |
+| `DATA_MARKUP_PERCENT_FRIENDLIES` | No | same as `DATA_MARKUP_PERCENT` | Markup percentage for friendly users. Used only when markup is enabled. |
+
+**Example .env (markup on, 7.5% for regular users):**
+```env
+DATA_MARKUP_ENABLED=true
+DATA_MARKUP_PERCENT=7.5
+# Optional: different rate for friendly users
+# DATA_MARKUP_PERCENT_FRIENDLIES=5
+```
+
+**Example .env (markup off — show and charge VTpass amount only):**
+```env
+DATA_MARKUP_ENABLED=false
+```
 
 ### 5. Product Whitelisting
 

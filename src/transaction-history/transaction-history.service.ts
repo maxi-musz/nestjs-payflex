@@ -76,6 +76,7 @@ export class TransactionHistoryService {
                 transaction_type: transaction.transaction_type,
                 description: transaction.description,
                 provider: transaction.provider ?? null,
+                data_plan_name: (transaction as any).data_plan_name ?? null,
                 status: transaction.status,
                 date: formatDate(transaction.createdAt),
                 reference: transaction.transaction_reference,
@@ -150,6 +151,7 @@ export class TransactionHistoryService {
             credit_debit: transaction.credit_debit,
             description: transaction.description,
             provider: transaction.provider,
+            data_plan_name: (transaction as any).data_plan_name ?? null,
             status: transaction.status,
             recipient_mobile: transaction.recipient_mobile,
             tx_reference: transaction.transaction_reference,
@@ -168,6 +170,11 @@ export class TransactionHistoryService {
             smipay_amount: transaction.smipay_amount ?? null,
             markup_percent: transaction.markup_percent ?? null,
             markup_value: transaction.markup_value ?? null,
+
+            cashback_balance_before: transaction.cashback_balance_before ?? null,
+            cashback_used: transaction.cashback_used ?? null,
+            cashback_balance_after: transaction.cashback_balance_after ?? null,
+            cashback_earned: transaction.cashback_earned ?? null,
 
             meta: this.buildTypeMeta(transaction.transaction_type, meta),
         };

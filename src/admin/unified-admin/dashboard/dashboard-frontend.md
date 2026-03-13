@@ -66,7 +66,26 @@ No query params, no payload. Returns all stats in a single call.
     },
     "revenue": {
       "markup_today": 125000.00,
-      "markup_this_week": 850000.00
+      "markup_this_week": 850000.00,
+      "vtpass_commission_today": 18500.00,
+      "vtpass_commission_this_week": 112000.00,
+      "total_revenue_today": 143500.00,
+      "total_revenue_this_week": 962000.00,
+      "this_month": {
+        "markup": 2100000.00,
+        "vtpass_commission": 285000.00,
+        "total": 2385000.00
+      },
+      "last_month": {
+        "markup": 1950000.00,
+        "vtpass_commission": 262000.00,
+        "total": 2212000.00
+      },
+      "all_time": {
+        "markup": 18500000.00,
+        "vtpass_commission": 2450000.00,
+        "total": 20950000.00
+      }
     },
     "action_items": [
       { "type": "escalated_tickets", "count": 1 },
@@ -144,11 +163,23 @@ No query params, no payload. Returns all stats in a single call.
 |---|---|---|
 | `{TIER_NAME}` | number | Number of users in each tier. Keys are tier names (e.g. `"UNVERIFIED"`, `"VERIFIED"`, `"PREMIUM"`). Dynamic — depends on tiers configured in the system. |
 
-### `revenue`
+### `revenue` — Revenue breakdown (VTU / bill payments)
+
 | Field | Type | Description |
 |---|---|---|
-| `markup_today` | number | Revenue from VTU/bill payment markup today (NGN) |
-| `markup_this_week` | number | Revenue from markup over the last 7 days (NGN) |
+| `markup_today` | number | Our margin today (Smipay price − VTpass price) in NGN |
+| `markup_this_week` | number | Our margin over the last 7 days (NGN) |
+| `vtpass_commission_today` | number | VTpass commission from successful purchases today (NGN) |
+| `vtpass_commission_this_week` | number | VTpass commission over the last 7 days (NGN) |
+| `total_revenue_today` | number | `markup_today` + `vtpass_commission_today` (NGN) |
+| `total_revenue_this_week` | number | `markup_this_week` + `vtpass_commission_this_week` (NGN) |
+| `this_month` | object | Current month to date: `{ markup, vtpass_commission, total }` (NGN) |
+| `last_month` | object | Previous full month: `{ markup, vtpass_commission, total }` (NGN) |
+| `all_time` | object | Since launch: `{ markup, vtpass_commission, total }` (NGN) |
+
+Frontend can show separate cards for “Markup revenue” and “Commission” and a combined “Total revenue”, or a single revenue card with a breakdown (e.g. “Total: ₦143,500 — Markup: ₦125,000 | Commission: ₦18,500”).
+
+**This month, last month, all time:** `revenue.this_month`, `revenue.last_month`, and `revenue.all_time` each expose `{ markup, vtpass_commission, total }` in NGN for the current month, previous month, and all-time totals. Use for period tabs or cards (e.g. "This month", "Last month", "All time") with markup vs commission breakdown.
 
 ### `action_items`
 Array of items requiring admin attention. Each item:
@@ -178,5 +209,5 @@ Re-syncs all stats from actual database data. Use this after first deploy or if 
 - **Polling:** Safe to poll every 30–60 seconds. The endpoint reads from pre-aggregated stats tables (3 lightweight queries), not from main transaction/user tables.
 - **Action items:** Use this array to show notification badges or an "Attention needed" section on the dashboard.
 - **Tier distribution:** Render as a pie/donut chart. Keys are dynamic — iterate over the object.
-- **Revenue:** Only includes VTU/bill markup. Will be `0` if no VTU transactions have occurred.
+- **Revenue:** Breakdown into **markup** (our margin on VTU/bill payments) and **vtpass_commission** (commission from VTpass). Available for today, this week, this month, last month, and all time. Use `revenue.this_month`, `revenue.last_month`, `revenue.all_time` for period comparisons. Values are `0` when no VTU transactions in that period.
 - **Number formatting:** All monetary values are in NGN (Nigerian Naira). Format with commas and 2 decimal places on the frontend.
