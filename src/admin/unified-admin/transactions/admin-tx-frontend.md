@@ -103,7 +103,8 @@ GET /api/v1/unified-admin/transactions?transaction_type=transfer&credit_debit=de
         "currency_type": "ngn",
         "payment_method": "wallet",
         "payment_channel": "other",
-        "fee": 0.0,
+        "commission": 0.0,
+        "commission_smipay_earned": 0.0,
         "balance_before": 55000.00,
         "balance_after": 50000.00,
         "transaction_number": "TXN-123456",
@@ -201,7 +202,8 @@ Rendered above the table as cards and charts. Analytics reflect the **full datas
 | `currency_type` | string \| null | `ngn`, `usd`, `gbp`, `eur` |
 | `payment_method` | string \| null | `paystack`, `card`, `bank_transfer`, `wallet`, `ussd` |
 | `payment_channel` | string \| null | `bank_transfer`, `smipay_tag`, `paystack`, `flutterwave`, `other` |
-| `fee` | number \| null | Transaction fee |
+| `commission` | number \| null | VTpass commission earned on this transaction (from provider response) |
+| `commission_smipay_earned` | number \| null | Same as `commission` — commission Smipay earned on this transaction (for display as "Commission (Smipay earned)") |
 | `balance_before` | number | User wallet balance before transaction |
 | `balance_after` | number | User wallet balance after transaction |
 | `transaction_number` | string \| null | Access code / transaction number |
@@ -254,7 +256,8 @@ Returns full transaction details including VTU markup data, metadata, and the us
     "currency_type": "ngn",
     "payment_method": "wallet",
     "payment_channel": "smipay_tag",
-    "fee": 0.0,
+    "commission": 0.0,
+    "commission_smipay_earned": 0.0,
     "balance_before": 60000.00,
     "balance_after": 50000.00,
     "electricity_token": null,

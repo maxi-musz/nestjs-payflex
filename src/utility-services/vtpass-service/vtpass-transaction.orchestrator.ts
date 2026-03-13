@@ -204,7 +204,7 @@ export class VtpassTransactionOrchestrator {
         data: {
           status: finalStatus,
           transaction_number: txContent.transactionId?.toString() || null,
-          fee: typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || 0,
+          commission: typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || 0,
           // Persist selected critical fields into dedicated columns when present in extraMeta
           ...(typeof (extraMeta as any).electricity_token === 'string' && (extraMeta as any).electricity_token
             ? { electricity_token: (extraMeta as any).electricity_token }
@@ -422,7 +422,7 @@ export class VtpassTransactionOrchestrator {
           data: {
             status: finalStatus,
             transaction_number: txContent.transactionId?.toString() || transaction.transaction_number,
-            fee: typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || transaction.fee || 0,
+            commission: typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || transaction.commission || 0,
             meta_data: { ...metaData, vtpass_response: response.data, vtpass_status: txStatus, vtpass_code: responseCode, requery_count: requeryCount + 1, last_requery_at: new Date().toISOString() },
           },
         });
@@ -450,7 +450,9 @@ export class VtpassTransactionOrchestrator {
           )
           .catch((e) => this.logger.warn(`[Cron][${serviceLabel}] Audit failed: ${e.message}`));
 
-        this.statsService.onTransactionStatusChanged('pending', finalStatus, transaction.amount || 0, 0)
+        const markupVal = typeof transaction.markup_value === 'number' ? transaction.markup_value : 0;
+        const commissionVal = typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || 0;
+        this.statsService.onTransactionStatusChanged('pending', finalStatus, transaction.amount || 0, markupVal, commissionVal)
           .catch((e) => this.logger.warn(`[Cron][${serviceLabel}] Stats failed: ${e.message}`));
 
         if (finalStatus === 'success') {

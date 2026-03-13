@@ -1,12 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { StatsService } from 'src/common/stats/stats.service';
 import * as colors from 'colors/safe';
 
 @Injectable()
 export class VtpassWebhookService {
   private readonly logger = new Logger(VtpassWebhookService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly statsService: StatsService,
+  ) {}
 
   /**
    * Handle VTpass webhook events
@@ -110,9 +114,9 @@ export class VtpassWebhookService {
           data: {
             status: finalStatus,
             transaction_number: transactionId?.toString() || dbTransaction.transaction_number,
-            fee: typeof transaction.commission === 'number' 
+            commission: typeof transaction.commission === 'number' 
               ? transaction.commission 
-              : Number(transaction.commission) || dbTransaction.fee || 0,
+              : Number(transaction.commission) || dbTransaction.commission || 0,
             meta_data: {
               ...metaData,
               vtpass_webhook: data,
@@ -137,6 +141,16 @@ export class VtpassWebhookService {
           }
         }
       });
+
+      // Update daily stats when status changes to success (commission + markup + volume)
+      if (dbTransaction.status === 'pending' && finalStatus === 'success') {
+        const amount = Number(dbTransaction.smipay_amount ?? dbTransaction.amount ?? 0);
+        const markupVal = typeof dbTransaction.markup_value === 'number' ? dbTransaction.markup_value : 0;
+        const commissionVal = typeof transaction.commission === 'number' ? transaction.commission : Number(transaction.commission) || 0;
+        this.statsService
+          .onTransactionStatusChanged('pending', 'success', amount, markupVal, commissionVal)
+          .catch((e) => this.logger.warn(`Stats update failed for ${requestId}: ${e.message}`));
+      }
 
       this.logger.log(
         colors.green(`Transaction ${requestId} updated to status: ${finalStatus}`)

@@ -158,7 +158,7 @@ export class TransactionHistoryService {
             transaction_number: transaction.transaction_number,
             payment_method: transaction.payment_method,
             payment_channel: transaction.payment_channel,
-            fee: transaction.fee ?? 0,
+            commission: transaction.commission ?? 0,
             balance_before: transaction.balance_before,
             balance_after: transaction.balance_after,
             created_on: formatDate(transaction.createdAt),

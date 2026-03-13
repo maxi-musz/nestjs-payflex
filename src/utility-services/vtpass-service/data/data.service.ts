@@ -8,6 +8,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
 import { categorizeVariations } from '../variation-categorizer.helper';
 import { VtpassTransactionOrchestrator, generateVtpassRequestId } from '../vtpass-transaction.orchestrator';
+import { MarkupService, EffectiveMarkup } from 'src/common/markup/markup.service';
 
 @Injectable()
 export class DataService {
@@ -23,6 +24,7 @@ export class DataService {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly orchestrator: VtpassTransactionOrchestrator,
+    private readonly markupService: MarkupService,
   ) {
     this.credentials = VtpassCredentialsHelper.getCredentials(configService);
     this.apiKey = this.credentials.apiKey;
@@ -121,34 +123,12 @@ export class DataService {
   }
 
   /**
-   * Whether data markup is enabled (env: DATA_MARKUP_ENABLED).
-   * When false/0: users see VTpass amount and are debited exactly that.
+   * Apply markup to amount using effective config (from MarkupService — admin config only; no markup if off or not set).
    */
-  private isDataMarkupEnabled(): boolean {
-    const v = (process.env.DATA_MARKUP_ENABLED ?? 'true').trim().toLowerCase();
-    return v === 'true' || v === '1' || v === 'yes';
-  }
-
-  /**
-   * Compute effective markup % for data. Same logic for display (variation codes) and purchase.
-   * When markup is disabled, returns 0 so displayed and charged amount = VTpass amount.
-   */
-  private getDataMarkupConfig(userPayload?: any): { markupPercent: number } {
-    if (!this.isDataMarkupEnabled()) {
-      return { markupPercent: 0 };
-    }
-    const isFriendlyUser = Boolean((userPayload as any)?.is_friendly ?? (userPayload as any)?.friendlies);
-    const generalPct = Number(process.env.DATA_MARKUP_PERCENT || 0);
-    const friendlyPct = Number(process.env.DATA_MARKUP_PERCENT_FRIENDLIES ?? generalPct);
-    const markupPercent = isFriendlyUser ? friendlyPct : generalPct;
-    return { markupPercent };
-  }
-
-  private applyMarkupToAmount(vtpassAmount: number, userPayload?: any): number {
-    const { markupPercent } = this.getDataMarkupConfig(userPayload);
-    const underThreshold = vtpassAmount < 300;
-    if (underThreshold || markupPercent <= 0) return vtpassAmount;
-    const markupValue = (vtpassAmount * markupPercent) / 100;
+  private applyMarkupToAmount(vtpassAmount: number, effective: EffectiveMarkup): number {
+    const underThreshold = effective.minAmountToApply > 0 && vtpassAmount < effective.minAmountToApply;
+    if (underThreshold || effective.markupPercent <= 0) return vtpassAmount;
+    const markupValue = (vtpassAmount * effective.markupPercent) / 100;
     return Math.floor(vtpassAmount + markupValue);
   }
 
@@ -167,10 +147,13 @@ export class DataService {
       const content = response.data?.content || {};
       const variations = content.variations || content.varations || [];
 
+      // Resolve markup from admin config (no markup if off or not set)
+      const effectiveMarkup = await this.markupService.getEffectiveMarkup('data', userPayload);
+
       // Apply markup so variation_amount = what user pays; keep base in vtpass_amount for purchase flow
       const transformed = variations.map((v: any) => {
         const vtpassAmount = Number(v.variation_amount ?? v.variationAmount ?? 0);
-        const amountAfterMarkup = this.applyMarkupToAmount(vtpassAmount, userPayload);
+        const amountAfterMarkup = this.applyMarkupToAmount(vtpassAmount, effectiveMarkup);
         return {
           ...v,
           vtpass_amount: vtpassAmount,
@@ -298,12 +281,13 @@ export class DataService {
       this.logger.log(`Amount determined from variation_code (vtpass base): ${amount}`);
     }
 
-    // Compute markup (same config as getVariationCodes: when disabled, charge exactly vtpass amount)
-    const { markupPercent } = this.getDataMarkupConfig(userPayload);
+    // Compute markup (same config as getVariationCodes — admin config only)
+    const effectiveMarkup = await this.markupService.getEffectiveMarkup('data', userPayload);
     const vtpassAmount = Number(amount);
-    const underThreshold = vtpassAmount < 300;
-    const markupValue = underThreshold || markupPercent <= 0 ? 0 : (vtpassAmount * markupPercent) / 100;
+    const underThreshold = effectiveMarkup.minAmountToApply > 0 && vtpassAmount < effectiveMarkup.minAmountToApply;
+    const markupValue = underThreshold || effectiveMarkup.markupPercent <= 0 ? 0 : (vtpassAmount * effectiveMarkup.markupPercent) / 100;
     const smipayAmount = Math.floor(vtpassAmount + markupValue);
+    const markupPercent = effectiveMarkup.markupPercent;
 
     const provider = this.getProviderLabelFromServiceId(dto.serviceID);
     const providerName = dto.serviceID.split('-')[0];

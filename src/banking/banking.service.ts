@@ -151,7 +151,7 @@ export class BankingService {
                     transaction_type: "deposit",
                     credit_debit: "credit",
                     description: "Wallet Funding",
-                    fee: 10,
+                    commission: 0,
                     transaction_number: access_code,
                     transaction_reference: reference,
                     authorization_url: authorization_url,

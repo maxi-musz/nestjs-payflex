@@ -261,9 +261,9 @@ export class InternationalAirtimeService {
           data: {
             status: finalStatus,
             transaction_number: txContent.transactionId?.toString() || existingTx.transaction_number,
-            fee: typeof txContent.commission === 'number'
+            commission: typeof txContent.commission === 'number'
               ? txContent.commission
-              : Number(txContent.commission) || existingTx.fee || 0,
+              : Number(txContent.commission) || existingTx.commission || 0,
             meta_data: {
               ...metaData,
               vtpass_response: response.data,

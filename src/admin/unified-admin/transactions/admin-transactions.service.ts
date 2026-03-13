@@ -22,7 +22,7 @@ const TX_LIST_SELECT = {
   currency_type: true,
   payment_method: true,
   payment_channel: true,
-  fee: true,
+  commission: true,
   balance_before: true,
   balance_after: true,
   electricity_token: true,
@@ -179,7 +179,7 @@ export class AdminTransactionsService {
         _sum: { markup_value: true },
       }),
       this.prisma.transactionHistory.aggregate({
-        _sum: { fee: true },
+        _sum: { commission: true },
         where: { status: 'success' },
       }),
     ]);
@@ -194,6 +194,7 @@ export class AdminTransactionsService {
 
     const enriched = transactions.map((tx) => ({
       ...tx,
+      commission_smipay_earned: tx.commission ?? null,
       user: userMap.get(tx.user_id) ?? null,
     }));
 
@@ -224,9 +225,9 @@ export class AdminTransactionsService {
           total_transactions: totalAll,
           total_volume: successVolume._sum.amount ?? 0,
           total_revenue: totalRevenue._sum.markup_value ?? 0,
-          vtpass_commission: totalCommission._sum.fee ?? 0,
+          vtpass_commission: totalCommission._sum.commission ?? 0,
           total_revenue_including_commission:
-            (totalRevenue._sum.markup_value ?? 0) + (totalCommission._sum.fee ?? 0),
+            (totalRevenue._sum.markup_value ?? 0) + (totalCommission._sum.commission ?? 0),
           avg_amount: avgStats._avg.amount ?? 0,
           min_amount: avgStats._min.amount ?? 0,
           max_amount: avgStats._max.amount ?? 0,
@@ -309,6 +310,7 @@ export class AdminTransactionsService {
 
     return new ApiResponseDto(true, 'Transaction fetched', {
       ...transaction,
+      commission_smipay_earned: transaction.commission ?? null,
       user,
       counterpart,
     });

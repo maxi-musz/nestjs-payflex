@@ -234,7 +234,8 @@ model TransactionHistory {
   payment_method          PaymentMethod?     @default(paystack)
   payment_channel         PaymentChannel?
   icon                    TransactionIcon?
-  fee                     Float?             @default(0.0)
+  /// VTpass commission earned on this transaction (from provider response); not a customer fee.
+  commission              Float?             @default(0)
   balance_before          Float              @default(0)
   balance_after           Float              @default(0)
   /// Cashback tracking: balance before/used/after for this tx; null when no cashback used.
@@ -1229,6 +1230,12 @@ enum AuditAction {
   CASHBACK_RULE_UPDATE
   CASHBACK_RULE_DELETE
 
+  // ── Service Markup ───────────────────────────────────────
+  MARKUP_CONFIG_UPDATE
+  MARKUP_RULE_CREATE
+  MARKUP_RULE_UPDATE
+  MARKUP_RULE_DELETE
+
   // ── First Tx Reward ─────────────────────────────────────────
   FIRST_TX_REWARD_CONFIG_UPDATE
 
@@ -1510,6 +1517,48 @@ model CashbackHistory {
   @@map("cashback_history")
 }
 
+// ─── Service Markup (admin-configurable margin per service) ─────
+// Not a reward — this is the margin we add to VTpass prices (data, airtime, cable, etc.)
+
+model MarkupConfig {
+  id String @id @default("markup_config")
+
+  is_active Boolean @default(false)
+
+  // fallback percentage when a service has no rule or rule is inactive
+  default_percentage Float @default(0)
+
+  // fallback for "friendly" users when no rule override (null = use default_percentage)
+  default_percentage_friendlies Float?
+
+  // optional minimum transaction amount (NGN) to apply markup; below this, no markup. null/0 = no minimum
+  min_amount_to_apply_markup Float? @default(0)
+
+  updated_by String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("markup_config")
+}
+
+model MarkupRule {
+  id String @id @default(uuid())
+
+  service_type CashbackServiceType @unique
+  is_active    Boolean             @default(true)
+
+  percentage            Float  @default(0)
+  percentage_friendlies Float? // null = use percentage
+
+  min_amount_to_apply_markup Float? // null = use global config
+
+  updated_by String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("markup_rules")
+}
+
 // Resources that can be permission-gated
 enum PermissionResource {
   DASHBOARD
@@ -1527,6 +1576,7 @@ enum PermissionResource {
   PUSH_NOTIFICATIONS
   SETTINGS
   CASHBACK
+  MARKUP
   FIRST_TX_REWARD
   NOTIFICATIONS
 }

@@ -159,6 +159,12 @@ export const ACTION_CATEGORY_MAP: Record<AuditAction, AuditCategory> = {
   CASHBACK_RULE_UPDATE: AuditCategory.ADMIN,
   CASHBACK_RULE_DELETE: AuditCategory.ADMIN,
 
+  // Service Markup
+  MARKUP_CONFIG_UPDATE: AuditCategory.ADMIN,
+  MARKUP_RULE_CREATE: AuditCategory.ADMIN,
+  MARKUP_RULE_UPDATE: AuditCategory.ADMIN,
+  MARKUP_RULE_DELETE: AuditCategory.ADMIN,
+
   // First Tx Reward
   FIRST_TX_REWARD_CONFIG_UPDATE: AuditCategory.ADMIN,
 
@@ -419,6 +425,12 @@ export const ACTION_DESCRIPTION_MAP: Record<AuditAction, string> = {
   CASHBACK_RULE_CREATE: 'Cashback rule created',
   CASHBACK_RULE_UPDATE: 'Cashback rule updated',
   CASHBACK_RULE_DELETE: 'Cashback rule deleted',
+
+  // Service Markup
+  MARKUP_CONFIG_UPDATE: 'Markup config updated',
+  MARKUP_RULE_CREATE: 'Markup rule created',
+  MARKUP_RULE_UPDATE: 'Markup rule updated',
+  MARKUP_RULE_DELETE: 'Markup rule deleted',
 
   // First Tx Reward
   FIRST_TX_REWARD_CONFIG_UPDATE: 'First-tx reward config updated',

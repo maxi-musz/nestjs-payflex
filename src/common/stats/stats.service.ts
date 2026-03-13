@@ -127,11 +127,16 @@ export class StatsService {
     });
   }
 
+  /**
+   * Call when a transaction status changes (e.g. pending → success via webhook or requery).
+   * @param commission - VTpass commission from provider response; added to vtpass_commission_revenue when transitioning to success.
+   */
   async onTransactionStatusChanged(
     oldStatus: string,
     newStatus: string,
     amount: number,
     markupValue?: number,
+    commission?: number,
   ): Promise<void> {
     await this.safe('onTransactionStatusChanged', async () => {
       const date = this.todayDate();
@@ -146,8 +151,11 @@ export class StatsService {
         dailyUpdate.transactions_failed = { increment: 1 };
         systemUpdate.pending_transactions = { decrement: 1 };
       }
-      if (markupValue && markupValue > 0) {
+      if (markupValue != null && markupValue > 0) {
         dailyUpdate.markup_revenue = { increment: markupValue };
+      }
+      if (oldStatus === 'pending' && newStatus === 'success' && commission != null && commission > 0) {
+        dailyUpdate.vtpass_commission_revenue = { increment: commission };
       }
 
       if (Object.keys(dailyUpdate).length > 0) {
