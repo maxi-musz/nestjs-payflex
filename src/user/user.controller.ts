@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Post, Put, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, Put, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
 import { Request } from '@nestjs/common'
+import { FileInterceptor } from "@nestjs/platform-express";
 import { UserService } from "./user.service";
 import { AuthGuard } from "@nestjs/passport";
 import { KycVerificationDto, UpdateUserDto, SetupTransactionPinDto, UpdateTransactionPinDto, RequestAccountDeletionDto } from "./dto/user.dto";
@@ -42,6 +43,20 @@ export class UserController{
     @Put('update-profile')
     updateUserProfile(@Body() dto: UpdateUserDto, @Request() req) {
         return this.userService.updateUserProfile(dto, req.user)
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Post('update-display-picture')
+    @UseInterceptors(
+        FileInterceptor('file', {
+            limits: { fileSize: 5 * 1024 * 1024 },
+        }),
+    )
+    updateDisplayPicture(
+        @UploadedFile() file: Express.Multer.File | undefined,
+        @Request() req: any,
+    ) {
+        return this.userService.updateDisplayPicture(file, req.user);
     }
 
     @UseGuards(AuthGuard('jwt'))

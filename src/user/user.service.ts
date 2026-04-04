@@ -13,6 +13,7 @@ import { CashbackService } from "src/common/cashback/cashback.service";
 import { ReferralService } from "src/referral/referral.service";
 import { FirstTxRewardService } from "src/common/first-tx-reward/first-tx-reward.service";
 import { EmailService } from "src/common/mailer/email.service";
+import { StorageService } from "src/storage/storage.service";
 
 function maskAccountNumber(accountNumber: string): string {
     if (!accountNumber) return "";
@@ -128,6 +129,7 @@ function getUserTier(user: any): TierInfo {
         private referralService: ReferralService,
         private firstTxRewardService: FirstTxRewardService,
         private emailService: EmailService,
+        private storageService: StorageService,
     ) {}
 
     async fetchUserDashboard(userPayload: any) {
@@ -938,6 +940,85 @@ function getUserTier(user: any): TierInfo {
                 error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
             ); 
         }
+    }
+
+    private static readonly DISPLAY_PICTURE_MAX_BYTES = 5 * 1024 * 1024;
+    private static readonly DISPLAY_PICTURE_MIMES = new Set([
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+    ]);
+
+    async updateDisplayPicture(file: Express.Multer.File | undefined, userPayload: any) {
+        if (!file?.buffer?.length) {
+            throw new BadRequestException(
+                'Image file is required. Send multipart field name: file',
+            );
+        }
+        if (!UserService.DISPLAY_PICTURE_MIMES.has(file.mimetype)) {
+            throw new BadRequestException(
+                "Only JPEG, PNG, GIF, or WebP images are allowed",
+            );
+        }
+        if (file.size > UserService.DISPLAY_PICTURE_MAX_BYTES) {
+            throw new BadRequestException("Image must be 5MB or smaller");
+        }
+
+        const userId = userPayload.sub;
+        const existingUser = await this.prisma.user.findUnique({
+            where: { id: userId },
+            include: { profile_image: true },
+        });
+
+        if (!existingUser) {
+            throw new NotFoundException("User not found");
+        }
+
+        const oldPublicId = existingUser.profile_image?.public_id ?? null;
+
+        let uploaded;
+        try {
+            uploaded = await this.storageService.upload(file, {
+                folder: "smipay/profile-images",
+                resource_type: "image",
+                allowed_formats: ["jpg", "jpeg", "png", "gif", "webp"],
+            });
+        } catch (err: any) {
+            this.logger.error(`Display picture upload failed: ${err?.message}`);
+            throw new BadRequestException("Failed to upload image");
+        }
+
+        const profileImage = await this.prisma.profileImage.upsert({
+            where: { userId },
+            create: {
+                userId,
+                secure_url: uploaded.secure_url,
+                public_id: uploaded.public_id,
+            },
+            update: {
+                secure_url: uploaded.secure_url,
+                public_id: uploaded.public_id,
+            },
+        });
+
+        if (oldPublicId && oldPublicId !== uploaded.public_id) {
+            try {
+                await this.storageService.delete(oldPublicId);
+            } catch (err: any) {
+                this.logger.warn(
+                    `Could not delete previous profile image from storage: ${err?.message}`,
+                );
+            }
+        }
+
+        return new ApiResponseDto(true, "Display picture updated successfully", {
+            profile_image: {
+                secure_url: profileImage.secure_url,
+                public_id: profileImage.public_id,
+                storage_provider: uploaded.provider,
+            },
+        });
     }
 
     async UpdateKyc(dto: KycVerificationDto, userPayload: any) {

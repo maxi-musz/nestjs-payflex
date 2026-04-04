@@ -373,11 +373,73 @@ Returns the user's KYC verification details.
 
 **PUT** `/user/update-profile`
 
-Updates user profile fields (name, gender, date of birth, etc.).
+**Auth:** Bearer JWT (same as other `/user/*` routes).
+
+Updates editable profile fields: `first_name`, `last_name`, `email`, and address fields (`home_address`, `city`, `state`, `country`, `postal_code`, `house_number`). All body fields are optional; send only what you want to change.
+
+**Request body (JSON, all fields optional):**
+```json
+{
+  "first_name": "Ada",
+  "last_name": "Lovelace",
+  "email": "ada@example.com",
+  "home_address": "1 Example Street",
+  "city": "Lagos",
+  "state": "LA",
+  "country": "NG",
+  "postal_code": "100001",
+  "house_number": "12B"
+}
+```
+
+**Success response (200):** Standard `ApiResponseDto` with `success`, `message`, and `data` containing the updated user summary (including `profile_image.secure_url` / `public_id` if present — not changed by this endpoint).
 
 ---
 
-## 5. Account Deletion
+## 5. Update display picture
+
+**POST** `/user/update-display-picture`
+
+**Auth:** Bearer JWT.
+
+**Content-Type:** `multipart/form-data`
+
+**Form field**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `file` | file | Yes | Image file (JPEG, PNG, GIF, or WebP). Max **5 MB**. |
+
+The file is uploaded using the backend **storage provider** (`STORAGE_PROVIDER` in server env: `aws_s3` or `cloudinary`). After a successful upload, the user’s `ProfileImage` row is created or updated. If the user already had a picture, the **previous object is deleted** from the same storage backend so old files are not left behind (if deletion fails, the new picture is still saved; the server logs a warning).
+
+**Success response (200):**
+```json
+{
+  "success": true,
+  "message": "Display picture updated successfully",
+  "data": {
+    "profile_image": {
+      "secure_url": "https://your-bucket.s3.af-south-1.amazonaws.com/smipay/profile-images/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.jpg",
+      "public_id": "smipay/profile-images/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.jpg",
+      "storage_provider": "aws_s3"
+    }
+  }
+}
+```
+
+With Cloudinary, `secure_url` is the HTTPS Cloudinary URL and `public_id` is the Cloudinary public id. `storage_provider` is either `aws_s3` or `cloudinary`.
+
+**Error examples**
+
+- **400** — Missing file, wrong MIME type, file too large, or upload failure: `message` describes the issue (e.g. `"Image file is required. Send multipart field name: file"`).
+- **401** — Missing or invalid JWT.
+- **404** — User not found.
+
+**Base path:** All routes in this document are under the app’s global prefix, e.g. **`POST /api/v1/user/update-display-picture`** when `BASE_URL` uses prefix `api/v1`.
+
+---
+
+## 6. Account Deletion
 
 ### Request account deletion
 

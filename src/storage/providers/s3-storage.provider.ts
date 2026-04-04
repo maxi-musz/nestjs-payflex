@@ -42,7 +42,7 @@ export class S3StorageProvider implements IStorageProvider {
   }
 
   getProviderName(): string {
-    return 'aws-s3';
+    return 'aws_s3';
   }
 
   async uploadFile(file: Express.Multer.File, options?: UploadOptions): Promise<UploadResult> {
@@ -89,7 +89,7 @@ export class S3StorageProvider implements IStorageProvider {
         original_filename: path.basename(filename, ext),
         format: ext.replace('.', ''),
         size_bytes: buffer.length,
-        provider: 'aws-s3',
+        provider: 'aws_s3',
       };
     } catch (error: any) {
       this.logger.error(`S3 upload failed: ${error.message}`);
@@ -106,7 +106,7 @@ export class S3StorageProvider implements IStorageProvider {
         }),
       );
       this.logger.log(`Deleted from S3: ${publicId}`);
-      return { success: true, public_id: publicId, provider: 'aws-s3' };
+      return { success: true, public_id: publicId, provider: 'aws_s3' };
     } catch (error: any) {
       this.logger.error(`S3 delete failed: ${error.message}`);
       throw new Error(`Delete failed: ${error.message}`);
