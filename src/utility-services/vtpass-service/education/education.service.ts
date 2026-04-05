@@ -9,6 +9,7 @@ import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
 import { EmailService } from 'src/common/mailer/email.service';
 import { CashbackService } from 'src/common/cashback/cashback.service';
 import { VtpassTransactionOrchestrator, generateVtpassRequestId } from '../vtpass-transaction.orchestrator';
+import { toUserFriendlyVtpassPurchaseError } from '../vtpass-user-facing-messages';
 import * as colors from 'colors';
 
 @Injectable()
@@ -478,14 +479,11 @@ export class EducationService {
     if (upper.includes('INVALID CREDENTIALS')) {
       return 'Service configuration error. Please contact support.';
     }
-    if (upper.includes('INSUFFICIENT')) {
-      return 'Service provider balance is low. Please try again later.';
-    }
     if (upper.includes('INVALID') && upper.includes('PROFILE')) {
       return 'Invalid JAMB Profile ID. Please verify and try again.';
     }
 
-    return `Provider error: ${raw}`;
+    return toUserFriendlyVtpassPurchaseError(raw);
   }
 
   // ---------------------------------------------------------------------------

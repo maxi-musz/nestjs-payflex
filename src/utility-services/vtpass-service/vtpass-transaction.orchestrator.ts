@@ -16,6 +16,7 @@ import {
   generateVtpassRequestId,
   shouldRequeryTransaction,
 } from './airtime/airtime.validators';
+import { toUserFriendlyVtpassPurchaseError } from './vtpass-user-facing-messages';
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
@@ -231,7 +232,9 @@ export class VtpassTransactionOrchestrator {
           cashbackRefundedInTryBlock = true;
         }
         if (shouldThrow) {
-          const msg = config.humanizeError ? config.humanizeError(errorMessage) : `Provider error: ${errorMessage}`;
+          const msg = config.humanizeError
+            ? config.humanizeError(errorMessage)
+            : toUserFriendlyVtpassPurchaseError(errorMessage);
           throw new HttpException(msg, HttpStatus.BAD_REQUEST);
         }
       }
@@ -378,8 +381,13 @@ export class VtpassTransactionOrchestrator {
 
       if (error instanceof HttpException) throw error;
       if (error.response) {
-        const rawMsg = error.response.data?.response_description || error.response.data?.message || `Failed to purchase ${serviceLabel.toLowerCase()}`;
-        const msg = config.humanizeError ? config.humanizeError(rawMsg) : rawMsg;
+        const rawMsg =
+          error.response.data?.response_description ||
+          error.response.data?.message ||
+          `Failed to purchase ${serviceLabel.toLowerCase()}`;
+        const msg = config.humanizeError
+          ? config.humanizeError(rawMsg)
+          : toUserFriendlyVtpassPurchaseError(rawMsg);
         throw new HttpException(msg, error.response.status || HttpStatus.BAD_REQUEST);
       }
       throw new HttpException(`Failed to purchase ${serviceLabel.toLowerCase()}`, HttpStatus.INTERNAL_SERVER_ERROR);

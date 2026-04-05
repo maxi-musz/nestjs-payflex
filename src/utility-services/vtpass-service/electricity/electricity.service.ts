@@ -8,6 +8,7 @@ import { VerifyMeterDto } from './dto/verify-meter.dto';
 import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
 import { EmailService } from 'src/common/mailer/email.service';
 import { VtpassTransactionOrchestrator, generateVtpassRequestId } from '../vtpass-transaction.orchestrator';
+import { toUserFriendlyVtpassPurchaseError } from '../vtpass-user-facing-messages';
 import * as colors from 'colors';
 
 @Injectable()
@@ -440,7 +441,7 @@ export class ElectricityService {
       return `Service configuration error. Please contact support.`;
     }
 
-    return `Provider error: ${raw}`;
+    return toUserFriendlyVtpassPurchaseError(raw);
   }
 
   private buildElectricitySuccessEmailHtml(
