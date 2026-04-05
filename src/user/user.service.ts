@@ -14,6 +14,10 @@ import { ReferralService } from "src/referral/referral.service";
 import { FirstTxRewardService } from "src/common/first-tx-reward/first-tx-reward.service";
 import { EmailService } from "src/common/mailer/email.service";
 import { StorageService } from "src/storage/storage.service";
+import {
+    PROFILE_IMAGE_UPLOAD_OPTIONS,
+    validateProfileImageFile,
+} from "src/common/upload/display-picture";
 
 function maskAccountNumber(accountNumber: string): string {
     if (!accountNumber) return "";
@@ -942,28 +946,8 @@ function getUserTier(user: any): TierInfo {
         }
     }
 
-    private static readonly DISPLAY_PICTURE_MAX_BYTES = 5 * 1024 * 1024;
-    private static readonly DISPLAY_PICTURE_MIMES = new Set([
-        "image/jpeg",
-        "image/png",
-        "image/gif",
-        "image/webp",
-    ]);
-
     async updateDisplayPicture(file: Express.Multer.File | undefined, userPayload: any) {
-        if (!file?.buffer?.length) {
-            throw new BadRequestException(
-                'Image file is required. Send multipart field name: file',
-            );
-        }
-        if (!UserService.DISPLAY_PICTURE_MIMES.has(file.mimetype)) {
-            throw new BadRequestException(
-                "Only JPEG, PNG, GIF, or WebP images are allowed",
-            );
-        }
-        if (file.size > UserService.DISPLAY_PICTURE_MAX_BYTES) {
-            throw new BadRequestException("Image must be 5MB or smaller");
-        }
+        validateProfileImageFile(file);
 
         const userId = userPayload.sub;
         const existingUser = await this.prisma.user.findUnique({
@@ -979,11 +963,7 @@ function getUserTier(user: any): TierInfo {
 
         let uploaded;
         try {
-            uploaded = await this.storageService.upload(file, {
-                folder: "smipay/profile-images",
-                resource_type: "image",
-                allowed_formats: ["jpg", "jpeg", "png", "gif", "webp"],
-            });
+            uploaded = await this.storageService.upload(file, PROFILE_IMAGE_UPLOAD_OPTIONS);
         } catch (err: any) {
             this.logger.error(`Display picture upload failed: ${err?.message}`);
             throw new BadRequestException("Failed to upload image");

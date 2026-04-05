@@ -166,7 +166,7 @@ Registration is a **three-step** flow. The backend requires the email to be veri
 |------|-----------|----------|---------|
 | 1 | User enters email and clicks **Verify email** | `POST /new-auth/request-email-verification` | Check email is new, send OTP to email |
 | 2 | User enters OTP received by email | `POST /new-auth/verify-email-for-registration` | Confirm OTP and mark email as verified |
-| 3 | User submits full form (name, phone, password, etc.) | `POST /new-auth/register` | Create account **and auto-sign-in** (returns `access_token`) |
+| 3 | User submits full form (name, phone, password, etc.) | `POST /new-auth/register` **or** `POST /new-auth/register-with-profile-picture` (multipart + optional photo) | Create account **and auto-sign-in** (returns `access_token`) |
 
 Email verification expires after **30 minutes**. If the user delays, they must run steps 1 and 2 again.
 
@@ -265,7 +265,7 @@ Call this after the user enters the OTP they received. On success, the email is 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
 | `email` | string | Yes | Valid email (must be already verified). |
-| `password` | string | Yes | Min 6, max 64. |
+| `password` | string | Yes | **Exactly 6 characters**, digits only (`0`–`9`). No letters or symbols. |
 | `first_name` | string | Yes | |
 | `last_name` | string | Yes | |
 | `phone_number` | string | Yes | |
@@ -281,7 +281,7 @@ Call this after the user enters the OTP they received. On success, the email is 
 ```json
 {
   "email": "user@example.com",
-  "password": "securePassword123",
+  "password": "123456",
   "first_name": "Jane",
   "last_name": "Doe",
   "phone_number": "2348012345678",
@@ -336,6 +336,45 @@ Call this after the user enters the OTP they received. On success, the email is 
 | 400 | `Please verify your email first using the code we sent you.` |
 | 400 | `Email verification expired. Please verify your email again.` |
 
+#### 3.3.1 Register with profile picture (multipart)
+
+Use this when the sign-up form includes an optional avatar **in the same request** as the rest of the registration fields.
+
+**Endpoint:** `POST /new-auth/register-with-profile-picture`
+
+**Content-Type:** `multipart/form-data` (let the client set the boundary — do not send `application/json`).
+
+**Form fields:** Same keys and rules as **3.3 Register** (`email`, `password`, `first_name`, `last_name`, `phone_number`, `agree_to_terms`, etc.). Boolean fields may be sent as strings `true` / `false`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `file` | file | No | Profile image: JPEG, PNG, GIF, or WebP, max **5 MB**. Omit entirely if the user skips a photo. |
+
+**Behavior:** Identical to `POST /new-auth/register` (same verification rules, tokens, and response shape). If `file` is present and valid, the image is stored via the configured **`STORAGE_PROVIDER`** (`aws_s3` or `cloudinary`) and linked to the new user; `user.profile_image` in the response is the public URL. If **storage fails** after the account is created, registration still succeeds and the user is signed in, but `profile_image` may be `null` (check server logs).
+
+**Example (React Native / FormData):**
+
+```javascript
+const form = new FormData();
+form.append('email', email);
+form.append('password', password);
+form.append('first_name', firstName);
+form.append('last_name', lastName);
+form.append('phone_number', phone);
+form.append('agree_to_terms', 'true');
+form.append('country', 'Nigeria');
+if (avatarUri) {
+  form.append('file', {
+    uri: avatarUri,
+    name: 'profile.jpg',
+    type: 'image/jpeg',
+  });
+}
+await api.post('/new-auth/register-with-profile-picture', form, {
+  headers: { /* device metadata headers */ },
+});
+```
+
 ---
 
 ### 3.4 Verify email OTP (legacy / other flows)
@@ -373,14 +412,14 @@ Used in flows where a **user already exists** and has an OTP stored (e.g. legacy
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
 | `email` | string | Yes | Valid email. |
-| `password` | string | Yes | Min 8, max 32. |
+| `password` | string | Yes | Non-empty string, max 256 characters. **Any password the account already has** (legacy mixed passwords still work). New passwords are only set via **register** or **reset password**, where **exactly 6 digits** apply. |
 
 **Example request:**
 
 ```json
 {
   "email": "user@example.com",
-  "password": "myPassword123"
+  "password": "123456"
 }
 ```
 
@@ -571,7 +610,7 @@ OTP expires in 5 minutes. On email delivery failure the backend may return `succ
 |-------|------|----------|-------------|
 | `email` | string | Yes | |
 | `otp` | string | Yes | Exactly 4 characters (from forgot-password flow). |
-| `new_password` | string | Yes | Min 4, max 32. |
+| `new_password` | string | Yes | **Exactly 6 digits** (same rules as registration). |
 
 **Example request:**
 
@@ -579,7 +618,7 @@ OTP expires in 5 minutes. On email delivery failure the backend may return `succ
 {
   "email": "user@example.com",
   "otp": "1234",
-  "new_password": "newSecurePassword123"
+  "new_password": "654321"
 }
 ```
 
@@ -822,7 +861,7 @@ The backend captures the user's location through a **two-layer approach**:
 
 | Item | Requirement |
 |------|-------------|
-| **Registration** | 1) Request email verification → 2) Verify email for registration (OTP) → 3) Register with full payload → **user is auto-signed-in** (response includes `access_token`). Navigate to dashboard, not sign-in. |
+| **Registration** | 1) Request email verification → 2) Verify email for registration (OTP) → 3) `POST /new-auth/register` (JSON) **or** `POST /new-auth/register-with-profile-picture` (multipart, optional `file`) → **user is auto-signed-in** (response includes `access_token`). Navigate to dashboard, not sign-in. |
 | **Onboarding** | After sign-in or register, check `user.has_completed_onboarding`. If `false`, show the walkthrough. When user finishes, call `POST /new-auth/complete-onboarding`. |
 | **Device headers** | Send `x-device-id` (and optional headers from Section 1.1) on **every** request. |
 | **Geolocation** | Send `x-latitude` / `x-longitude` headers for precise location tracking. If omitted, the backend falls back to IP-based city-level geolocation. |

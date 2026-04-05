@@ -2,21 +2,24 @@ import {
   IsEmail,
   IsNotEmpty,
   IsString,
-  MinLength,
-  MaxLength,
   IsOptional,
   IsBoolean,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsSixDigitPassword } from '../../common/validation/six-digit-password.decorator';
+
+function toBoolean(value: unknown): unknown {
+  if (value === true || value === 'true' || value === '1') return true;
+  if (value === false || value === 'false' || value === '0') return false;
+  return value;
+}
 
 export class RegisterDto {
   @IsEmail()
   @IsNotEmpty()
   email: string;
 
-  @IsString()
-  @IsNotEmpty()
-  @MinLength(6)
-  @MaxLength(64)
+  @IsSixDigitPassword()
   password: string;
 
   @IsString()
@@ -47,10 +50,15 @@ export class RegisterDto {
   @IsOptional()
   country?: string;
 
+  @Transform(({ value }) => toBoolean(value))
   @IsBoolean()
   @IsNotEmpty()
   agree_to_terms: boolean;
 
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    return toBoolean(value);
+  })
   @IsBoolean()
   @IsOptional()
   updates_opt_in?: boolean;

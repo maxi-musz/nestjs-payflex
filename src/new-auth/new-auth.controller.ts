@@ -1,4 +1,13 @@
-import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Post,
+  Req,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '@nestjs/passport';
 import { Request } from 'express';
 import { NewAuthService } from './new-auth.service';
@@ -43,7 +52,23 @@ export class NewAuthController {
     @Body() dto: RegisterDto,
     @Req() req: Request,
   ) {
-    return this.newAuthService.register(dto, req);
+    return this.newAuthService.register(dto, req, undefined);
+  }
+
+  /** Same as `register` but `multipart/form-data` with optional profile image field `file`. */
+  @Post('register-with-profile-picture')
+  @UseGuards(RateLimitGuard)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  async registerWithProfilePicture(
+    @Body() dto: RegisterDto,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Req() req: Request,
+  ) {
+    return this.newAuthService.register(dto, req, file);
   }
 
   @Post('verify-email-otp')

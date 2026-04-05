@@ -1,6 +1,16 @@
 import { NestFactory } from '@nestjs/core';
+import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationError } from 'class-validator';
+
+function flattenValidationErrors(errors: ValidationError[]): string[] {
+  const out: string[] = [];
+  for (const e of errors) {
+    if (e.constraints) out.push(...Object.values(e.constraints));
+    if (e.children?.length) out.push(...flattenValidationErrors(e.children));
+  }
+  return out;
+}
 import { json, urlencoded } from 'express';
 import * as colors from 'colors';
 import * as express from 'express';
@@ -28,13 +38,21 @@ async function bootstrap() {
     credentials: true,
   });
 
-  app.useGlobalPipes(new ValidationPipe({
-    whitelist: true,
-    transform: true,  // Enable auto-transformation
-    transformOptions: {
-      enableImplicitConversion: true,  // Convert dot notation to nested objects
-    },
-  }));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      transformOptions: {
+        enableImplicitConversion: true,
+      },
+      exceptionFactory: (errors: ValidationError[]) => {
+        const messages = flattenValidationErrors(errors);
+        return new BadRequestException(
+          messages.length ? messages.join('; ') : 'Validation failed',
+        );
+      },
+    }),
+  );
 
   // Global request logging interceptor
   app.useGlobalInterceptors(new RequestLoggerInterceptor());

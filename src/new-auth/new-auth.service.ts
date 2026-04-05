@@ -31,6 +31,11 @@ import type { CreateTransactionPinDto } from './dto/create-transaction-pin.dto';
 import type { UpdateTransactionPinDto } from './dto/update-transaction-pin.dto';
 import type { RefreshTokenDto } from './dto/refresh-token.dto';
 import * as colors from 'colors';
+import { StorageService } from '../storage/storage.service';
+import {
+  PROFILE_IMAGE_UPLOAD_OPTIONS,
+  validateProfileImageFile,
+} from '../common/upload/display-picture';
 
 @Injectable()
 export class NewAuthService {
@@ -44,6 +49,7 @@ export class NewAuthService {
     private readonly audit: AuditLogService,
     private readonly stats: StatsService,
     private readonly referralService: ReferralService,
+    private readonly storageService: StorageService,
   ) {}
 
   // ──────────────────────────────────────────────────────────
@@ -333,7 +339,11 @@ export class NewAuthService {
   // REGISTER (requires email verified via request-email-verification + verify-email-for-registration)
   // ──────────────────────────────────────────────────────────
 
-  async register(dto: RegisterDto, req: Request) {
+  async register(
+    dto: RegisterDto,
+    req: Request,
+    profilePicture?: Express.Multer.File,
+  ) {
     this.logger.log(`Register attempt for ${dto.email}`);
 
     const existingUser = await this.prisma.user.findUnique({
@@ -425,6 +435,27 @@ export class NewAuthService {
         isActive: true,
       },
     });
+
+    if (profilePicture?.buffer?.length) {
+      validateProfileImageFile(profilePicture);
+      try {
+        const uploaded = await this.storageService.upload(
+          profilePicture,
+          PROFILE_IMAGE_UPLOAD_OPTIONS,
+        );
+        await this.prisma.profileImage.create({
+          data: {
+            userId: newUser.id,
+            secure_url: uploaded.secure_url,
+            public_id: uploaded.public_id,
+          },
+        });
+      } catch (err: any) {
+        this.logger.warn(
+          `Registration profile picture storage failed for ${dto.email}: ${err?.message}`,
+        );
+      }
+    }
 
     this.stats.onUserCreated(tierWithOrderOne.tier);
 
