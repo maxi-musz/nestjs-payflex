@@ -35,7 +35,7 @@ async function bootstrap() {
   app.enableCors({
     origin: process.env.ALLOWED_ORIGINS || '*',
     methods: process.env.ALLOWED_METHODS || 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    credentials: true,
+    credentials: true, 
   });
 
   app.useGlobalPipes(
