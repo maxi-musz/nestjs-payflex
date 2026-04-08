@@ -12,6 +12,11 @@
 
 No query params, no payload. Returns all stats in a single call.
 
+**`data.wallets` semantics**
+
+- `total_balance_all_users` — live `SUM(wallet.current_balance)` (always matches stored wallet balances).
+- `total_funded_today` — sum of successful `transaction_history` rows with `transaction_type: deposit`, `credit_debit: credit`, and `status: success`, where `createdAt` falls on the **current calendar day in `Africa/Lagos`** (not UTC midnight).
+
 **Response:**
 ```json
 {

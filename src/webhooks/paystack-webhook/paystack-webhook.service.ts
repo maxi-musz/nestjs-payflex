@@ -6,6 +6,7 @@ import { PushNotificationService } from 'src/push-notification/push-notification
 import * as colors from 'colors/safe';
 import * as crypto from 'crypto';
 import { Logger } from '@nestjs/common';
+import { StatsService } from 'src/common/stats/stats.service';
 
 @Injectable()
 export class PaystackWebhookService {
@@ -15,6 +16,7 @@ export class PaystackWebhookService {
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
     private readonly pushNotificationService: PushNotificationService,
+    private readonly statsService: StatsService,
   ) {}
 
   /**
@@ -169,6 +171,10 @@ export class PaystackWebhookService {
           updatedAt: new Date(),
         }
       });
+
+      this.statsService.onWalletFunded(transactionAmount).catch((e) =>
+        this.logger.warn(`Stats onWalletFunded failed (charge.success ${reference}): ${e.message}`),
+      );
 
       this.logger.log(colors.green(`Successfully processed Paystack payment for reference: ${reference}`));
     } catch (error: any) {
@@ -423,6 +429,10 @@ export class PaystackWebhookService {
         // Return transaction record for use outside transaction
         return txRecord;
       });
+
+      this.statsService.onWalletFunded(amountInNgn).catch((e) =>
+        this.logger.warn(`Stats onWalletFunded failed (DVA ${reference}): ${e.message}`),
+      );
 
       // Verify wallet was actually updated (read fresh from DB)
       const verifyWallet = await this.prisma.wallet.findUnique({

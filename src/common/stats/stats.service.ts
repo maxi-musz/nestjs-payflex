@@ -12,6 +12,38 @@ export class StatsService {
     return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
   }
 
+  /** Start [inclusive] and end [exclusive] of the current calendar day in Africa/Lagos. */
+  private getLagosDayBounds(now: Date = new Date()): { start: Date; end: Date } {
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Lagos',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const parts = fmt.formatToParts(now);
+    const y = parts.find((p) => p.type === 'year')!.value;
+    const m = parts.find((p) => p.type === 'month')!.value;
+    const d = parts.find((p) => p.type === 'day')!.value;
+    const start = new Date(`${y}-${m}-${d}T00:00:00+01:00`);
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    return { start, end };
+  }
+
+  /** Date-only key (UTC midnight of Y-M-D) matching the Lagos calendar day for `now`. */
+  private lagosCalendarDateKeyForDb(now: Date = new Date()): Date {
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Lagos',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const parts = fmt.formatToParts(now);
+    const y = Number(parts.find((p) => p.type === 'year')!.value);
+    const mo = Number(parts.find((p) => p.type === 'month')!.value);
+    const day = Number(parts.find((p) => p.type === 'day')!.value);
+    return new Date(Date.UTC(y, mo - 1, day));
+  }
+
   // Safe wrapper: stats should never break business logic
   private async safe(label: string, fn: () => Promise<void>): Promise<void> {
     try {
@@ -375,8 +407,9 @@ export class StatsService {
     weekAgo.setDate(weekAgo.getDate() - 6); // last 7 days including today
     const startOfThisMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
     const startOfLastMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
+    const { start: lagosDayStart, end: lagosDayEnd } = this.getLagosDayBounds();
 
-    const [system, todayStats, weekStats, revenueThisMonth, revenueLastMonth, revenueAllTime] =
+    const [system, todayStats, weekStats, revenueThisMonth, revenueLastMonth, revenueAllTime, walletTotals, fundedTodayAgg] =
       await Promise.all([
         this.getOrCreateSystemStats(),
         this.prisma.dailyStats.findUnique({ where: { date: today } }),
@@ -393,6 +426,16 @@ export class StatsService {
         }),
         this.prisma.dailyStats.aggregate({
           _sum: { markup_revenue: true, vtpass_commission_revenue: true },
+        }),
+        this.prisma.wallet.aggregate({ _sum: { current_balance: true } }),
+        this.prisma.transactionHistory.aggregate({
+          where: {
+            transaction_type: 'deposit',
+            status: 'success',
+            credit_debit: 'credit',
+            createdAt: { gte: lagosDayStart, lt: lagosDayEnd },
+          },
+          _sum: { amount: true },
         }),
       ]);
 
@@ -429,8 +472,8 @@ export class StatsService {
         escalated_tickets: system.escalated_tickets,
       },
       wallets: {
-        total_balance_all_users: system.total_wallet_balance,
-        total_funded_today: daily.funded_amount,
+        total_balance_all_users: Number(walletTotals._sum.current_balance ?? 0),
+        total_funded_today: Number(fundedTodayAgg._sum.amount ?? 0),
       },
       kyc: {
         pending: system.pending_kyc,
@@ -560,6 +603,29 @@ export class StatsService {
         flagged_audit_logs: flaggedLogs,
         pending_transactions: pendingTx,
         tier_distribution: distribution,
+      },
+    });
+
+    const { start: lagosStart, end: lagosEnd } = this.getLagosDayBounds();
+    const fundedTodayAgg = await this.prisma.transactionHistory.aggregate({
+      where: {
+        transaction_type: 'deposit',
+        status: 'success',
+        credit_debit: 'credit',
+        createdAt: { gte: lagosStart, lt: lagosEnd },
+      },
+      _sum: { amount: true },
+    });
+    const fundedTodayTotal = Number(fundedTodayAgg._sum.amount ?? 0);
+    const lagosDateKey = this.lagosCalendarDateKeyForDb();
+    await this.prisma.dailyStats.upsert({
+      where: { date: lagosDateKey },
+      create: {
+        date: lagosDateKey,
+        funded_amount: fundedTodayTotal,
+      },
+      update: {
+        funded_amount: fundedTodayTotal,
       },
     });
 

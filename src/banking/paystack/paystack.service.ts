@@ -963,10 +963,13 @@ export class PaystackService implements OnModuleInit {
                 const balance_before = Number(wallet.current_balance);
                 const balance_after = balance_before - transferAmount;
 
-                // Debit wallet FIRST
+                // Debit wallet FIRST (track lifetime outflows on main wallet)
                 await tx.wallet.update({
                     where: { user_id: userPayload.sub },
-                    data: { current_balance: balance_after }
+                    data: {
+                        current_balance: balance_after,
+                        all_time_withdrawn: { increment: transferAmount },
+                    },
                 });
 
                 // Create pending transaction record
@@ -1066,7 +1069,10 @@ export class PaystackService implements OnModuleInit {
             if (shouldRefund) {
                 await this.prisma.wallet.update({
                     where: { user_id: userPayload.sub },
-                    data: { current_balance: { increment: transferAmount } }
+                    data: {
+                        current_balance: { increment: transferAmount },
+                        all_time_withdrawn: { decrement: transferAmount },
+                    },
                 });
                 
                 this.logger.log(`Refunded ${transferAmount} NGN to user wallet due to transfer failure`);
@@ -1132,7 +1138,10 @@ export class PaystackService implements OnModuleInit {
                     });
                     await tx.wallet.update({
                         where: { user_id: userPayload.sub },
-                        data: { current_balance: { increment: transferAmount } }
+                        data: {
+                            current_balance: { increment: transferAmount },
+                            all_time_withdrawn: { decrement: transferAmount },
+                        },
                     });
                 });
             } catch (updateError: any) {

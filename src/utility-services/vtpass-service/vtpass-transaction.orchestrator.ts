@@ -258,7 +258,12 @@ export class VtpassTransactionOrchestrator {
       this.statsService
         .onTransactionCreated(chargeAmount, finalStatus, markupValue || 0, vtpassCommission)
         .catch((e) => this.logger.warn(`[${serviceLabel}] Stats failed: ${e.message}`));
-      this.statsService.onWalletDebited(chargeAmount).catch((e) => this.logger.warn(`[${serviceLabel}] Stats debit failed: ${e.message}`));
+      // Match actual wallet movement: debit was split.walletCharge; refunds restore wallet so net debit is zero.
+      if (split.walletCharge > 0 && !shouldRefund) {
+        this.statsService
+          .onWalletDebited(split.walletCharge)
+          .catch((e) => this.logger.warn(`[${serviceLabel}] Stats wallet debit failed: ${e.message}`));
+      }
 
       // ── 11. Success rewards + callback ──────────────────────────────
       if (finalStatus === 'success') {

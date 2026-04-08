@@ -90,6 +90,13 @@ export class AdminTransactionsService {
 
     const where = this.buildWhereClause(query);
 
+    /** Merge list filters (search, user_id, status, dates, etc.) into every analytics query. */
+    const scoped = (extra: Prisma.TransactionHistoryWhereInput): Prisma.TransactionHistoryWhereInput => {
+      if (!extra || Object.keys(extra).length === 0) return where;
+      if (Object.keys(where).length === 0) return extra;
+      return { AND: [where, extra] };
+    };
+
     const sortableFields = ['createdAt', 'amount', 'status', 'transaction_type'];
     const sortBy = sortableFields.includes(query.sort_by || '') ? query.sort_by! : 'createdAt';
     const sortOrder = query.sort_order === 'asc' ? 'asc' : 'desc';
@@ -106,7 +113,6 @@ export class AdminTransactionsService {
     const [
       transactions,
       total,
-      totalAll,
       successVolume,
       byStatus,
       byType,
@@ -130,23 +136,25 @@ export class AdminTransactionsService {
         orderBy: { [sortBy]: sortOrder },
       }),
       this.prisma.transactionHistory.count({ where }),
-      this.prisma.transactionHistory.count(),
       this.prisma.transactionHistory.aggregate({
         _sum: { amount: true },
-        where: { status: 'success' },
+        where: scoped({ status: 'success' }),
       }),
       this.prisma.transactionHistory.groupBy({
         by: ['status'],
+        where,
         _count: true,
         _sum: { amount: true },
       }),
       this.prisma.transactionHistory.groupBy({
         by: ['transaction_type'],
+        where,
         _count: true,
         _sum: { amount: true },
       }),
       this.prisma.transactionHistory.groupBy({
         by: ['payment_channel'],
+        where,
         _count: true,
         _sum: { amount: true },
       }),
@@ -154,33 +162,43 @@ export class AdminTransactionsService {
         _avg: { amount: true },
         _min: { amount: true },
         _max: { amount: true },
-        where: { status: 'success' },
+        where: scoped({ status: 'success' }),
       }),
-      this.prisma.transactionHistory.count({ where: { createdAt: { gte: todayStart } } }),
-      this.prisma.transactionHistory.aggregate({
-        _sum: { amount: true },
-        where: { createdAt: { gte: todayStart }, status: 'success' },
-      }),
-      this.prisma.transactionHistory.count({ where: { createdAt: { gte: weekAgo } } }),
-      this.prisma.transactionHistory.aggregate({
-        _sum: { amount: true },
-        where: { createdAt: { gte: weekAgo }, status: 'success' },
-      }),
-      this.prisma.transactionHistory.count({ where: { createdAt: { gte: monthAgo } } }),
-      this.prisma.transactionHistory.aggregate({
-        _sum: { amount: true },
-        where: { createdAt: { gte: monthAgo }, status: 'success' },
+      this.prisma.transactionHistory.count({
+        where: scoped({ createdAt: { gte: todayStart } }),
       }),
       this.prisma.transactionHistory.aggregate({
         _sum: { amount: true },
-        where: { createdAt: { gte: prevMonthStart, lt: monthAgo }, status: 'success' },
+        where: scoped({ createdAt: { gte: todayStart }, status: 'success' }),
+      }),
+      this.prisma.transactionHistory.count({
+        where: scoped({ createdAt: { gte: weekAgo } }),
+      }),
+      this.prisma.transactionHistory.aggregate({
+        _sum: { amount: true },
+        where: scoped({ createdAt: { gte: weekAgo }, status: 'success' }),
+      }),
+      this.prisma.transactionHistory.count({
+        where: scoped({ createdAt: { gte: monthAgo } }),
+      }),
+      this.prisma.transactionHistory.aggregate({
+        _sum: { amount: true },
+        where: scoped({ createdAt: { gte: monthAgo }, status: 'success' }),
+      }),
+      this.prisma.transactionHistory.aggregate({
+        _sum: { amount: true },
+        where: scoped({
+          createdAt: { gte: prevMonthStart, lt: monthAgo },
+          status: 'success',
+        }),
       }),
       this.prisma.transactionHistory.aggregate({
         _sum: { markup_value: true },
+        where: scoped({}),
       }),
       this.prisma.transactionHistory.aggregate({
         _sum: { commission: true },
-        where: { status: 'success' },
+        where: scoped({ status: 'success' }),
       }),
     ]);
 
@@ -222,7 +240,7 @@ export class AdminTransactionsService {
     return new ApiResponseDto(true, 'Transactions fetched', {
       analytics: {
         overview: {
-          total_transactions: totalAll,
+          total_transactions: total,
           total_volume: successVolume._sum.amount ?? 0,
           total_revenue: totalRevenue._sum.markup_value ?? 0,
           vtpass_commission: totalCommission._sum.commission ?? 0,
