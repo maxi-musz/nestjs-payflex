@@ -25,6 +25,10 @@ const TX_LIST_SELECT = {
   commission: true,
   balance_before: true,
   balance_after: true,
+  cashback_balance_before: true,
+  cashback_used: true,
+  cashback_balance_after: true,
+  cashback_earned: true,
   electricity_token: true,
   transaction_number: true,
   transaction_reference: true,
@@ -51,11 +55,6 @@ const TX_DETAIL_SELECT = {
   markup_value: true,
   authorization_url: true,
   meta_data: true,
-  // Cashback tracking (VTpass purchases): before/used/after + earned on this tx
-  cashback_balance_before: true,
-  cashback_used: true,
-  cashback_balance_after: true,
-  cashback_earned: true,
 } satisfies Prisma.TransactionHistorySelect;
 
 const USER_BRIEF_SELECT = {
@@ -68,6 +67,8 @@ const USER_BRIEF_SELECT = {
   role: true,
   account_status: true,
   profile_image: { select: { secure_url: true } },
+  wallet: { select: { current_balance: true } },
+  cashbackWallet: { select: { current_balance: true } },
 } satisfies Prisma.UserSelect;
 
 @Injectable()

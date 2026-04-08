@@ -143,6 +143,8 @@ export const ACTION_CATEGORY_MAP: Record<AuditAction, AuditCategory> = {
   USER_ROLE_CHANGE: AuditCategory.ADMIN,
   USER_TIER_CHANGE: AuditCategory.ADMIN,
   USER_VIEW: AuditCategory.ADMIN,
+  ADMIN_USER_WALLET_ADJUST: AuditCategory.ADMIN,
+  ADMIN_USER_CASHBACK_ADJUST: AuditCategory.ADMIN,
   ADMIN_LOGIN: AuditCategory.ADMIN,
   AUDIT_LOG_VIEW: AuditCategory.ADMIN,
   AUDIT_LOG_FLAG: AuditCategory.ADMIN,
@@ -201,6 +203,8 @@ export const ACTION_SEVERITY_MAP: Partial<Record<AuditAction, AuditSeverity>> = 
   USER_SUSPEND: AuditSeverity.CRITICAL,
 
   // HIGH - Significant financial or security actions
+  ADMIN_USER_WALLET_ADJUST: AuditSeverity.HIGH,
+  ADMIN_USER_CASHBACK_ADJUST: AuditSeverity.HIGH,
   LOGIN_FAILED: AuditSeverity.HIGH,
   PASSWORD_VERIFY_FAILED: AuditSeverity.HIGH,
   TRANSFER_INITIATE: AuditSeverity.HIGH,
@@ -410,6 +414,8 @@ export const ACTION_DESCRIPTION_MAP: Record<AuditAction, string> = {
   USER_ROLE_CHANGE: 'User role changed',
   USER_TIER_CHANGE: 'User tier changed',
   USER_VIEW: 'User details viewed',
+  ADMIN_USER_WALLET_ADJUST: 'Admin adjusted user main wallet balance',
+  ADMIN_USER_CASHBACK_ADJUST: 'Admin adjusted user cashback wallet balance',
   ADMIN_LOGIN: 'Admin logged in',
   AUDIT_LOG_VIEW: 'Audit logs viewed',
   AUDIT_LOG_FLAG: 'Audit log entry flagged',

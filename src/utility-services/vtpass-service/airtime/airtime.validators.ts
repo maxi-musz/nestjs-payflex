@@ -15,6 +15,24 @@ export interface TransactionStatusResult {
 }
 
 /**
+ * VTpass sometimes returns numeric codes (e.g. 0 for success). Using `code || ''`
+ * turns 0 into '' and breaks status detection. Normalize to a comparable string.
+ */
+export function normalizeVtpassResponseCode(code: unknown): string {
+  if (code === null || code === undefined) return '';
+  if (typeof code === 'number') {
+    if (!Number.isFinite(code)) return '';
+    if (code === 0) return '000';
+    const n = Math.trunc(code);
+    const s = String(Math.abs(n));
+    return s.length <= 3 ? s.padStart(3, '0') : s;
+  }
+  const s = String(code).trim();
+  if (s === '0' || s === '0.0') return '000';
+  return s;
+}
+
+/**
  * Masks a key for logging purposes (shows first 8 and last 4 characters)
  */
 export function maskKey(key: string | undefined | null): string {
@@ -150,11 +168,13 @@ export function validateWalletBalance(
  * Determines transaction status from VTpass API response
  */
 export function determineTransactionStatus(
-  responseCode: string,
+  responseCode: unknown,
   txStatus: string,
   responseDescription: string,
   logger?: Logger,
 ): TransactionStatusResult {
+  const code = normalizeVtpassResponseCode(responseCode);
+
   // Determine transaction status based on VTpass documentation
   // Code "000" with status "delivered" = success
   // Code "000" with status "pending" or "initiated" = processing (keep as pending, don't refund)
@@ -164,18 +184,25 @@ export function determineTransactionStatus(
   // Other codes = check response_description for actual status
 
   const isProcessing =
-    (responseCode === '000' &&
-      (txStatus === 'pending' || txStatus === 'initiated')) ||
-    responseCode === '099' ||
+    (code === '000' && (txStatus === 'pending' || txStatus === 'initiated')) ||
+    code === '099' ||
     responseDescription.includes('PROCESSING') ||
     responseDescription.includes('PENDING');
 
-  const isDelivered = responseCode === '000' && txStatus === 'delivered';
-  const isReversed = responseCode === '040' || txStatus === 'reversed';
+  const isDelivered = code === '000' && txStatus === 'delivered';
+  const isReversed = code === '040' || txStatus === 'reversed';
+  // Merchant float / partner errors (e.g. 018 LOW WALLET BALANCE) — definitive failure, refund user
+  const descU = (responseDescription || '').toUpperCase();
+  const isMerchantInsufficient =
+    descU.includes('LOW WALLET') ||
+    descU.includes('LOW_WALLET') ||
+    descU.includes('ADEQUATE FUNDS') ||
+    code === '018';
   const isFailed =
-    responseCode === '016' ||
-    (responseCode === '000' && txStatus === 'failed') ||
-    (!isProcessing && !isDelivered && !isReversed && responseCode !== '000');
+    code === '016' ||
+    (code === '000' && txStatus === 'failed') ||
+    isMerchantInsufficient ||
+    (!isProcessing && !isDelivered && !isReversed && code !== '000' && code !== '');
 
   let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
   let shouldRefund = false;
@@ -192,8 +219,7 @@ export function determineTransactionStatus(
   } else if (isFailed) {
     finalStatus = 'failed';
     shouldRefund = true;
-    errorMessage =
-      responseDescription || `Transaction failed with code: ${responseCode}`;
+    errorMessage = responseDescription || `Transaction failed with code: ${code || 'unknown'}`;
     shouldThrow = true;
   } else if (isProcessing) {
     // Keep as pending - transaction is processing, don't refund yet

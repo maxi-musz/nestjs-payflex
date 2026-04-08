@@ -9,11 +9,12 @@ import { PushNotificationService } from 'src/push-notification/push-notification
 import { ReferralService } from 'src/referral/referral.service';
 import { FirstTxRewardService } from 'src/common/first-tx-reward/first-tx-reward.service';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
-import { AuditAction, AuditStatus } from '@prisma/client';
+import { AuditAction, AuditStatus, Prisma } from '@prisma/client';
 import { VtpassCredentialsHelper } from './vtpass-credentials.helper';
 import {
   determineTransactionStatus,
   generateVtpassRequestId,
+  normalizeVtpassResponseCode,
   shouldRequeryTransaction,
 } from './airtime/airtime.validators';
 import { toUserFriendlyVtpassPurchaseError } from './vtpass-user-facing-messages';
@@ -96,6 +97,91 @@ export class VtpassTransactionOrchestrator {
       throw new HttpException('VTpass secret key is not configured.', HttpStatus.INTERNAL_SERVER_ERROR);
     }
     return { 'api-key': apiKey, 'secret-key': secretKey, 'Content-Type': 'application/json' };
+  }
+
+  /**
+   * Idempotent failure refund: cron requery and the purchase handler can both run close together.
+   * Without a single flag + merge of meta_data, step 8 could wipe vtpass_failure_refund_applied and
+   * the purchase path would credit the wallet a second time.
+   */
+  private async applyVtpassFailureRefundOnce(
+    requestId: string,
+    userId: string,
+    walletRefund: number,
+    cashbackRefund: number,
+    serviceLabel: string,
+  ): Promise<{ appliedThisRun: boolean; wasAlreadyComplete: boolean }> {
+    const run = async (): Promise<{ appliedThisRun: boolean; wasAlreadyComplete: boolean }> => {
+      return this.prisma.$transaction(
+        async (tx) => {
+          const row = await tx.transactionHistory.findUnique({
+            where: { transaction_reference: requestId },
+          });
+          if (!row) {
+            this.logger.warn(`[${serviceLabel}] Refund skip: no tx row for ${requestId}`);
+            return { appliedThisRun: false, wasAlreadyComplete: false };
+          }
+          const meta = (row.meta_data as Record<string, unknown>) || {};
+          if (meta['vtpass_failure_refund_applied'] === true) {
+            this.logger.warn(
+              `[${serviceLabel}] Failure refund already applied for ${requestId}; skipping duplicate credit`,
+            );
+            return { appliedThisRun: false, wasAlreadyComplete: true };
+          }
+          if (walletRefund > 0) {
+            await tx.wallet.update({
+              where: { user_id: userId },
+              data: { current_balance: { increment: walletRefund } },
+            });
+          }
+          if (cashbackRefund > 0) {
+            try {
+              await tx.cashbackWallet.update({
+                where: { user_id: userId },
+                data: {
+                  current_balance: { increment: cashbackRefund },
+                  all_time_withdrawn: { decrement: cashbackRefund },
+                },
+              });
+            } catch (e: any) {
+              if (e?.code === 'P2025') {
+                this.logger.warn(`[${serviceLabel}] Cashback wallet missing for refund ${requestId}`);
+              } else {
+                throw e;
+              }
+            }
+          }
+          await tx.transactionHistory.update({
+            where: { transaction_reference: requestId },
+            data: {
+              meta_data: {
+                ...meta,
+                vtpass_failure_refund_applied: true,
+                vtpass_failure_wallet_refund_amount: walletRefund,
+                vtpass_failure_cashback_refund_amount: cashbackRefund,
+                vtpass_failure_refund_at: new Date().toISOString(),
+              } as any,
+            },
+          });
+          return { appliedThisRun: true, wasAlreadyComplete: false };
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 5000,
+          timeout: 15000,
+        },
+      );
+    };
+
+    try {
+      return await run();
+    } catch (e: any) {
+      if (e?.code === 'P2034') {
+        this.logger.warn(`[${serviceLabel}] Serializable retry for refund ${requestId}`);
+        return run();
+      }
+      throw e;
+    }
   }
 
   // ─── Main purchase flow ─────────────────────────────────────────────────
@@ -187,50 +273,66 @@ export class VtpassTransactionOrchestrator {
       const response = await axios.post(url, vtpassPayload, { headers: this.getPostHeaders() });
 
       const txContent = response.data?.content?.transactions || {};
-      const responseCode = response.data?.code || '';
+      const responseCodeStr = normalizeVtpassResponseCode(response.data?.code);
       const txStatus = txContent.status?.toLowerCase() || '';
       const responseDescription = response.data?.response_description || '';
 
       // ── 6. Determine status ─────────────────────────────────────────
       const { finalStatus, shouldRefund, shouldThrow, errorMessage } = determineTransactionStatus(
-        responseCode, txStatus, responseDescription, this.logger,
+        responseCodeStr,
+        txStatus,
+        responseDescription,
+        this.logger,
       );
 
       // ── 7. Service-specific response processing ─────────────────────
       const extraMeta: Record<string, any> = config.onProcessResponse?.(response.data) || {};
 
-      // ── 8. Update tx record ─────────────────────────────────────────
+      const commissionFromVtpass =
+        typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || 0;
+      const commissionPersist = finalStatus === 'success' ? commissionFromVtpass : 0;
+
+      // ── 8. Update tx record (merge DB meta — never clobber cron/refund flags) ──
+      const latestRow = await this.prisma.transactionHistory.findUnique({
+        where: { transaction_reference: requestId },
+        select: { meta_data: true },
+      });
+      const prevMeta = (latestRow?.meta_data as Record<string, any>) || {};
+
       await this.prisma.transactionHistory.update({
         where: { transaction_reference: requestId },
         data: {
           status: finalStatus,
           transaction_number: txContent.transactionId?.toString() || null,
-          commission: typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || 0,
+          commission: commissionPersist,
           // Persist selected critical fields into dedicated columns when present in extraMeta
           ...(typeof (extraMeta as any).electricity_token === 'string' && (extraMeta as any).electricity_token
             ? { electricity_token: (extraMeta as any).electricity_token }
             : {}),
           meta_data: {
-            ...(createdTx.meta_data as any),
+            ...prevMeta,
             vtpass_response: response.data,
             vtpass_status: txStatus,
-            vtpass_code: responseCode,
+            vtpass_code: responseCodeStr,
             ...extraMeta,
           },
         },
       });
 
-      // ── 9. Refund on definitive failure ─────────────────────────────
+      // ── 9. Refund on definitive failure (idempotent) ───────────────
       if (shouldRefund) {
         this.logger.warn(`[${serviceLabel}] Refund required: wallet=${split.walletCharge}, cashback=${split.cashbackCharge}, status=${finalStatus}`);
-        if (split.walletCharge > 0) {
-          await this.prisma.wallet.update({ where: { user_id: userId }, data: { current_balance: { increment: split.walletCharge } } });
-          walletRefundedInTryBlock = true;
-        }
-        if (split.cashbackCharge > 0) {
-          await this.cashbackService.refundCashback(userId, split.cashbackCharge);
-          cashbackRefundedInTryBlock = true;
-        }
+        const refundResult = await this.applyVtpassFailureRefundOnce(
+          requestId,
+          userId,
+          split.walletCharge,
+          split.cashbackCharge,
+          serviceLabel,
+        );
+        walletRefundedInTryBlock =
+          split.walletCharge > 0 && (refundResult.appliedThisRun || refundResult.wasAlreadyComplete);
+        cashbackRefundedInTryBlock =
+          split.cashbackCharge > 0 && (refundResult.appliedThisRun || refundResult.wasAlreadyComplete);
         if (shouldThrow) {
           const msg = config.humanizeError
             ? config.humanizeError(errorMessage)
@@ -251,10 +353,7 @@ export class VtpassTransactionOrchestrator {
         )
         .catch((e) => this.logger.warn(`[${serviceLabel}] Audit log failed: ${e.message}`));
 
-      const vtpassCommission =
-        typeof txContent.commission === 'number'
-          ? txContent.commission
-          : Number(txContent.commission) || 0;
+      const vtpassCommission = finalStatus === 'success' ? commissionFromVtpass : 0;
       this.statsService
         .onTransactionCreated(chargeAmount, finalStatus, markupValue || 0, vtpassCommission)
         .catch((e) => this.logger.warn(`[${serviceLabel}] Stats failed: ${e.message}`));
@@ -323,19 +422,23 @@ export class VtpassTransactionOrchestrator {
         };
 
         if (existingForUpdate) {
-          if (walletRefundedInTryBlock) {
+          const curMeta = (existingForUpdate.meta_data as Record<string, unknown>) || {};
+          const failureRefundDone = curMeta['vtpass_failure_refund_applied'] === true;
+          if (walletRefundedInTryBlock || failureRefundDone) {
             await this.prisma.transactionHistory.update({
               where: { transaction_reference: requestId },
-              data: { status: 'failed', meta_data: { ...(existingForUpdate.meta_data as any), ...errorMeta } },
+              data: { status: 'failed', meta_data: { ...curMeta, ...errorMeta } },
             });
-            this.logger.warn(`[${serviceLabel}] catch: VTpass indicated failed. Tx marked failed, no refund (already done).`);
+            this.logger.warn(
+              `[${serviceLabel}] catch: Tx marked failed (refund already applied in try, requery, or parallel path).`,
+            );
           } else {
             await this.prisma.transactionHistory.update({
               where: { transaction_reference: requestId },
               data: {
                 status: 'pending',
                 meta_data: {
-                  ...(existingForUpdate.meta_data as any),
+                  ...curMeta,
                   ...errorMeta,
                   catch_block_reason: 'No definitive VTpass response. Kept pending for requery.',
                 },
@@ -423,11 +526,27 @@ export class VtpassTransactionOrchestrator {
 
       const response = await axios.post(url, { request_id: requestId }, { headers: this.getPostHeaders() });
       const txContent = response.data?.content?.transactions || {};
-      const responseCode = response.data?.code || '';
+      const responseCodeStr = normalizeVtpassResponseCode(response.data?.code);
       const txStatus = txContent.status?.toLowerCase() || '';
       const responseDescription = response.data?.response_description || '';
 
-      const { finalStatus, shouldRefund } = determineTransactionStatus(responseCode, txStatus, responseDescription, this.logger);
+      const { finalStatus, shouldRefund } = determineTransactionStatus(
+        responseCodeStr,
+        txStatus,
+        responseDescription,
+        this.logger,
+      );
+
+      const newCommission =
+        finalStatus === 'success'
+          ? typeof txContent.commission === 'number'
+            ? txContent.commission
+            : Number(txContent.commission) || 0
+          : finalStatus === 'failed'
+            ? 0
+            : typeof transaction.commission === 'number'
+              ? transaction.commission
+              : Number(transaction.commission) || 0;
 
       await this.prisma.$transaction(async (tx) => {
         await tx.transactionHistory.update({
@@ -435,24 +554,36 @@ export class VtpassTransactionOrchestrator {
           data: {
             status: finalStatus,
             transaction_number: txContent.transactionId?.toString() || transaction.transaction_number,
-            commission: typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || transaction.commission || 0,
-            meta_data: { ...metaData, vtpass_response: response.data, vtpass_status: txStatus, vtpass_code: responseCode, requery_count: requeryCount + 1, last_requery_at: new Date().toISOString() },
+            commission: newCommission,
+            meta_data: {
+              ...metaData,
+              vtpass_response: response.data,
+              vtpass_status: txStatus,
+              vtpass_code: responseCodeStr,
+              requery_count: requeryCount + 1,
+              last_requery_at: new Date().toISOString(),
+            },
           },
         });
-
-        if (shouldRefund && transaction.status !== 'failed') {
-          const walletRefund = typeof metaData.wallet_charged === 'number' ? metaData.wallet_charged : Number(transaction.amount || 0);
-          const cashbackRefund = typeof metaData.cashback_used === 'number' ? metaData.cashback_used : 0;
-          if (walletRefund > 0) {
-            await tx.wallet.update({ where: { user_id: transaction.user_id }, data: { current_balance: { increment: walletRefund } } });
-            this.logger.log(`[Cron][${serviceLabel}] Refunded ₦${walletRefund} to wallet for ${transaction.user_id}`);
-          }
-          if (cashbackRefund > 0) {
-            await this.cashbackService.refundCashback(transaction.user_id, cashbackRefund);
-            this.logger.log(`[Cron][${serviceLabel}] Refunded ₦${cashbackRefund} to cashback for ${transaction.user_id}`);
-          }
-        }
       });
+
+      if (shouldRefund && finalStatus === 'failed') {
+        const walletRefund =
+          typeof metaData.wallet_charged === 'number' ? metaData.wallet_charged : Number(transaction.amount || 0);
+        const cashbackRefund = typeof metaData.cashback_used === 'number' ? metaData.cashback_used : 0;
+        const refundRes = await this.applyVtpassFailureRefundOnce(
+          requestId,
+          transaction.user_id,
+          walletRefund,
+          cashbackRefund,
+          `[Cron][${serviceLabel}]`,
+        );
+        if (refundRes.appliedThisRun) {
+          this.logger.log(
+            `[Cron][${serviceLabel}] Refunded wallet=${walletRefund} cashback=${cashbackRefund} for ${transaction.user_id}`,
+          );
+        }
+      }
 
       if (finalStatus !== 'pending') {
         const auditStatusEnum = finalStatus === 'success' ? AuditStatus.SUCCESS : AuditStatus.FAILURE;
@@ -464,7 +595,12 @@ export class VtpassTransactionOrchestrator {
           .catch((e) => this.logger.warn(`[Cron][${serviceLabel}] Audit failed: ${e.message}`));
 
         const markupVal = typeof transaction.markup_value === 'number' ? transaction.markup_value : 0;
-        const commissionVal = typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || 0;
+        const commissionVal =
+          finalStatus === 'success'
+            ? typeof txContent.commission === 'number'
+              ? txContent.commission
+              : Number(txContent.commission) || 0
+            : 0;
         this.statsService.onTransactionStatusChanged('pending', finalStatus, transaction.amount || 0, markupVal, commissionVal)
           .catch((e) => this.logger.warn(`[Cron][${serviceLabel}] Stats failed: ${e.message}`));
 

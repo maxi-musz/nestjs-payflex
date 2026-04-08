@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Post,
   Put,
   Param,
   Query,
@@ -18,6 +19,7 @@ import {
   UpdateUserRoleDto,
   UpdateUserTierDto,
 } from './dto/update-user-status.dto';
+import { AdjustUserBalancesDto } from './dto/adjust-user-balances.dto';
 
 @UseGuards(AuthGuard('jwt'))
 @Controller('unified-admin/users')
@@ -70,5 +72,15 @@ export class AdminUsersController {
   ) {
     this.assertAdmin(req.user);
     return this.usersService.updateUserTier(id, dto, req.user, req);
+  }
+
+  @Post(':id/balances/adjust')
+  adjustUserBalances(
+    @Param('id') id: string,
+    @Body() dto: AdjustUserBalancesDto,
+    @Req() req: any,
+  ) {
+    this.assertAdmin(req.user);
+    return this.usersService.adjustUserBalances(id, dto, req.user, req);
   }
 }

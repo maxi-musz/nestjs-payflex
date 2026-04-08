@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditLogService } from '../../../common/audit-log/audit-log.service';
 import { StatsService } from '../../../common/stats/stats.service';
@@ -9,6 +14,7 @@ import {
   UpdateUserRoleDto,
   UpdateUserTierDto,
 } from './dto/update-user-status.dto';
+import { AdjustUserBalancesDto } from './dto/adjust-user-balances.dto';
 import { AuditAction, AuditStatus, Prisma } from '@prisma/client';
 
 const USER_LIST_SELECT = {
@@ -48,6 +54,15 @@ const USER_DETAIL_SELECT = {
   ...USER_LIST_SELECT,
   address: true,
   wallet: { select: { id: true, current_balance: true, all_time_fuunding: true, all_time_withdrawn: true, isActive: true } },
+  cashbackWallet: {
+    select: {
+      id: true,
+      current_balance: true,
+      all_time_earned: true,
+      all_time_withdrawn: true,
+      isActive: true,
+    },
+  },
   kyc_verification: true,
   referral_code: true,
   is_friendly: true,
@@ -391,5 +406,141 @@ export class AdminUsersService {
     );
 
     return new ApiResponseDto(true, 'User tier updated successfully', updated);
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // ADJUST BALANCES — Main wallet + cashback (admin)
+  // ──────────────────────────────────────────────────────────
+
+  async adjustUserBalances(
+    userId: string,
+    dto: AdjustUserBalancesDto,
+    adminUser: { sub: string },
+    req: any,
+  ) {
+    const walletDelta = dto.wallet_delta ?? 0;
+    const cashbackDelta = dto.cashback_delta ?? 0;
+
+    if (walletDelta === 0 && cashbackDelta === 0) {
+      throw new BadRequestException(
+        'Provide at least one non-zero wallet_delta or cashback_delta',
+      );
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        wallet: { select: { id: true, current_balance: true } },
+        cashbackWallet: { select: { id: true, current_balance: true } },
+      },
+    });
+
+    if (!user) throw new NotFoundException('User not found');
+
+    if (walletDelta !== 0 && !user.wallet) {
+      throw new BadRequestException('User has no main wallet');
+    }
+
+    const walletBefore = user.wallet?.current_balance ?? 0;
+    const cashbackBefore = user.cashbackWallet?.current_balance ?? 0;
+
+    const { walletAfter, cashbackAfter } = await this.prisma.$transaction(async (tx) => {
+      let walletAfter = walletBefore;
+      let cashbackAfter = cashbackBefore;
+
+      if (walletDelta !== 0 && user.wallet) {
+        const next = user.wallet.current_balance + walletDelta;
+        if (next < 0) {
+          throw new BadRequestException(
+            'Adjustment would make main wallet balance negative',
+          );
+        }
+        await tx.wallet.update({
+          where: { id: user.wallet.id },
+          data: { current_balance: next },
+        });
+        walletAfter = next;
+      }
+
+      if (cashbackDelta !== 0) {
+        if (!user.cashbackWallet) {
+          if (cashbackDelta < 0) {
+            throw new BadRequestException(
+              'User has no cashback wallet; cannot debit cashback',
+            );
+          }
+          await tx.cashbackWallet.create({
+            data: { user_id: userId, current_balance: cashbackDelta },
+          });
+          cashbackAfter = cashbackDelta;
+        } else {
+          const next = user.cashbackWallet.current_balance + cashbackDelta;
+          if (next < 0) {
+            throw new BadRequestException(
+              'Adjustment would make cashback balance negative',
+            );
+          }
+          await tx.cashbackWallet.update({
+            where: { id: user.cashbackWallet.id },
+            data: { current_balance: next },
+          });
+          cashbackAfter = next;
+        }
+      }
+
+      return { walletAfter, cashbackAfter };
+    });
+
+    if (walletDelta !== 0) {
+      this.auditLogService.logAdmin(
+        AuditAction.ADMIN_USER_WALLET_ADJUST,
+        AuditStatus.SUCCESS,
+        adminUser.sub,
+        req,
+        {
+          description: `Admin adjusted main wallet for ${user.email}: delta ${walletDelta}`,
+          resource_type: 'User',
+          resource_id: userId,
+          metadata: {
+            target_user_email: user.email,
+            delta: walletDelta,
+            reason: dto.reason,
+          },
+          balance_before: walletBefore,
+          balance_after: walletAfter,
+          amount: Math.abs(walletDelta),
+        },
+      );
+    }
+
+    if (cashbackDelta !== 0) {
+      this.auditLogService.logAdmin(
+        AuditAction.ADMIN_USER_CASHBACK_ADJUST,
+        AuditStatus.SUCCESS,
+        adminUser.sub,
+        req,
+        {
+          description: `Admin adjusted cashback for ${user.email}: delta ${cashbackDelta}`,
+          resource_type: 'User',
+          resource_id: userId,
+          metadata: {
+            target_user_email: user.email,
+            delta: cashbackDelta,
+            reason: dto.reason,
+          },
+          balance_before: cashbackBefore,
+          balance_after: cashbackAfter,
+          amount: Math.abs(cashbackDelta),
+        },
+      );
+    }
+
+    return new ApiResponseDto(true, 'Balances updated', {
+      user_id: userId,
+      wallet: { balance_before: walletBefore, balance_after: walletAfter },
+      cashback: { balance_before: cashbackBefore, balance_after: cashbackAfter },
+    });
   }
 }

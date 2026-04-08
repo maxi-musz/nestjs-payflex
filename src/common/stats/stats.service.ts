@@ -111,7 +111,7 @@ export class StatsService {
    * Call when a VTpass (or other provider) transaction is created.
    * @param amount - Transaction amount (customer-facing).
    * @param status - 'success' | 'failed' | 'pending'.
-   * @param markupValue - Our margin (Smipay price − VTpass price); added to markup_revenue on success.
+   * @param markupValue - Our margin (Smipay price − VTpass price); added to markup_revenue only when status is success.
    * @param vtpassCommission - Commission from VTpass response (content.transactions.commission); added to vtpass_commission_revenue on success.
    */
   async onTransactionCreated(
@@ -129,7 +129,7 @@ export class StatsService {
       } else if (status === 'failed') {
         dailyUpdate.transactions_failed = { increment: 1 };
       }
-      if (markupValue != null && markupValue > 0) {
+      if (status === 'success' && markupValue != null && markupValue > 0) {
         dailyUpdate.markup_revenue = { increment: markupValue };
       }
       if (status === 'success' && vtpassCommission != null && vtpassCommission > 0) {
@@ -143,7 +143,7 @@ export class StatsService {
           transactions_volume: status === 'success' ? amount : 0,
           transactions_success: status === 'success' ? 1 : 0,
           transactions_failed: status === 'failed' ? 1 : 0,
-          markup_revenue: markupValue != null && markupValue > 0 ? markupValue : 0,
+          markup_revenue: status === 'success' && markupValue != null && markupValue > 0 ? markupValue : 0,
           vtpass_commission_revenue:
             status === 'success' && vtpassCommission != null && vtpassCommission > 0 ? vtpassCommission : 0,
         },
@@ -183,7 +183,7 @@ export class StatsService {
         dailyUpdate.transactions_failed = { increment: 1 };
         systemUpdate.pending_transactions = { decrement: 1 };
       }
-      if (markupValue != null && markupValue > 0) {
+      if (oldStatus === 'pending' && newStatus === 'success' && markupValue != null && markupValue > 0) {
         dailyUpdate.markup_revenue = { increment: markupValue };
       }
       if (oldStatus === 'pending' && newStatus === 'success' && commission != null && commission > 0) {
