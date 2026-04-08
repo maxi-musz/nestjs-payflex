@@ -2,7 +2,8 @@
 # Full logical backup of the Postgres database (Neon-compatible).
 # Usage (from backend/):
 #   export DATABASE_URL='postgresql://...'
-#   ./scripts/backup-database.sh
+#   ./scripts/backup-database.sh              # timestamped file
+#   ./scripts/backup-database.sh --latest     # overwrites backups/neondb-LATEST-FULL.sql
 #
 # If DATABASE_URL is unset, reads the first uncommented DATABASE_URL= line from .env
 # (shell "source .env" breaks when the URL contains &).
@@ -39,7 +40,12 @@ fi
 
 mkdir -p backups
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-OUT="backups/neondb-backup-${STAMP}.sql"
-echo "Writing ${OUT} ..."
+if [[ "${1:-}" == "--latest" ]]; then
+  OUT="backups/neondb-LATEST-FULL.sql"
+  echo "Writing ${OUT} (overwrites previous latest) ..."
+else
+  OUT="backups/neondb-backup-${STAMP}.sql"
+  echo "Writing ${OUT} ..."
+fi
 pg_dump "$DATABASE_URL" --no-owner --no-acl --format=plain --file="$OUT"
 echo "Done: $(wc -c < "$OUT") bytes"

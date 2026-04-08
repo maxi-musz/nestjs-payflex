@@ -126,6 +126,22 @@ export class VtpassTransactionOrchestrator {
             this.logger.warn(
               `[${serviceLabel}] Failure refund already applied for ${requestId}; skipping duplicate credit`,
             );
+            // Wallet was restored earlier, but the row may still show post-debit snapshots; align for admin / APIs.
+            const wRef = Number(meta['vtpass_failure_wallet_refund_amount']) || 0;
+            const cRef = Number(meta['vtpass_failure_cashback_refund_amount']) || 0;
+            const patch: { balance_after?: number; cashback_balance_after?: number } = {};
+            if (wRef > 0 && row.balance_before != null) {
+              patch.balance_after = Number(row.balance_before);
+            }
+            if (cRef > 0 && row.cashback_balance_before != null) {
+              patch.cashback_balance_after = Number(row.cashback_balance_before);
+            }
+            if (Object.keys(patch).length > 0) {
+              await tx.transactionHistory.update({
+                where: { transaction_reference: requestId },
+                data: patch,
+              });
+            }
             return { appliedThisRun: false, wasAlreadyComplete: true };
           }
           if (walletRefund > 0) {
@@ -161,6 +177,13 @@ export class VtpassTransactionOrchestrator {
                 vtpass_failure_cashback_refund_amount: cashbackRefund,
                 vtpass_failure_refund_at: new Date().toISOString(),
               } as any,
+              // Pending row stored post-debit snapshots; after refund the net effect on wallet is zero — match pre-debit.
+              ...(walletRefund > 0 && row.balance_before != null
+                ? { balance_after: Number(row.balance_before) }
+                : {}),
+              ...(cashbackRefund > 0 && row.cashback_balance_before != null
+                ? { cashback_balance_after: Number(row.cashback_balance_before) }
+                : {}),
             },
           });
           return { appliedThisRun: true, wasAlreadyComplete: false };
@@ -343,12 +366,23 @@ export class VtpassTransactionOrchestrator {
 
       // ── 10. Audit + Stats ───────────────────────────────────────────
       const auditStatusEnum = finalStatus === 'success' ? AuditStatus.SUCCESS : finalStatus === 'failed' ? AuditStatus.FAILURE : AuditStatus.PENDING;
+      const mainWalletRestoredAfterFailure =
+        finalStatus === 'failed' && shouldRefund && split.walletCharge > 0;
+      const auditBalanceAfter = mainWalletRestoredAfterFailure
+        ? Number(createdTx.balance_before)
+        : Number(createdTx.balance_after);
       this.auditLogService
         .logTransaction(
           (finalStatus === 'failed' ? auditFailAction : auditAction) as AuditAction,
           auditStatusEnum,
           null,
-          { amount: chargeAmount, currency: 'NGN', balance_before: Number(createdTx.balance_before), balance_after: Number(createdTx.balance_after), transaction_ref: requestId },
+          {
+            amount: chargeAmount,
+            currency: 'NGN',
+            balance_before: Number(createdTx.balance_before),
+            balance_after: auditBalanceAfter,
+            transaction_ref: requestId,
+          },
           { user_id: userId, resource_type: 'TransactionHistory', resource_id: createdTx.id, metadata: auditMetadata || {} },
         )
         .catch((e) => this.logger.warn(`[${serviceLabel}] Audit log failed: ${e.message}`));
@@ -394,7 +428,10 @@ export class VtpassTransactionOrchestrator {
       }
 
       // ── 12. Format response ─────────────────────────────────────────
-      const formattedResponse: any = { id: createdTx.id, ...response.data, wallet_balance: Number(createdTx.balance_after) };
+      const walletBalanceForResponse = mainWalletRestoredAfterFailure
+        ? Number(createdTx.balance_before)
+        : Number(createdTx.balance_after);
+      const formattedResponse: any = { id: createdTx.id, ...response.data, wallet_balance: walletBalanceForResponse };
       if (config.onEnrichResponse) {
         Object.assign(formattedResponse, config.onEnrichResponse(response.data, extraMeta));
       }

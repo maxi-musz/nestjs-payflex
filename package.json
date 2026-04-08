@@ -21,8 +21,10 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "db:backup": "bash scripts/backup-database.sh",
+    "db:backup:latest": "bash scripts/backup-database.sh --latest",
     "script:vtpass-audit": "ts-node --transpile-only scripts/vtpass-refund-anomaly.ts audit",
-    "script:vtpass-recover": "ts-node --transpile-only scripts/vtpass-refund-anomaly.ts recover"
+    "script:vtpass-recover": "ts-node --transpile-only scripts/vtpass-refund-anomaly.ts recover",
+    "script:wallet-reconcile": "ts-node --transpile-only scripts/wallet-ledger-reconcile.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.996.0",
