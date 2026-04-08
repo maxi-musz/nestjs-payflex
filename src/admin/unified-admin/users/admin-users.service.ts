@@ -36,6 +36,7 @@ const USER_LIST_SELECT = {
   tier: { select: { id: true, tier: true, name: true } },
   profile_image: { select: { secure_url: true } },
   kyc_verification: { select: { status: true, is_verified: true, bvn_verified: true, id_type: true } },
+  wallet: { select: { current_balance: true, all_time_fuunding: true } },
   auditLogs: {
     select: {
       action: true,
@@ -158,6 +159,7 @@ export class AdminUsersService {
       newUsersThisMonth,
       newUsersPrevMonth,
       recentSignups,
+      mainWalletSum,
     ] = await Promise.all([
       this.prisma.user.findMany({
         where,
@@ -190,6 +192,9 @@ export class AdminUsersService {
         orderBy: { createdAt: 'desc' },
         take: 5,
       }),
+      this.prisma.wallet.aggregate({
+        _sum: { current_balance: true },
+      }),
     ]);
 
     // Resolve tier names
@@ -219,6 +224,8 @@ export class AdminUsersService {
       return { tier: info?.tier ?? 'UNKNOWN', name: info?.name ?? 'Unknown', count: t._count };
     });
 
+    const totalMainWalletBalance = Number(mainWalletSum._sum.current_balance ?? 0);
+
     // Map users with last_activity
     const users = rawUsers.map(({ auditLogs, ...user }) => ({
       ...user,
@@ -240,6 +247,7 @@ export class AdminUsersService {
           total_users: totalUsers,
           active_users: activeUsers,
           suspended_users: suspendedUsers,
+          total_main_wallet_balance: totalMainWalletBalance,
         },
         growth: {
           new_today: newUsersToday,
@@ -409,7 +417,7 @@ export class AdminUsersService {
   }
 
   // ──────────────────────────────────────────────────────────
-  // ADJUST BALANCES — Main wallet + cashback (admin)
+  // ADJUST BALANCES — Main wallet + cashback (admin, explicit values)
   // ──────────────────────────────────────────────────────────
 
   async adjustUserBalances(
@@ -418,12 +426,41 @@ export class AdminUsersService {
     adminUser: { sub: string },
     req: any,
   ) {
-    const walletDelta = dto.wallet_delta ?? 0;
-    const cashbackDelta = dto.cashback_delta ?? 0;
+    const walletPatch: {
+      current_balance?: number;
+      all_time_fuunding?: number;
+      all_time_withdrawn?: number;
+    } = {};
+    if (dto.wallet_current_balance !== undefined && dto.wallet_current_balance !== null) {
+      walletPatch.current_balance = dto.wallet_current_balance;
+    }
+    if (dto.wallet_all_time_fuunding !== undefined && dto.wallet_all_time_fuunding !== null) {
+      walletPatch.all_time_fuunding = dto.wallet_all_time_fuunding;
+    }
+    if (dto.wallet_all_time_withdrawn !== undefined && dto.wallet_all_time_withdrawn !== null) {
+      walletPatch.all_time_withdrawn = dto.wallet_all_time_withdrawn;
+    }
 
-    if (walletDelta === 0 && cashbackDelta === 0) {
+    const cashbackPatch: {
+      current_balance?: number;
+      all_time_earned?: number;
+      all_time_withdrawn?: number;
+    } = {};
+    if (dto.cashback_current_balance !== undefined && dto.cashback_current_balance !== null) {
+      cashbackPatch.current_balance = dto.cashback_current_balance;
+    }
+    if (dto.cashback_all_time_earned !== undefined && dto.cashback_all_time_earned !== null) {
+      cashbackPatch.all_time_earned = dto.cashback_all_time_earned;
+    }
+    if (dto.cashback_all_time_withdrawn !== undefined && dto.cashback_all_time_withdrawn !== null) {
+      cashbackPatch.all_time_withdrawn = dto.cashback_all_time_withdrawn;
+    }
+
+    const anyWallet = Object.keys(walletPatch).length > 0;
+    const anyCashback = Object.keys(cashbackPatch).length > 0;
+    if (!anyWallet && !anyCashback) {
       throw new BadRequestException(
-        'Provide at least one non-zero wallet_delta or cashback_delta',
+        'Provide at least one wallet or cashback field to update',
       );
     }
 
@@ -432,115 +469,171 @@ export class AdminUsersService {
       select: {
         id: true,
         email: true,
-        wallet: { select: { id: true, current_balance: true } },
-        cashbackWallet: { select: { id: true, current_balance: true } },
+        wallet: {
+          select: {
+            id: true,
+            current_balance: true,
+            all_time_fuunding: true,
+            all_time_withdrawn: true,
+          },
+        },
+        cashbackWallet: {
+          select: {
+            id: true,
+            current_balance: true,
+            all_time_earned: true,
+            all_time_withdrawn: true,
+          },
+        },
       },
     });
 
     if (!user) throw new NotFoundException('User not found');
 
-    if (walletDelta !== 0 && !user.wallet) {
-      throw new BadRequestException('User has no main wallet');
+    if (anyWallet && !user.wallet) {
+      throw new BadRequestException('User has no main wallet; cannot update wallet fields');
     }
 
-    const walletBefore = user.wallet?.current_balance ?? 0;
-    const cashbackBefore = user.cashbackWallet?.current_balance ?? 0;
-
-    const { walletAfter, cashbackAfter } = await this.prisma.$transaction(async (tx) => {
-      let walletAfter = walletBefore;
-      let cashbackAfter = cashbackBefore;
-
-      if (walletDelta !== 0 && user.wallet) {
-        const next = user.wallet.current_balance + walletDelta;
-        if (next < 0) {
-          throw new BadRequestException(
-            'Adjustment would make main wallet balance negative',
-          );
+    const wBefore = user.wallet
+      ? {
+          current_balance: user.wallet.current_balance,
+          all_time_fuunding: user.wallet.all_time_fuunding,
+          all_time_withdrawn: user.wallet.all_time_withdrawn,
         }
+      : null;
+    const cBefore = user.cashbackWallet
+      ? {
+          current_balance: user.cashbackWallet.current_balance,
+          all_time_earned: user.cashbackWallet.all_time_earned,
+          all_time_withdrawn: user.cashbackWallet.all_time_withdrawn,
+        }
+      : {
+          current_balance: 0,
+          all_time_earned: 0,
+          all_time_withdrawn: 0,
+        };
+
+    if (walletPatch.current_balance !== undefined && walletPatch.current_balance < 0) {
+      throw new BadRequestException('Main wallet current_balance cannot be negative');
+    }
+    if (cashbackPatch.current_balance !== undefined && cashbackPatch.current_balance < 0) {
+      throw new BadRequestException('Cashback current_balance cannot be negative');
+    }
+
+    const { wAfter, cAfter } = await this.prisma.$transaction(async (tx) => {
+      let wAfter = wBefore;
+      if (anyWallet && user.wallet) {
         await tx.wallet.update({
           where: { id: user.wallet.id },
-          data: { current_balance: next },
+          data: walletPatch,
         });
-        walletAfter = next;
+        wAfter = {
+          current_balance:
+            walletPatch.current_balance ?? user.wallet.current_balance,
+          all_time_fuunding:
+            walletPatch.all_time_fuunding ?? user.wallet.all_time_fuunding,
+          all_time_withdrawn:
+            walletPatch.all_time_withdrawn ?? user.wallet.all_time_withdrawn,
+        };
       }
 
-      if (cashbackDelta !== 0) {
+      let cAfter = cBefore;
+      if (anyCashback) {
         if (!user.cashbackWallet) {
-          if (cashbackDelta < 0) {
-            throw new BadRequestException(
-              'User has no cashback wallet; cannot debit cashback',
-            );
-          }
           await tx.cashbackWallet.create({
-            data: { user_id: userId, current_balance: cashbackDelta },
+            data: {
+              user_id: userId,
+              current_balance:
+                cashbackPatch.current_balance ?? cBefore.current_balance,
+              all_time_earned:
+                cashbackPatch.all_time_earned ?? cBefore.all_time_earned,
+              all_time_withdrawn:
+                cashbackPatch.all_time_withdrawn ?? cBefore.all_time_withdrawn,
+            },
           });
-          cashbackAfter = cashbackDelta;
+          cAfter = {
+            current_balance:
+              cashbackPatch.current_balance ?? cBefore.current_balance,
+            all_time_earned: cashbackPatch.all_time_earned ?? cBefore.all_time_earned,
+            all_time_withdrawn:
+              cashbackPatch.all_time_withdrawn ?? cBefore.all_time_withdrawn,
+          };
         } else {
-          const next = user.cashbackWallet.current_balance + cashbackDelta;
-          if (next < 0) {
-            throw new BadRequestException(
-              'Adjustment would make cashback balance negative',
-            );
-          }
           await tx.cashbackWallet.update({
             where: { id: user.cashbackWallet.id },
-            data: { current_balance: next },
+            data: cashbackPatch,
           });
-          cashbackAfter = next;
+          cAfter = {
+            current_balance:
+              cashbackPatch.current_balance ?? user.cashbackWallet.current_balance,
+            all_time_earned:
+              cashbackPatch.all_time_earned ?? user.cashbackWallet.all_time_earned,
+            all_time_withdrawn:
+              cashbackPatch.all_time_withdrawn ??
+              user.cashbackWallet.all_time_withdrawn,
+          };
         }
       }
 
-      return { walletAfter, cashbackAfter };
+      return { wAfter, cAfter };
     });
 
-    if (walletDelta !== 0) {
+    if (anyWallet && wBefore && wAfter) {
       this.auditLogService.logAdmin(
         AuditAction.ADMIN_USER_WALLET_ADJUST,
         AuditStatus.SUCCESS,
         adminUser.sub,
         req,
         {
-          description: `Admin adjusted main wallet for ${user.email}: delta ${walletDelta}`,
+          description: `Admin set main wallet fields for ${user.email}`,
           resource_type: 'User',
           resource_id: userId,
           metadata: {
             target_user_email: user.email,
-            delta: walletDelta,
             reason: dto.reason,
+            before: wBefore,
+            after: wAfter,
+            patch: walletPatch,
           },
-          balance_before: walletBefore,
-          balance_after: walletAfter,
-          amount: Math.abs(walletDelta),
+          balance_before: wBefore.current_balance,
+          balance_after: wAfter.current_balance,
+          amount: Math.abs(wAfter.current_balance - wBefore.current_balance),
         },
       );
     }
 
-    if (cashbackDelta !== 0) {
+    if (anyCashback) {
       this.auditLogService.logAdmin(
         AuditAction.ADMIN_USER_CASHBACK_ADJUST,
         AuditStatus.SUCCESS,
         adminUser.sub,
         req,
         {
-          description: `Admin adjusted cashback for ${user.email}: delta ${cashbackDelta}`,
+          description: `Admin set cashback wallet fields for ${user.email}`,
           resource_type: 'User',
           resource_id: userId,
           metadata: {
             target_user_email: user.email,
-            delta: cashbackDelta,
             reason: dto.reason,
+            before: cBefore,
+            after: cAfter,
+            patch: cashbackPatch,
+            created_cashback_wallet: !user.cashbackWallet,
           },
-          balance_before: cashbackBefore,
-          balance_after: cashbackAfter,
-          amount: Math.abs(cashbackDelta),
+          balance_before: cBefore.current_balance,
+          balance_after: cAfter.current_balance,
+          amount: Math.abs(cAfter.current_balance - cBefore.current_balance),
         },
       );
     }
 
     return new ApiResponseDto(true, 'Balances updated', {
       user_id: userId,
-      wallet: { balance_before: walletBefore, balance_after: walletAfter },
-      cashback: { balance_before: cashbackBefore, balance_after: cashbackAfter },
+      wallet:
+        anyWallet && wBefore && wAfter
+          ? { before: wBefore, after: wAfter }
+          : null,
+      cashback: anyCashback ? { before: cBefore, after: cAfter } : null,
     });
   }
 }
