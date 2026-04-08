@@ -37,6 +37,7 @@ const USER_LIST_SELECT = {
   profile_image: { select: { secure_url: true } },
   kyc_verification: { select: { status: true, is_verified: true, bvn_verified: true, id_type: true } },
   wallet: { select: { current_balance: true, all_time_fuunding: true } },
+  cashbackWallet: { select: { current_balance: true } },
   auditLogs: {
     select: {
       action: true,
@@ -80,6 +81,51 @@ export class AdminUsersService {
     private readonly auditLogService: AuditLogService,
     private readonly stats: StatsService,
   ) {}
+
+  /** Combine list filters with an extra user predicate (for scoped analytics). */
+  private scopedUserWhere(
+    base: Prisma.UserWhereInput,
+    extra: Prisma.UserWhereInput,
+  ): Prisma.UserWhereInput {
+    if (!base || Object.keys(base).length === 0) return extra;
+    return { AND: [base, extra] };
+  }
+
+  private parseOptionalFloatRange(
+    minStr: string | undefined,
+    maxStr: string | undefined,
+    label: string,
+  ): Prisma.FloatFilter | null {
+    const t = (s?: string) => (s != null && String(s).trim() !== '' ? String(s).trim() : '');
+    const minRaw = t(minStr);
+    const maxRaw = t(maxStr);
+    if (!minRaw && !maxRaw) return null;
+
+    let min: number | undefined;
+    let max: number | undefined;
+    if (minRaw) {
+      const n = parseFloat(minRaw);
+      if (!Number.isFinite(n)) {
+        throw new BadRequestException(`Invalid ${label} minimum`);
+      }
+      min = n;
+    }
+    if (maxRaw) {
+      const n = parseFloat(maxRaw);
+      if (!Number.isFinite(n)) {
+        throw new BadRequestException(`Invalid ${label} maximum`);
+      }
+      max = n;
+    }
+    if (min !== undefined && max !== undefined && min > max) {
+      throw new BadRequestException(`${label}: minimum cannot be greater than maximum`);
+    }
+
+    const f: Prisma.FloatFilter = {};
+    if (min !== undefined) f.gte = min;
+    if (max !== undefined) f.lte = max;
+    return f;
+  }
 
   // ──────────────────────────────────────────────────────────
   // LIST — Paginated, filterable, searchable
@@ -128,6 +174,24 @@ export class AdminUsersService {
       if (query.date_to) where.createdAt.lte = new Date(query.date_to);
     }
 
+    const walletBalFilter = this.parseOptionalFloatRange(
+      query.min_wallet_balance,
+      query.max_wallet_balance,
+      'Wallet balance',
+    );
+    if (walletBalFilter) {
+      where.wallet = { is: { current_balance: walletBalFilter } };
+    }
+
+    const cashbackBalFilter = this.parseOptionalFloatRange(
+      query.min_cashback_balance,
+      query.max_cashback_balance,
+      'Cashback balance',
+    );
+    if (cashbackBalFilter) {
+      where.cashbackWallet = { is: { current_balance: cashbackBalFilter } };
+    }
+
     const sortableFields = ['createdAt', 'first_name', 'last_name', 'email', 'phone_number'];
     const sortBy = sortableFields.includes(query.sort_by || '') ? query.sort_by! : 'createdAt';
     const sortOrder = query.sort_order === 'asc' ? 'asc' : 'desc';
@@ -145,7 +209,6 @@ export class AdminUsersService {
     const [
       rawUsers,
       total,
-      totalUsers,
       activeUsers,
       suspendedUsers,
       byRole,
@@ -160,6 +223,7 @@ export class AdminUsersService {
       newUsersPrevMonth,
       recentSignups,
       mainWalletSum,
+      cashbackWalletSum,
     ] = await Promise.all([
       this.prisma.user.findMany({
         where,
@@ -169,31 +233,57 @@ export class AdminUsersService {
         orderBy: { [sortBy]: sortOrder },
       }),
       this.prisma.user.count({ where }),
-      this.prisma.user.count(),
-      this.prisma.user.count({ where: { account_status: 'active' } }),
-      this.prisma.user.count({ where: { account_status: 'suspended' } }),
-      this.prisma.user.groupBy({ by: ['role'], _count: true }),
+      this.prisma.user.count({
+        where: this.scopedUserWhere(where, { account_status: 'active' }),
+      }),
+      this.prisma.user.count({
+        where: this.scopedUserWhere(where, { account_status: 'suspended' }),
+      }),
+      this.prisma.user.groupBy({ by: ['role'], _count: true, where }),
       this.prisma.user.groupBy({
         by: ['tier_id'],
         _count: true,
-        where: { tier_id: { not: null } },
+        where: this.scopedUserWhere(where, { tier_id: { not: null } }),
       }),
-      this.prisma.user.count({ where: { kyc_verification: { is_verified: true } } }),
-      this.prisma.user.count({ where: { kyc_verification: { status: 'pending' } } }),
-      this.prisma.user.count({ where: { kyc_verification: { status: 'rejected' } } }),
-      this.prisma.user.count({ where: { kyc_verification: null } }),
-      this.prisma.user.count({ where: { createdAt: { gte: todayStart } } }),
-      this.prisma.user.count({ where: { createdAt: { gte: weekAgo } } }),
-      this.prisma.user.count({ where: { createdAt: { gte: monthAgo } } }),
-      this.prisma.user.count({ where: { createdAt: { gte: prevMonthStart, lt: monthAgo } } }),
+      this.prisma.user.count({
+        where: this.scopedUserWhere(where, { kyc_verification: { is_verified: true } }),
+      }),
+      this.prisma.user.count({
+        where: this.scopedUserWhere(where, { kyc_verification: { status: 'pending' } }),
+      }),
+      this.prisma.user.count({
+        where: this.scopedUserWhere(where, { kyc_verification: { status: 'rejected' } }),
+      }),
+      this.prisma.user.count({
+        where: this.scopedUserWhere(where, { kyc_verification: null }),
+      }),
+      this.prisma.user.count({
+        where: this.scopedUserWhere(where, { createdAt: { gte: todayStart } }),
+      }),
+      this.prisma.user.count({
+        where: this.scopedUserWhere(where, { createdAt: { gte: weekAgo } }),
+      }),
+      this.prisma.user.count({
+        where: this.scopedUserWhere(where, { createdAt: { gte: monthAgo } }),
+      }),
+      this.prisma.user.count({
+        where: this.scopedUserWhere(where, {
+          createdAt: { gte: prevMonthStart, lt: monthAgo },
+        }),
+      }),
       this.prisma.user.findMany({
-        where: { createdAt: { gte: weekAgo } },
+        where: this.scopedUserWhere(where, { createdAt: { gte: weekAgo } }),
         select: { id: true, first_name: true, last_name: true, email: true, createdAt: true },
         orderBy: { createdAt: 'desc' },
         take: 5,
       }),
       this.prisma.wallet.aggregate({
         _sum: { current_balance: true },
+        where: { user: where },
+      }),
+      this.prisma.cashbackWallet.aggregate({
+        _sum: { current_balance: true },
+        where: { user: where },
       }),
     ]);
 
@@ -225,6 +315,7 @@ export class AdminUsersService {
     });
 
     const totalMainWalletBalance = Number(mainWalletSum._sum.current_balance ?? 0);
+    const totalCashbackBalance = Number(cashbackWalletSum._sum.current_balance ?? 0);
 
     // Map users with last_activity
     const users = rawUsers.map(({ auditLogs, ...user }) => ({
@@ -244,10 +335,11 @@ export class AdminUsersService {
     return new ApiResponseDto(true, 'Users fetched', {
       analytics: {
         overview: {
-          total_users: totalUsers,
+          total_users: total,
           active_users: activeUsers,
           suspended_users: suspendedUsers,
           total_main_wallet_balance: totalMainWalletBalance,
+          total_cashback_balance: totalCashbackBalance,
         },
         growth: {
           new_today: newUsersToday,
