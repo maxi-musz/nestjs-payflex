@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -144,6 +145,18 @@ export class NewAuthService {
         ...this.deviceFields(req),
       });
       throw new UnauthorizedException('Invalid credentials');
+    }
+
+    if (user.account_status === 'suspended') {
+      this.audit.logAuth(AuditAction.LOGIN_FAILED, AuditStatus.FAILURE, req, {
+        user_id: user.id,
+        description: `Login blocked — account suspended (${dto.email})`,
+        resource_type: 'User',
+        resource_id: user.id,
+        metadata: { email: dto.email, reason: 'account_suspended' },
+        ...this.deviceFields(req),
+      });
+      throw new ForbiddenException('Your account is suspended. Contact support.');
     }
 
     const access_token = await this.signToken(
@@ -973,7 +986,27 @@ export class NewAuthService {
 
     const stored = await this.prisma.refreshToken.findUnique({
       where: { userId: payload.sub },
-      include: { user: { include: { profile_image: true, kyc_verification: true } } },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            phone_number: true,
+            role: true,
+            first_name: true,
+            last_name: true,
+            is_email_verified: true,
+            gender: true,
+            date_of_birth: true,
+            has_completed_onboarding: true,
+            transactionPinHash: true,
+            account_status: true,
+            createdAt: true,
+            profile_image: true,
+            kyc_verification: true,
+          },
+        },
+      },
     });
 
     if (!stored || stored.token !== dto.refresh_token || new Date() > stored.expiresAt) {
@@ -990,6 +1023,19 @@ export class NewAuthService {
     }
 
     const user = stored.user;
+    if (user.account_status === 'suspended') {
+      await this.prisma.refreshToken.delete({ where: { userId: user.id } }).catch(() => {});
+      await this.audit.logAuth(AuditAction.TOKEN_REFRESH, AuditStatus.FAILURE, req, {
+        user_id: user.id,
+        description: 'Token refresh blocked — account suspended',
+        resource_type: 'User',
+        resource_id: user.id,
+        metadata: { reason: 'account_suspended' },
+        ...this.deviceFields(req),
+      });
+      throw new ForbiddenException('Your account is suspended. Contact support.');
+    }
+
     const access_token = await this.signToken(
       user.id,
       user.email,

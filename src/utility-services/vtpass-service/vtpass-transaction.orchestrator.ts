@@ -19,6 +19,7 @@ import {
 } from './airtime/airtime.validators';
 import { toUserFriendlyVtpassPurchaseError } from './vtpass-user-facing-messages';
 import { VtpassFailureCooldownService } from './vtpass-failure-cooldown.service';
+import { WalletIntegrityService } from 'src/common/wallet-integrity/wallet-integrity.service';
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
@@ -74,6 +75,7 @@ export class VtpassTransactionOrchestrator {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly vtpassFailureCooldown: VtpassFailureCooldownService,
+    private readonly walletIntegrity: WalletIntegrityService,
     private readonly cashbackService: CashbackService,
     private readonly auditLogService: AuditLogService,
     private readonly statsService: StatsService,
@@ -149,7 +151,11 @@ export class VtpassTransactionOrchestrator {
           if (walletRefund > 0) {
             await tx.wallet.update({
               where: { user_id: userId },
-              data: { current_balance: { increment: walletRefund } },
+              data: {
+                current_balance: { increment: walletRefund },
+                // Debit path incremented all_time_withdrawn; reverse it when refunding a failed attempt.
+                all_time_withdrawn: { decrement: walletRefund },
+              },
             });
           }
           if (cashbackRefund > 0) {
@@ -237,6 +243,7 @@ export class VtpassTransactionOrchestrator {
     }
 
     await this.vtpassFailureCooldown.assertNotInFailureCooldown(userId);
+    await this.walletIntegrity.assertWalletIntegrityForPurchase(userId);
 
     // ── 2. State trackers ───────────────────────────────────────────────
     let split: PaymentSplit = { walletCharge: chargeAmount, cashbackCharge: 0, cashbackBefore: 0, cashbackAfter: 0 };

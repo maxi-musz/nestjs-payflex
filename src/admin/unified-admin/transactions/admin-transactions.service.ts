@@ -1,6 +1,10 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditLogService } from '../../../common/audit-log/audit-log.service';
+import {
+  WalletAnalysisDto,
+  WalletIntegrityService,
+} from '../../../common/wallet-integrity/wallet-integrity.service';
 import { ApiResponseDto } from '../../../common/dto/api-response.dto';
 import {
   QueryTransactionsDto,
@@ -78,6 +82,7 @@ export class AdminTransactionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLogService: AuditLogService,
+    private readonly walletIntegrity: WalletIntegrityService,
   ) {}
 
   // ──────────────────────────────────────────────────────────
@@ -295,6 +300,13 @@ export class AdminTransactionsService {
       },
     });
 
+    let wallet_analysis: WalletAnalysisDto | null = null;
+    try {
+      wallet_analysis = await this.walletIntegrity.getWalletAnalysis(transaction.user_id);
+    } catch (e: any) {
+      this.logger.warn(`Wallet analysis for tx ${transactionId}: ${e?.message}`);
+    }
+
     // If transfer via smipay_tag, fetch the counterpart transaction
     let counterpart: Record<string, any> | null = null;
     if (
@@ -332,6 +344,7 @@ export class AdminTransactionsService {
       commission_smipay_earned: transaction.commission ?? null,
       user,
       counterpart,
+      wallet_analysis,
     });
   }
 
