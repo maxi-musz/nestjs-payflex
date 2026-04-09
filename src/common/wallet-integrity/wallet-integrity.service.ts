@@ -81,6 +81,68 @@ export class WalletIntegrityService {
     return parseEnvBool(process.env.WALLET_INTEGRITY_ENFORCE_ON_PURCHASE, false);
   }
 
+  /** Which checks failed (for logs + audit). */
+  private buildFailureReasons(analysis: WalletAnalysisDto): string[] {
+    const tol = analysis.tolerance_ngn;
+    const out: string[] = [];
+    const m = analysis.main;
+
+    if (Math.abs(m.balance_delta) > tol) {
+      out.push(
+        `MAIN balance: stored current_balance=${m.current_balance} but success-ledger implies ${m.expected_balance} (delta ${m.balance_delta}, tol ±${tol})`,
+      );
+    }
+    if (Math.abs(m.stored_invariant) > tol) {
+      out.push(
+        `MAIN invariant: balance+all_time_withdrawn-all_time_fuunding=${m.stored_invariant} (expected ~0 within ±${tol})`,
+      );
+    }
+    if (Math.abs(m.all_time_fuunding - m.ledger_credits_total) > tol) {
+      out.push(
+        `MAIN all_time_fuunding=${m.all_time_fuunding} vs ledger success credits sum=${m.ledger_credits_total} (diff ${round2(m.all_time_fuunding - m.ledger_credits_total)})`,
+      );
+    }
+    if (Math.abs(m.all_time_withdrawn - m.ledger_debits_total) > tol) {
+      out.push(
+        `MAIN all_time_withdrawn=${m.all_time_withdrawn} vs ledger success debits sum=${m.ledger_debits_total} (diff ${round2(m.all_time_withdrawn - m.ledger_debits_total)})`,
+      );
+    }
+
+    const c = analysis.cashback;
+    if (c && !c.ok) {
+      if (c.tx_anomaly) {
+        out.push(
+          `CASHBACK anomaly: cashback used on success txs (${c.withdrawn_from_success_tx}) > earned net (${c.earned_net})`,
+        );
+      }
+      if (Math.abs(c.balance_delta) > tol) {
+        out.push(
+          `CASHBACK balance: stored=${c.current_balance} vs expected=${c.expected_balance} (delta ${c.balance_delta})`,
+        );
+      }
+      if (Math.abs(c.stored_invariant) > tol) {
+        out.push(
+          `CASHBACK invariant: balance+withdrawn-earned=${c.stored_invariant} (expected ~0 within ±${tol})`,
+        );
+      }
+      if (Math.abs(c.all_time_earned - c.earned_net) > tol) {
+        out.push(
+          `CASHBACK all_time_earned=${c.all_time_earned} vs history net=${c.earned_net}`,
+        );
+      }
+      if (Math.abs(c.all_time_withdrawn - c.withdrawn_from_success_tx) > tol) {
+        out.push(
+          `CASHBACK all_time_withdrawn=${c.all_time_withdrawn} vs sum cashback_used on success txs=${c.withdrawn_from_success_tx}`,
+        );
+      }
+    }
+
+    if (out.length === 0) {
+      out.push('Mismatch flagged (main_ok/cashback_ok false) — see full analysis snapshot in metadata.');
+    }
+    return out;
+  }
+
   async userTouchedByAdminBalanceAdjust(userId: string): Promise<boolean> {
     const w = await this.prisma.auditLog.count({
       where: { action: 'ADMIN_USER_WALLET_ADJUST', resource_id: userId },
@@ -299,6 +361,29 @@ export class WalletIntegrityService {
     const cbBad = analysis.cashback && !analysis.cashback.ok;
     if (!mainBad && !cbBad) return;
 
+    const failureReasons = this.buildFailureReasons(analysis);
+    const summaryLine = failureReasons.join(' | ');
+    const errorMessage =
+      summaryLine.length > 4000 ? `${summaryLine.slice(0, 3997)}...` : summaryLine;
+
+    this.logger.error(
+      [
+        `[WALLET_INTEGRITY_SUSPEND] userId=${userId}`,
+        `main_ok=${analysis.main.ok} cashback_ok=${analysis.cashback?.ok ?? 'n/a'} tolerance=±${analysis.tolerance_ngn}`,
+        '--- reasons ---',
+        ...failureReasons.map((r) => `  • ${r}`),
+        '--- snapshot (main) ---',
+        `  current_balance=${analysis.main.current_balance} expected_from_ledger=${analysis.main.expected_balance}`,
+        `  all_time_fuunding=${analysis.main.all_time_fuunding} ledger_credits=${analysis.main.ledger_credits_total}`,
+        `  all_time_withdrawn=${analysis.main.all_time_withdrawn} ledger_debits=${analysis.main.ledger_debits_total}`,
+        analysis.cashback
+          ? `--- snapshot (cashback) ---\n  balance=${analysis.cashback.current_balance} expected=${analysis.cashback.expected_balance} ok=${analysis.cashback.ok}`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+
     await this.prisma.user.update({
       where: { id: userId },
       data: { account_status: 'suspended' },
@@ -312,16 +397,14 @@ export class WalletIntegrityService {
       severity: AuditSeverity.CRITICAL,
       resource_type: 'User',
       resource_id: userId,
-      description: 'Account suspended: wallet/cashback aggregates disagree with success-only transaction ledger',
+      description: `Account suspended: WALLET_LEDGER_MISMATCH — ${failureReasons[0] ?? 'see metadata'}`,
+      error_message: errorMessage,
       metadata: {
         reason: 'WALLET_LEDGER_MISMATCH',
+        failure_reasons: failureReasons,
         analysis,
       } as any,
     });
-
-    this.logger.warn(
-      `Wallet integrity suspend user=${userId} main_ok=${analysis.main.ok} cashback_ok=${analysis.cashback?.ok ?? 'n/a'}`,
-    );
 
     throw new ForbiddenException(
       'Your account is temporarily restricted. Please contact support.',
