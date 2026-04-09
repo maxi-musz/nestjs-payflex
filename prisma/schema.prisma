@@ -256,6 +256,7 @@ model TransactionHistory {
   user User @relation(fields: [user_id], references: [id])
 
   @@index([user_id])
+  @@index([user_id, status, createdAt])
 }
 
 enum TransactionType {

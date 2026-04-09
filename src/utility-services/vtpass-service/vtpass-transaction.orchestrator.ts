@@ -18,6 +18,7 @@ import {
   shouldRequeryTransaction,
 } from './airtime/airtime.validators';
 import { toUserFriendlyVtpassPurchaseError } from './vtpass-user-facing-messages';
+import { VtpassFailureCooldownService } from './vtpass-failure-cooldown.service';
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
@@ -72,6 +73,7 @@ export class VtpassTransactionOrchestrator {
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly vtpassFailureCooldown: VtpassFailureCooldownService,
     private readonly cashbackService: CashbackService,
     private readonly auditLogService: AuditLogService,
     private readonly statsService: StatsService,
@@ -233,6 +235,8 @@ export class VtpassTransactionOrchestrator {
       const cached = (existingTx.meta_data as any)?.vtpass_response;
       return new ApiResponseDto(false, msg, cached || { requestId, status: existingTx.status });
     }
+
+    await this.vtpassFailureCooldown.assertNotInFailureCooldown(userId);
 
     // ── 2. State trackers ───────────────────────────────────────────────
     let split: PaymentSplit = { walletCharge: chargeAmount, cashbackCharge: 0, cashbackBefore: 0, cashbackAfter: 0 };
