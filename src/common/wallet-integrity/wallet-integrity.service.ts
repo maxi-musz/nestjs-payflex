@@ -154,7 +154,7 @@ export class WalletIntegrityService {
           0
         )::double precision AS first_tx_bonus_total
       FROM "TransactionHistory" t
-      WHERE t.user_id = ${userId}::uuid
+      WHERE t.user_id::text = ${userId}
     `);
     const r = rows[0];
     return {
@@ -179,7 +179,7 @@ export class WalletIntegrityService {
             0
           )::double precision AS reversed
         FROM "cashback_history" h
-        WHERE h.user_id = ${userId}::uuid
+        WHERE h.user_id::text = ${userId}
       `),
       this.prisma.$queryRaw<{ cashback_used: number }[]>(Prisma.sql`
         SELECT
@@ -195,7 +195,7 @@ export class WalletIntegrityService {
             0
           )::double precision AS cashback_used
         FROM "TransactionHistory" t
-        WHERE t.user_id = ${userId}::uuid
+        WHERE t.user_id::text = ${userId}
       `),
     ]);
     const h = hist[0];
