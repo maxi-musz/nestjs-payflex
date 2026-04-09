@@ -8,7 +8,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditLogService } from '../../../common/audit-log/audit-log.service';
 import { StatsService } from '../../../common/stats/stats.service';
 import { ApiResponseDto } from '../../../common/dto/api-response.dto';
-import { QueryUsersDto } from './dto/query-users.dto';
+import { QueryUsersDto, USER_LIST_SORT_VALUES } from './dto/query-users.dto';
 import {
   UpdateUserStatusDto,
   UpdateUserRoleDto,
@@ -36,8 +36,12 @@ const USER_LIST_SELECT = {
   tier: { select: { id: true, tier: true, name: true } },
   profile_image: { select: { secure_url: true } },
   kyc_verification: { select: { status: true, is_verified: true, bvn_verified: true, id_type: true } },
-  wallet: { select: { current_balance: true, all_time_fuunding: true } },
-  cashbackWallet: { select: { current_balance: true } },
+  wallet: {
+    select: { current_balance: true, all_time_fuunding: true, all_time_withdrawn: true },
+  },
+  cashbackWallet: {
+    select: { current_balance: true, all_time_earned: true, all_time_withdrawn: true },
+  },
   auditLogs: {
     select: {
       action: true,
@@ -72,6 +76,18 @@ const USER_DETAIL_SELECT = {
   _count: { select: { cards: true, supportTickets: true, auditLogs: true } },
 } satisfies Prisma.UserSelect;
 
+/** `orderBy` on optional relations puts missing joins first on DESC in Postgres; we correct via in-memory sort. */
+const ADMIN_USER_RELATION_SORT_PRESETS = new Set<string>([
+  'wallet_balance_desc',
+  'wallet_balance_asc',
+  'cashback_balance_desc',
+  'cashback_balance_asc',
+  'all_time_funding_desc',
+  'all_time_funding_asc',
+]);
+
+const ADMIN_USER_IN_MEMORY_SORT_MAX_TOTAL = 20_000;
+
 @Injectable()
 export class AdminUsersService {
   private readonly logger = new Logger(AdminUsersService.name);
@@ -89,6 +105,127 @@ export class AdminUsersService {
   ): Prisma.UserWhereInput {
     if (!base || Object.keys(base).length === 0) return extra;
     return { AND: [base, extra] };
+  }
+
+  private buildUserListOrderBy(query: QueryUsersDto): Prisma.UserOrderByWithRelationInput {
+    const preset = query.list_sort?.trim();
+    if (preset && (USER_LIST_SORT_VALUES as readonly string[]).includes(preset)) {
+      switch (preset) {
+        case 'created_desc':
+          return { createdAt: 'desc' };
+        case 'created_asc':
+          return { createdAt: 'asc' };
+        case 'name_asc':
+          return { first_name: 'asc' };
+        case 'name_desc':
+          return { first_name: 'desc' };
+        case 'wallet_balance_desc':
+          return { wallet: { current_balance: 'desc' } };
+        case 'wallet_balance_asc':
+          return { wallet: { current_balance: 'asc' } };
+        case 'cashback_balance_desc':
+          return { cashbackWallet: { current_balance: 'desc' } };
+        case 'cashback_balance_asc':
+          return { cashbackWallet: { current_balance: 'asc' } };
+        case 'all_time_funding_desc':
+          return { wallet: { all_time_fuunding: 'desc' } };
+        case 'all_time_funding_asc':
+          return { wallet: { all_time_fuunding: 'asc' } };
+        case 'transaction_count_desc':
+          return { transactionHistory: { _count: 'desc' } };
+        case 'transaction_count_asc':
+          return { transactionHistory: { _count: 'asc' } };
+        default:
+          break;
+      }
+    }
+
+    const sortableFields = ['createdAt', 'first_name', 'last_name', 'email', 'phone_number'];
+    const sortBy = sortableFields.includes(query.sort_by || '') ? query.sort_by! : 'createdAt';
+    const sortOrder = query.sort_order === 'asc' ? 'asc' : 'desc';
+    return { [sortBy]: sortOrder };
+  }
+
+  /** Missing optional relation ranks after all numeric values (for both asc and desc). */
+  private compareMissingRelationLast(
+    aMissing: boolean,
+    bMissing: boolean,
+    aVal: number,
+    bVal: number,
+    desc: boolean,
+  ): number {
+    if (aMissing && bMissing) return 0;
+    if (aMissing) return 1;
+    if (bMissing) return -1;
+    return desc ? bVal - aVal : aVal - bVal;
+  }
+
+  private async fetchUserListPageWithStableRelationSort(
+    where: Prisma.UserWhereInput,
+    preset: string,
+    skip: number,
+    take: number,
+  ) {
+    const rows = await this.prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        wallet: { select: { current_balance: true, all_time_fuunding: true } },
+        cashbackWallet: { select: { current_balance: true } },
+      },
+    });
+
+    const desc = preset.endsWith('_desc');
+
+    rows.sort((a, b) => {
+      let cmp = 0;
+      switch (preset) {
+        case 'wallet_balance_desc':
+        case 'wallet_balance_asc':
+          cmp = this.compareMissingRelationLast(
+            !a.wallet,
+            !b.wallet,
+            a.wallet?.current_balance ?? 0,
+            b.wallet?.current_balance ?? 0,
+            desc,
+          );
+          break;
+        case 'cashback_balance_desc':
+        case 'cashback_balance_asc':
+          cmp = this.compareMissingRelationLast(
+            !a.cashbackWallet,
+            !b.cashbackWallet,
+            a.cashbackWallet?.current_balance ?? 0,
+            b.cashbackWallet?.current_balance ?? 0,
+            desc,
+          );
+          break;
+        case 'all_time_funding_desc':
+        case 'all_time_funding_asc':
+          cmp = this.compareMissingRelationLast(
+            !a.wallet,
+            !b.wallet,
+            a.wallet?.all_time_fuunding ?? 0,
+            b.wallet?.all_time_fuunding ?? 0,
+            desc,
+          );
+          break;
+        default:
+          return 0;
+      }
+      if (cmp !== 0) return cmp;
+      return a.id.localeCompare(b.id);
+    });
+
+    const pageIds = rows.slice(skip, skip + take).map((r) => r.id);
+    if (pageIds.length === 0) return [];
+
+    const unordered = await this.prisma.user.findMany({
+      where: { id: { in: pageIds } },
+      select: USER_LIST_SELECT,
+    });
+    const byId = new Map(unordered.map((u) => [u.id, u]));
+    return pageIds.map((id) => byId.get(id)).filter((u): u is NonNullable<typeof u> => u != null);
   }
 
   private parseOptionalFloatRange(
@@ -192,11 +329,11 @@ export class AdminUsersService {
       where.cashbackWallet = { is: { current_balance: cashbackBalFilter } };
     }
 
-    const sortableFields = ['createdAt', 'first_name', 'last_name', 'email', 'phone_number'];
-    const sortBy = sortableFields.includes(query.sort_by || '') ? query.sort_by! : 'createdAt';
-    const sortOrder = query.sort_order === 'asc' ? 'asc' : 'desc';
+    const orderBy = this.buildUserListOrderBy(query);
+    const listPreset = query.list_sort?.trim() ?? '';
+    const useStableRelationSort = ADMIN_USER_RELATION_SORT_PRESETS.has(listPreset);
 
-    // Run user list + count + all analytics in one parallel batch
+    // Count + analytics in parallel (user rows fetched after — relation sorts need stable null handling)
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const weekAgo = new Date(todayStart);
@@ -207,7 +344,6 @@ export class AdminUsersService {
     prevMonthStart.setDate(prevMonthStart.getDate() - 30);
 
     const [
-      rawUsers,
       total,
       activeUsers,
       suspendedUsers,
@@ -225,13 +361,6 @@ export class AdminUsersService {
       mainWalletSum,
       cashbackWalletSum,
     ] = await Promise.all([
-      this.prisma.user.findMany({
-        where,
-        select: USER_LIST_SELECT,
-        skip,
-        take: limit,
-        orderBy: { [sortBy]: sortOrder },
-      }),
       this.prisma.user.count({ where }),
       this.prisma.user.count({
         where: this.scopedUserWhere(where, { account_status: 'active' }),
@@ -286,6 +415,17 @@ export class AdminUsersService {
         where: { user: where },
       }),
     ]);
+
+    const rawUsers =
+      useStableRelationSort && total <= ADMIN_USER_IN_MEMORY_SORT_MAX_TOTAL
+        ? await this.fetchUserListPageWithStableRelationSort(where, listPreset, skip, limit)
+        : await this.prisma.user.findMany({
+            where,
+            select: USER_LIST_SELECT,
+            skip,
+            take: limit,
+            orderBy,
+          });
 
     // Resolve tier names
     const tierIds = byTier.map((t) => t.tier_id!).filter(Boolean);
