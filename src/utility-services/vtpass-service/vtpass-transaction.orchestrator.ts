@@ -20,6 +20,7 @@ import {
 import { toUserFriendlyVtpassPurchaseError } from './vtpass-user-facing-messages';
 import { VtpassFailureCooldownService } from './vtpass-failure-cooldown.service';
 import { WalletIntegrityService } from 'src/common/wallet-integrity/wallet-integrity.service';
+import { roundNgn } from 'src/common/money/round-ngn';
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
@@ -106,13 +107,15 @@ export class VtpassTransactionOrchestrator {
   // Refunds wallet + cashback for a failed tx. Uses Serializable isolation + a meta_data flag
   // (vtpass_failure_refund_applied) to guarantee the refund only happens once, even if both
   // executePurchase and the cron requery try to refund the same tx at the same time.
-  private async applyVtpassFailureRefundOnce(
+  async applyVtpassFailureRefundOnce(
     requestId: string,
     userId: string,
-    walletRefund: number,
-    cashbackRefund: number,
+    walletRefundRaw: number,
+    cashbackRefundRaw: number,
     serviceLabel: string,
   ): Promise<{ appliedThisRun: boolean; wasAlreadyComplete: boolean }> {
+    const walletRefund = roundNgn(walletRefundRaw);
+    const cashbackRefund = roundNgn(cashbackRefundRaw);
     const run = async (): Promise<{ appliedThisRun: boolean; wasAlreadyComplete: boolean }> => {
       return this.prisma.$transaction(
         async (tx) => {
@@ -130,15 +133,15 @@ export class VtpassTransactionOrchestrator {
             this.logger.warn(
               `[${serviceLabel}] Failure refund already applied for ${requestId}; skipping duplicate credit`,
             );
-            const wRef = Number(meta['vtpass_failure_wallet_refund_amount']) || 0;
-            const cRef = Number(meta['vtpass_failure_cashback_refund_amount']) || 0;
+            const wRef = roundNgn(Number(meta['vtpass_failure_wallet_refund_amount']) || 0);
+            const cRef = roundNgn(Number(meta['vtpass_failure_cashback_refund_amount']) || 0);
             const patch: { balance_after?: number; cashback_balance_after?: number } = {};
             // Reset balance_after to balance_before since the net wallet change after refund is zero
             if (wRef > 0 && row.balance_before != null) {
-              patch.balance_after = Number(row.balance_before);
+              patch.balance_after = roundNgn(Number(row.balance_before));
             }
             if (cRef > 0 && row.cashback_balance_before != null) {
-              patch.cashback_balance_after = Number(row.cashback_balance_before);
+              patch.cashback_balance_after = roundNgn(Number(row.cashback_balance_before));
             }
             if (Object.keys(patch).length > 0) {
               await tx.transactionHistory.update({
@@ -193,10 +196,10 @@ export class VtpassTransactionOrchestrator {
               } as any,
               // After refund, net wallet effect is zero — so balance_after should match balance_before
               ...(walletRefund > 0 && row.balance_before != null
-                ? { balance_after: Number(row.balance_before) }
+                ? { balance_after: roundNgn(Number(row.balance_before)) }
                 : {}),
               ...(cashbackRefund > 0 && row.cashback_balance_before != null
-                ? { cashback_balance_after: Number(row.cashback_balance_before) }
+                ? { cashback_balance_after: roundNgn(Number(row.cashback_balance_before)) }
                 : {}),
             },
           });
@@ -228,9 +231,10 @@ export class VtpassTransactionOrchestrator {
   async executePurchase(config: VtpassPurchaseConfig): Promise<ApiResponseDto<any>> {
     const {
       transactionType, serviceLabel, auditAction, auditFailAction, cashbackServiceType,
-      userId, requestId, chargeAmount, useCashback, vtpassPayload,
+      userId, requestId, chargeAmount: chargeRaw, useCashback, vtpassPayload,
       description, provider, recipientIdentifier, extraTxFields, auditMetadata, markupValue,
     } = config;
+    const chargeAmount = roundNgn(chargeRaw);
     const url = `${this.getBaseUrl()}/pay`;
 
     this.logger.log(`[${serviceLabel}] Purchase: requestId=${requestId}, charge=${chargeAmount}, userId=${userId}`);
@@ -276,11 +280,11 @@ export class VtpassTransactionOrchestrator {
           throw new HttpException('User wallet not found in database', HttpStatus.BAD_REQUEST);
         }
 
-        const balance_before = Number(wallet.current_balance);
+        const balance_before = roundNgn(Number(wallet.current_balance));
         if (split.walletCharge > 0 && balance_before < split.walletCharge) {
           throw new HttpException('Insufficient wallet balance', HttpStatus.BAD_REQUEST);
         }
-        const balance_after = balance_before - split.walletCharge;
+        const balance_after = roundNgn(balance_before - split.walletCharge);
 
         // Debit the user's wallet
         if (split.walletCharge > 0) {
@@ -326,6 +330,11 @@ export class VtpassTransactionOrchestrator {
       const txStatus = txContent.status?.toLowerCase() || '';
       const responseDescription = response.data?.response_description || '';
 
+      this.logger.log(
+        `[${serviceLabel}] VTpass raw: code=${JSON.stringify(response.data?.code)}, ` +
+        `normalized=${responseCodeStr}, txStatus=${txStatus}, desc="${responseDescription}"`,
+      );
+
       // ── 6. Determine if tx succeeded, failed, or is still pending based on VTpass response codes
       // code=000 + status=delivered → success | code=016 → failed | code=099 → still processing
       const { finalStatus, shouldRefund, shouldThrow, errorMessage } = determineTransactionStatus(
@@ -339,8 +348,9 @@ export class VtpassTransactionOrchestrator {
       const extraMeta: Record<string, any> = config.onProcessResponse?.(response.data) || {};
 
       // Only persist commission if the tx actually succeeded
-      const commissionFromVtpass =
-        typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || 0;
+      const commissionFromVtpass = roundNgn(
+        typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || 0,
+      );
       const commissionPersist = finalStatus === 'success' ? commissionFromVtpass : 0;
 
       // ── 8. Update tx row with VTpass result. Re-reads meta_data first so we MERGE (not overwrite)
@@ -401,8 +411,8 @@ export class VtpassTransactionOrchestrator {
       const mainWalletRestoredAfterFailure =
         finalStatus === 'failed' && shouldRefund && split.walletCharge > 0;
       const auditBalanceAfter = mainWalletRestoredAfterFailure
-        ? Number(createdTx.balance_before)
-        : Number(createdTx.balance_after);
+        ? roundNgn(Number(createdTx.balance_before))
+        : roundNgn(Number(createdTx.balance_after));
       this.auditLogService
         .logTransaction(
           (finalStatus === 'failed' ? auditFailAction : auditAction) as AuditAction,
@@ -411,7 +421,7 @@ export class VtpassTransactionOrchestrator {
           {
             amount: chargeAmount,
             currency: 'NGN',
-            balance_before: Number(createdTx.balance_before),
+            balance_before: roundNgn(Number(createdTx.balance_before)),
             balance_after: auditBalanceAfter,
             transaction_ref: requestId,
           },
@@ -466,8 +476,8 @@ export class VtpassTransactionOrchestrator {
       // ── 12. Build and return the API response to the client
       // Show the pre-debit balance if wallet was refunded, otherwise show post-debit balance
       const walletBalanceForResponse = mainWalletRestoredAfterFailure
-        ? Number(createdTx.balance_before)
-        : Number(createdTx.balance_after);
+        ? roundNgn(Number(createdTx.balance_before))
+        : roundNgn(Number(createdTx.balance_after));
       const formattedResponse: any = { id: createdTx.id, ...response.data, wallet_balance: walletBalanceForResponse };
       // Let the vertical service add extra fields to the response (e.g. electricity token)
       if (config.onEnrichResponse) {
@@ -514,20 +524,24 @@ export class VtpassTransactionOrchestrator {
             );
           } else {
             // BRANCH 2: Tx exists but NO refund happened — we don't know if VTpass processed it or not.
-            // CRITICAL: Keep as 'pending' so the cron requery can poll VTpass and resolve it later.
-            // DO NOT refund here — the money may have reached the provider (e.g. network timeout after VTpass processed).
+            // Preserve terminal status if step 8 already resolved the tx before the error was thrown.
+            const safeStatus = (existingForUpdate.status === 'success' || existingForUpdate.status === 'failed')
+              ? existingForUpdate.status
+              : 'pending';
             await this.prisma.transactionHistory.update({
               where: { transaction_reference: requestId },
               data: {
-                status: 'pending',
+                status: safeStatus,
                 meta_data: {
                   ...curMeta,
                   ...errorMeta,
-                  catch_block_reason: 'No definitive VTpass response. Kept pending for requery.',
+                  catch_block_reason: safeStatus === 'pending'
+                    ? 'No definitive VTpass response. Kept pending for requery.'
+                    : `Preserved existing '${safeStatus}' status despite late error.`,
                 },
               },
             });
-            this.logger.warn(`[${serviceLabel}] catch: No definitive VTpass response. Keeping tx PENDING for requery. NO REFUND.`);
+            this.logger.warn(`[${serviceLabel}] catch: Tx status set to '${safeStatus}' (no refund in catch). ${safeStatus === 'pending' ? 'Will requery.' : 'Terminal status preserved.'}`);
           }
         } else {
           // BRANCH 3: Tx row was never created — error happened before or during step 4's Prisma tx.
@@ -621,6 +635,11 @@ export class VtpassTransactionOrchestrator {
       const txStatus = txContent.status?.toLowerCase() || '';
       const responseDescription = response.data?.response_description || '';
 
+      this.logger.log(
+        `[Cron][${serviceLabel}] VTpass requery raw: code=${JSON.stringify(response.data?.code)}, ` +
+        `normalized=${responseCodeStr}, txStatus=${txStatus}, desc="${responseDescription}"`,
+      );
+
       const { finalStatus, shouldRefund } = determineTransactionStatus(
         responseCodeStr,
         txStatus,
@@ -629,7 +648,7 @@ export class VtpassTransactionOrchestrator {
       );
 
       // Commission logic: use VTpass value on success, zero on failure, keep existing if still pending
-      const newCommission =
+      const newCommission = roundNgn(
         finalStatus === 'success'
           ? typeof txContent.commission === 'number'
             ? txContent.commission
@@ -638,7 +657,8 @@ export class VtpassTransactionOrchestrator {
             ? 0
             : typeof transaction.commission === 'number'
               ? transaction.commission
-              : Number(transaction.commission) || 0;
+              : Number(transaction.commission) || 0,
+      );
 
       // Update the tx row with the requery result and bump the requery_count
       await this.prisma.$transaction(async (tx) => {
@@ -663,9 +683,12 @@ export class VtpassTransactionOrchestrator {
       // If VTpass confirmed failure, refund the wallet (idempotent — safe if executePurchase already refunded)
       if (shouldRefund && finalStatus === 'failed') {
         // Prefer the exact wallet_charged/cashback_used from meta_data; fall back to tx amount
-        const walletRefund =
-          typeof metaData.wallet_charged === 'number' ? metaData.wallet_charged : Number(transaction.amount || 0);
-        const cashbackRefund = typeof metaData.cashback_used === 'number' ? metaData.cashback_used : 0;
+        const walletRefund = roundNgn(
+          typeof metaData.wallet_charged === 'number' ? metaData.wallet_charged : Number(transaction.amount || 0),
+        );
+        const cashbackRefund = roundNgn(
+          typeof metaData.cashback_used === 'number' ? metaData.cashback_used : 0,
+        );
         const refundRes = await this.applyVtpassFailureRefundOnce(
           requestId,
           transaction.user_id,
@@ -692,12 +715,13 @@ export class VtpassTransactionOrchestrator {
 
         // Update stats to transition this tx from pending → final status
         const markupVal = typeof transaction.markup_value === 'number' ? transaction.markup_value : 0;
-        const commissionVal =
+        const commissionVal = roundNgn(
           finalStatus === 'success'
             ? typeof txContent.commission === 'number'
               ? txContent.commission
               : Number(txContent.commission) || 0
-            : 0;
+            : 0,
+        );
         this.statsService.onTransactionStatusChanged('pending', finalStatus, transaction.amount || 0, markupVal, commissionVal)
           .catch((e) => this.logger.warn(`[Cron][${serviceLabel}] Stats failed: ${e.message}`));
 

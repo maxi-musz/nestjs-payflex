@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsString, MinLength, MaxLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, Matches } from 'class-validator';
 
 export class VerifyPasswordResetOtpDto {
   @IsEmail()
@@ -7,7 +7,6 @@ export class VerifyPasswordResetOtpDto {
 
   @IsString()
   @IsNotEmpty()
-  @MinLength(4)
-  @MaxLength(4)
+  @Matches(/^\d{6}$/, { message: 'OTP must be exactly 6 digits' })
   otp: string;
 }

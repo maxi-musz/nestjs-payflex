@@ -1,4 +1,10 @@
 import { HttpException, HttpStatus, Logger } from '@nestjs/common';
+import {
+  getVtpassCodeInfo,
+  categoryToStatus,
+  shouldRefundForCategory,
+  shouldThrowForCategory,
+} from '../vtpass-response-codes';
 
 export interface VtpassCredentials {
   apiKey: string;
@@ -165,7 +171,11 @@ export function validateWalletBalance(
 }
 
 /**
- * Determines transaction status from VTpass API response
+ * Determines transaction status from VTpass API response.
+ *
+ * Built on the canonical code map in vtpass-response-codes.ts (from official VTpass docs).
+ * VTpass rule: "Take any response that differs from the guidelines as pending and requery."
+ * So the SAFE DEFAULT is always pending — only documented failure codes trigger a refund.
  */
 export function determineTransactionStatus(
   responseCode: unknown,
@@ -174,77 +184,65 @@ export function determineTransactionStatus(
   logger?: Logger,
 ): TransactionStatusResult {
   const code = normalizeVtpassResponseCode(responseCode);
+  const codeInfo = getVtpassCodeInfo(code);
 
-  // Determine transaction status based on VTpass documentation
-  // Code "000" with status "delivered" = success
-  // Code "000" with status "pending" or "initiated" = processing (keep as pending, don't refund)
-  // Code "099" = TRANSACTION IS PROCESSING (keep as pending, requery recommended)
-  // Code "016" = TRANSACTION FAILED (actual failure)
-  // Code "040" = TRANSACTION REVERSAL (refund)
-  // Other codes = check response_description for actual status
-
-  const isProcessing =
-    (code === '000' && (txStatus === 'pending' || txStatus === 'initiated')) ||
-    code === '099' ||
-    responseDescription.includes('PROCESSING') ||
-    responseDescription.includes('PENDING');
-
-  const isDelivered = code === '000' && txStatus === 'delivered';
-  const isReversed = code === '040' || txStatus === 'reversed';
-  // Merchant float / partner errors (e.g. 018 LOW WALLET BALANCE) — definitive failure, refund user
-  const descU = (responseDescription || '').toUpperCase();
-  const isMerchantInsufficient =
-    descU.includes('LOW WALLET') ||
-    descU.includes('LOW_WALLET') ||
-    descU.includes('ADEQUATE FUNDS') ||
-    code === '018';
-  const isFailed =
-    code === '016' ||
-    (code === '000' && txStatus === 'failed') ||
-    isMerchantInsufficient ||
-    (!isProcessing && !isDelivered && !isReversed && code !== '000' && code !== '');
-
-  let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
-  let shouldRefund = false;
-  let shouldThrow = false;
-  let errorMessage = '';
-
-  if (isDelivered) {
-    finalStatus = 'success';
-  } else if (isReversed) {
-    finalStatus = 'failed';
-    shouldRefund = true;
-    errorMessage = responseDescription || 'Transaction was reversed';
-    shouldThrow = true;
-  } else if (isFailed) {
-    finalStatus = 'failed';
-    shouldRefund = true;
-    errorMessage = responseDescription || `Transaction failed with code: ${code || 'unknown'}`;
-    shouldThrow = true;
-  } else if (isProcessing) {
-    // Keep as pending - transaction is processing, don't refund yet
-    finalStatus = 'pending';
-    if (logger) {
-      logger.log(
-        `Transaction is processing: ${responseDescription || `Status: ${txStatus}`}`,
-      );
+  // ── 1. Code 000 is special — need to check content.transactions.status ──
+  if (code === '000') {
+    if (txStatus === 'delivered') {
+      return { finalStatus: 'success', shouldRefund: false, shouldThrow: false, errorMessage: '' };
     }
-  } else {
-    // Unknown status - treat as pending and log for investigation
-    finalStatus = 'pending';
-    if (logger) {
-      logger.warn(
-        `Unknown transaction status. Code: ${responseCode}, Status: ${txStatus}, Description: ${responseDescription}`,
-      );
+    if (txStatus === 'failed') {
+      return {
+        finalStatus: 'failed',
+        shouldRefund: true,
+        shouldThrow: true,
+        errorMessage: responseDescription || 'Transaction failed',
+      };
     }
+    // pending / initiated / empty → still processing
+    logger?.log(`Code 000 but txStatus="${txStatus}" — treating as pending (requery later)`);
+    return { finalStatus: 'pending', shouldRefund: false, shouldThrow: false, errorMessage: '' };
   }
 
-  return {
-    finalStatus,
-    shouldRefund,
-    shouldThrow,
-    errorMessage,
-  };
+  // ── 2. txStatus override: if VTpass says "reversed" regardless of code ──
+  if (txStatus === 'reversed') {
+    return {
+      finalStatus: 'failed',
+      shouldRefund: true,
+      shouldThrow: true,
+      errorMessage: responseDescription || 'Transaction was reversed',
+    };
+  }
+
+  // ── 3. Look up the code in the canonical map ──
+  if (codeInfo) {
+    const status = categoryToStatus(codeInfo.category);
+    const refund = shouldRefundForCategory(codeInfo.category);
+    const throwErr = shouldThrowForCategory(codeInfo.category);
+
+    if (status === 'pending') {
+      logger?.log(`VTpass code ${code} (${codeInfo.meaning}) → pending. Will requery.`);
+    }
+    if (status === 'failed') {
+      logger?.warn(`VTpass code ${code} (${codeInfo.meaning}) → failed. Refund=${refund}.`);
+    }
+
+    return {
+      finalStatus: status,
+      shouldRefund: refund,
+      shouldThrow: throwErr,
+      errorMessage: throwErr
+        ? (responseDescription || codeInfo.meaning)
+        : '',
+    };
+  }
+
+  // ── 4. Unknown code — per VTpass docs, treat as PENDING and requery ──
+  logger?.warn(
+    `Unknown VTpass code "${code}" (raw=${JSON.stringify(responseCode)}), ` +
+    `txStatus="${txStatus}", desc="${responseDescription}" → treating as PENDING (safe default).`,
+  );
+  return { finalStatus: 'pending', shouldRefund: false, shouldThrow: false, errorMessage: '' };
 }
 
 /**

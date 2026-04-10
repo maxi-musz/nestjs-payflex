@@ -250,7 +250,7 @@ export class NewAuthService {
       throw new ConflictException('This email is already registered. Please sign in.');
     }
 
-    const otp = crypto.randomInt(1000, 9999).toString();
+    const otp = crypto.randomInt(100000, 1_000_000).toString();
     const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
     await this.prisma.emailVerification.upsert({
@@ -629,7 +629,7 @@ export class NewAuthService {
       throw new NotFoundException('User not found');
     }
 
-    const otp = crypto.randomInt(1000, 9999).toString();
+    const otp = crypto.randomInt(100000, 1_000_000).toString();
     const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
     await this.prisma.user.update({

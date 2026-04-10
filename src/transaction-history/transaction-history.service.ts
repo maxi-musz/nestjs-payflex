@@ -199,10 +199,8 @@ export class TransactionHistoryService {
 
         switch (type) {
             case 'electricity': {
-                // Token (normalized and backfilled)
                 base.electricity_token = meta.electricity_token || null;
 
-                // Units — handle different casing/locations
                 base.units =
                     vtpass.units ||
                     vtpass.Units ||
@@ -210,31 +208,42 @@ export class TransactionHistoryService {
                     content.units ||
                     null;
 
-                // Meter number — prefer payload, then VTpass top-level
+                // Meter number: orchestrator spreads vtpassPayload at top level of meta (meta.billersCode),
+                // VTpass also stores it as content.transactions.unique_element
                 base.meter_number =
+                    meta.billersCode ||
                     meta.payload?.billersCode ||
+                    transactions.unique_element ||
                     vtpass.meterNumber ||
                     vtpass.MeterNumber ||
                     null;
 
-                base.meter_type = meta.payload?.variation_code || null;
-
-                // Customer name / address — support multiple key variants, ignore obvious "N/A"
-                const rawName =
-                    vtpass.customerName ||
-                    vtpass.CustomerName ||
-                    content.Customer_Name ||
-                    null;
-                const rawAddress =
-                    vtpass.customerAddress ||
-                    vtpass.CustomerAddress ||
-                    content.Address ||
+                // Meter type: same — variation_code is at meta top level
+                base.meter_type =
+                    meta.variation_code ||
+                    meta.payload?.variation_code ||
                     null;
 
                 const clean = (v: any) =>
                     typeof v === 'string' && v.trim().toUpperCase() === 'N/A'
                         ? null
                         : v;
+
+                // Customer name: VTpass may put it at vtpass_response top level or inside content
+                const rawName =
+                    vtpass.customerName ||
+                    vtpass.CustomerName ||
+                    content.Customer_Name ||
+                    meta.customer_name ||
+                    meta.verification_data?.Customer_Name ||
+                    null;
+                const rawAddress =
+                    vtpass.customerAddress ||
+                    vtpass.CustomerAddress ||
+                    content.Address ||
+                    meta.customer_address ||
+                    meta.verification_data?.Address ||
+                    null;
 
                 base.customer_name = clean(rawName);
                 base.customer_address = clean(rawAddress);

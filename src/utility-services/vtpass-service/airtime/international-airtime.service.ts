@@ -7,6 +7,7 @@ import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
 import { PurchaseInternationalAirtimeDto } from './dto/purchase-international-airtime.dto';
 import { CashbackService } from 'src/common/cashback/cashback.service';
 import { VtpassTransactionOrchestrator, generateVtpassRequestId } from '../vtpass-transaction.orchestrator';
+import { normalizeVtpassResponseCode, determineTransactionStatus } from './airtime.validators';
 
 @Injectable()
 export class InternationalAirtimeService {
@@ -238,21 +239,19 @@ export class InternationalAirtimeService {
       const response = await axios.post(url, payload, { headers: this.getPostHeaders() });
 
       const txContent = response.data?.content?.transactions || {};
-      const responseCode = response.data?.code || '';
+      const responseCodeStr = normalizeVtpassResponseCode(response.data?.code);
       const txStatus = txContent.status?.toLowerCase() || '';
+      const responseDescription = response.data?.response_description || '';
+
+      this.logger.log(
+        `[Intl Airtime Query] VTpass raw: code=${JSON.stringify(response.data?.code)}, ` +
+        `normalized=${responseCodeStr}, txStatus=${txStatus}, desc="${responseDescription}"`,
+      );
 
       if (existingTx && existingTx.status === 'pending') {
-        let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
-        if (responseCode === '000' && txStatus === 'delivered') {
-          finalStatus = 'success';
-        } else if (
-          responseCode === '016' ||
-          responseCode === '040' ||
-          txStatus === 'failed' ||
-          txStatus === 'reversed'
-        ) {
-          finalStatus = 'failed';
-        }
+        const { finalStatus, shouldRefund } = determineTransactionStatus(
+          responseCodeStr, txStatus, responseDescription, this.logger,
+        );
 
         const metaData = (existingTx.meta_data as any) || {};
 
@@ -268,25 +267,18 @@ export class InternationalAirtimeService {
               ...metaData,
               vtpass_response: response.data,
               vtpass_status: txStatus,
-              vtpass_code: responseCode,
+              vtpass_code: responseCodeStr,
             },
           },
         });
 
-        if (finalStatus === 'failed') {
+        if (shouldRefund && finalStatus === 'failed') {
           const meta = (existingTx.meta_data as any) || {};
           const walletRefund = typeof meta.wallet_charged === 'number' ? meta.wallet_charged : Number(existingTx.amount || 0);
           const cashbackRefund = typeof meta.cashback_used === 'number' ? meta.cashback_used : 0;
-          if (walletRefund > 0) {
-            await this.prisma.wallet.update({
-              where: { user_id: existingTx.user_id },
-              data: { current_balance: { increment: walletRefund } },
-            });
-            this.logger.log(`Refunded ₦${walletRefund} to wallet for user ${existingTx.user_id}`);
-          }
-          if (cashbackRefund > 0) {
-            this.cashbackService.refundCashback(existingTx.user_id, cashbackRefund).catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
-          }
+          await this.orchestrator.applyVtpassFailureRefundOnce(
+            request_id, existingTx.user_id, walletRefund, cashbackRefund, 'International Airtime Query',
+          );
         }
 
         this.logger.log(`International airtime transaction ${request_id} updated to: ${finalStatus}`);

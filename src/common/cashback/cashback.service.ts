@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CashbackServiceType, CashbackConfig, CashbackRule } from '@prisma/client';
+import { roundNgn } from 'src/common/money/round-ngn';
 
 export interface PaymentSplit {
   walletCharge: number;
@@ -120,7 +121,8 @@ export class CashbackService {
     serviceType: CashbackServiceType;
     transactionRef: string;
   }): Promise<{ credited: boolean; cashbackAmount: number; reason?: string }> {
-    const { userId, amount, serviceType, transactionRef } = params;
+    const { userId, amount: amountRaw, serviceType, transactionRef } = params;
+    const amount = roundNgn(amountRaw);
 
     try {
       // served from memory most of the time — only hits DB once every 60s
@@ -153,8 +155,8 @@ export class CashbackService {
         return { credited: false, cashbackAmount: 0, reason: 'zero_percentage' };
       }
 
-      let cashbackAmount = Math.round(amount * (percentage / 100) * 100) / 100;
-      if (cashbackAmount > maxCashback) cashbackAmount = maxCashback;
+      let cashbackAmount = roundNgn(amount * (percentage / 100));
+      if (cashbackAmount > maxCashback) cashbackAmount = roundNgn(maxCashback);
 
       // daily cap + wallet credit + history — one transaction, one round trip
       const startOfDay = new Date();
@@ -173,7 +175,7 @@ export class CashbackService {
 
         let finalAmount = cashbackAmount;
         if (finalAmount > remainingDaily) {
-          finalAmount = Math.round(remainingDaily * 100) / 100;
+          finalAmount = roundNgn(remainingDaily);
         }
 
         await tx.cashbackWallet.upsert({
@@ -226,7 +228,13 @@ export class CashbackService {
     totalAmount: number,
     useCashback: boolean,
   ): Promise<PaymentSplit> {
-    const noSplit: PaymentSplit = { walletCharge: totalAmount, cashbackCharge: 0, cashbackBefore: 0, cashbackAfter: 0 };
+    const total = roundNgn(totalAmount);
+    const noSplit: PaymentSplit = {
+      walletCharge: total,
+      cashbackCharge: 0,
+      cashbackBefore: 0,
+      cashbackAfter: 0,
+    };
 
     if (!useCashback) return noSplit;
 
@@ -236,10 +244,10 @@ export class CashbackService {
 
         if (!cbWallet || cbWallet.current_balance <= 0) return null;
 
-        const cashbackBefore = Number(cbWallet.current_balance);
-        const cashbackCharge = Math.min(cashbackBefore, totalAmount);
-        const walletCharge = Math.round((totalAmount - cashbackCharge) * 100) / 100;
-        const cashbackAfter = Math.round((cashbackBefore - cashbackCharge) * 100) / 100;
+        const cashbackBefore = roundNgn(Number(cbWallet.current_balance));
+        const cashbackCharge = roundNgn(Math.min(cashbackBefore, total));
+        const walletCharge = roundNgn(total - cashbackCharge);
+        const cashbackAfter = roundNgn(cashbackBefore - cashbackCharge);
 
         await tx.cashbackWallet.update({
           where: { user_id: userId },
@@ -269,17 +277,18 @@ export class CashbackService {
    * Safe to call with 0.
    */
   async refundCashback(userId: string, cashbackCharge: number): Promise<void> {
-    if (cashbackCharge <= 0) return;
+    const amt = roundNgn(cashbackCharge);
+    if (amt <= 0) return;
 
     try {
       await this.prisma.cashbackWallet.update({
         where: { user_id: userId },
         data: {
-          current_balance: { increment: cashbackCharge },
-          all_time_withdrawn: { decrement: cashbackCharge },
+          current_balance: { increment: amt },
+          all_time_withdrawn: { decrement: amt },
         },
       });
-      this.logger.log(`Refunded ₦${cashbackCharge} cashback to ${userId}`);
+      this.logger.log(`Refunded ₦${amt} cashback to ${userId}`);
     } catch (error: any) {
       this.logger.error(`Failed to refund cashback for ${userId}: ${error.message}`);
     }

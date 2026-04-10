@@ -35,25 +35,25 @@ export class CronService implements OnModuleInit {
     }
 
     // VTpass transaction requery - runs every 3 minutes - production only
-    if (process.env.NODE_ENV === 'production') {
-      cron.schedule('*/3 * * * *', async () => {
-          await this.requeryPendingVtpassTransactions();
-        });
-    }
+    // if (process.env.NODE_ENV === 'production') {
+    //   cron.schedule('*/3 * * * *', async () => {
+    //       await this.requeryPendingVtpassTransactions();
+    //     });
+    // }
 
     // Paystack transaction requery - runs every 20 minutes (pending deposits)
-    if (process.env.NODE_ENV === 'production') {
-      cron.schedule('*/2 * * * *', async () => {
-        await this.requeryPendingPaystackTransactions();
-      });
-    }
+    // if (process.env.NODE_ENV === 'production') {
+    //   cron.schedule('*/2 * * * *', async () => {
+    //     await this.requeryPendingPaystackTransactions();
+    //   });
+    // }
 
     // Stale Paystack transaction cleanup
     // Catches abandoned/failed payments that slipped through (user closed browser, network issues)
     // Runs every 30 minutes to reduce noise while still keeping the ledger clean.
-    cron.schedule('*/30 * * * *', async () => {
-      await this.cleanupStalePaystackTransactions();
-    });
+    // cron.schedule('*/30 * * * *', async () => {
+    //   await this.cleanupStalePaystackTransactions();
+    // });
   }
 
   /**

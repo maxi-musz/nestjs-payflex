@@ -9,6 +9,7 @@ import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
 import { EmailService } from 'src/common/mailer/email.service';
 import { VtpassTransactionOrchestrator, generateVtpassRequestId } from '../vtpass-transaction.orchestrator';
 import { toUserFriendlyVtpassPurchaseError } from '../vtpass-user-facing-messages';
+import { normalizeVtpassResponseCode, determineTransactionStatus } from '../airtime/airtime.validators';
 import * as colors from 'colors';
 
 @Injectable()
@@ -203,46 +204,43 @@ export class ElectricityService {
       const response = await axios.post(url, payload, { headers: this.getPostHeaders() });
 
       const txContent = response.data?.content?.transactions || {};
-      const responseCode = response.data?.code || '';
+      const responseCodeStr = normalizeVtpassResponseCode(response.data?.code);
       const txStatus = txContent.status?.toLowerCase() || '';
+      const responseDescription = response.data?.response_description || '';
+
+      this.logger.log(
+        `[Electricity Query] VTpass raw: code=${JSON.stringify(response.data?.code)}, ` +
+        `normalized=${responseCodeStr}, txStatus=${txStatus}, desc="${responseDescription}"`,
+      );
 
       if (existingTx && existingTx.status === 'pending') {
-        let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
-        if (responseCode === '000' && txStatus === 'delivered') {
-          finalStatus = 'success';
-        } else if (
-          responseCode === '016' ||
-          responseCode === '040' ||
-          txStatus === 'failed' ||
-          txStatus === 'reversed'
-        ) {
-          finalStatus = 'failed';
-        }
+        const { finalStatus, shouldRefund } = determineTransactionStatus(
+          responseCodeStr, txStatus, responseDescription, this.logger,
+        );
 
         if (finalStatus !== 'pending') {
-          await this.prisma.$transaction(async (tx) => {
-            await tx.transactionHistory.update({
-              where: { transaction_reference: request_id },
-              data: {
-                status: finalStatus,
-                transaction_number: txContent.transactionId?.toString() || existingTx.transaction_number,
-                meta_data: {
-                  ...(existingTx.meta_data as any),
-                  vtpass_requery: response.data,
-                  vtpass_status: txStatus,
-                  vtpass_code: responseCode,
-                },
+          await this.prisma.transactionHistory.update({
+            where: { transaction_reference: request_id },
+            data: {
+              status: finalStatus,
+              transaction_number: txContent.transactionId?.toString() || existingTx.transaction_number,
+              meta_data: {
+                ...(existingTx.meta_data as any),
+                vtpass_requery: response.data,
+                vtpass_status: txStatus,
+                vtpass_code: responseCodeStr,
               },
-            });
-
-            if (finalStatus === 'failed') {
-              await tx.wallet.update({
-                where: { user_id: userPayload.sub },
-                data: { current_balance: { increment: Number(existingTx.amount) } },
-              });
-              this.logger.log(`Refunded ${existingTx.amount} for failed electricity tx ${request_id}`);
-            }
+            },
           });
+
+          if (shouldRefund && finalStatus === 'failed') {
+            const meta = (existingTx.meta_data as any) || {};
+            const walletRefund = typeof meta.wallet_charged === 'number' ? meta.wallet_charged : Number(existingTx.amount || 0);
+            const cashbackRefund = typeof meta.cashback_used === 'number' ? meta.cashback_used : 0;
+            await this.orchestrator.applyVtpassFailureRefundOnce(
+              request_id, existingTx.user_id, walletRefund, cashbackRefund, 'Electricity Query',
+            );
+          }
         }
       }
 
@@ -310,6 +308,8 @@ export class ElectricityService {
         variation_code: dto.variation_code,
         amount: amountNum,
         phone: dto.phone,
+        ...(dto.customer_name ? { customer_name: dto.customer_name } : {}),
+        ...(dto.customer_address ? { customer_address: dto.customer_address } : {}),
       },
       description: `${discoLabel} ${dto.variation_code} - ${dto.billersCode}`,
       provider: dto.serviceID,

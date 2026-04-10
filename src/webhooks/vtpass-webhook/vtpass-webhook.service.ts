@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { StatsService } from 'src/common/stats/stats.service';
+import { VtpassTransactionOrchestrator } from 'src/utility-services/vtpass-service/vtpass-transaction.orchestrator';
+import {
+  normalizeVtpassResponseCode,
+  determineTransactionStatus,
+} from 'src/utility-services/vtpass-service/airtime/airtime.validators';
 import * as colors from 'colors/safe';
 
 @Injectable()
@@ -10,6 +15,7 @@ export class VtpassWebhookService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly statsService: StatsService,
+    private readonly orchestrator: VtpassTransactionOrchestrator,
   ) {}
 
   /**
@@ -70,77 +76,52 @@ export class VtpassWebhookService {
         return;
       }
 
-      // Check if already processed
-      if (dbTransaction.status === 'success' && transactionStatus === 'delivered') {
-        this.logger.log(colors.yellow(`Transaction ${requestId} already marked as successful`));
+      // Skip if already resolved to a terminal state
+      if (dbTransaction.status === 'success' || dbTransaction.status === 'failed') {
+        this.logger.log(colors.yellow(`Transaction ${requestId} already resolved as '${dbTransaction.status}', ignoring webhook`));
         return;
       }
 
-      // Determine final status based on VTpass status
-      let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
-      let shouldRefund = false;
+      const normalizedCode = normalizeVtpassResponseCode(code);
       const metaData = dbTransaction.meta_data as any || {};
 
-      if (transactionStatus === 'delivered') {
-        finalStatus = 'success';
-        this.logger.log(colors.green(`Transaction ${requestId} delivered successfully`));
-      } else if (transactionStatus === 'reversed' || code === '040') {
-        // Transaction reversal - refund the user
-        finalStatus = 'failed';
-        shouldRefund = true;
-        this.logger.warn(
-          colors.yellow(`Transaction ${requestId} reversed. Refunding user.`)
-        );
-      } else if (transactionStatus === 'failed' || code === '016') {
-        // Transaction failed - refund the user
-        finalStatus = 'failed';
-        shouldRefund = true;
-        this.logger.warn(
-          colors.yellow(`Transaction ${requestId} failed. Refunding user.`)
-        );
-      } else {
-        // Still pending or other status
-        finalStatus = 'pending';
-        this.logger.log(
-          colors.cyan(`Transaction ${requestId} still processing. Status: ${transactionStatus}`)
+      this.logger.log(
+        colors.cyan(`[Webhook] VTpass raw: code=${JSON.stringify(code)}, normalized=${normalizedCode}, txStatus=${transactionStatus}, desc="${response_description}"`),
+      );
+
+      const { finalStatus, shouldRefund } = determineTransactionStatus(
+        normalizedCode, transactionStatus, response_description || '', this.logger,
+      );
+
+      // Update transaction status in database
+      await this.prisma.transactionHistory.update({
+        where: { transaction_reference: requestId },
+        data: {
+          status: finalStatus,
+          transaction_number: transactionId?.toString() || dbTransaction.transaction_number,
+          commission: typeof transaction.commission === 'number'
+            ? transaction.commission
+            : Number(transaction.commission) || dbTransaction.commission || 0,
+          meta_data: {
+            ...metaData,
+            vtpass_webhook: data,
+            vtpass_status: transactionStatus,
+            vtpass_code: code,
+            webhook_received_at: new Date().toISOString(),
+          },
+        },
+      });
+
+      // Idempotent refund via orchestrator (handles flag check + correct amounts)
+      if (shouldRefund) {
+        const walletRefund = typeof metaData.wallet_charged === 'number'
+          ? metaData.wallet_charged : Number(dbTransaction.amount || 0);
+        const cashbackRefund = typeof metaData.cashback_used === 'number'
+          ? metaData.cashback_used : 0;
+        await this.orchestrator.applyVtpassFailureRefundOnce(
+          requestId, dbTransaction.user_id, walletRefund, cashbackRefund, 'VTpass Webhook',
         );
       }
-
-      // Update transaction in database
-      await this.prisma.$transaction(async (tx) => {
-        // Update transaction status
-        await tx.transactionHistory.update({
-          where: { transaction_reference: requestId },
-          data: {
-            status: finalStatus,
-            transaction_number: transactionId?.toString() || dbTransaction.transaction_number,
-            commission: typeof transaction.commission === 'number' 
-              ? transaction.commission 
-              : Number(transaction.commission) || dbTransaction.commission || 0,
-            meta_data: {
-              ...metaData,
-              vtpass_webhook: data,
-              vtpass_status: transactionStatus,
-              vtpass_code: code,
-              webhook_received_at: new Date().toISOString(),
-            },
-          },
-        });
-
-        // Refund user if transaction failed or was reversed
-        if (shouldRefund && dbTransaction.status !== 'failed') {
-          const refundAmount = dbTransaction.smipay_amount || dbTransaction.amount || 0;
-          if (refundAmount > 0) {
-            await tx.wallet.update({
-              where: { user_id: dbTransaction.user_id },
-              data: { current_balance: { increment: Number(refundAmount) } },
-            });
-            this.logger.log(
-              colors.green(`Refunded ${refundAmount} to user ${dbTransaction.user_id}`)
-            );
-          }
-        }
-      });
 
       // Update daily stats when status changes to success (commission + markup + volume)
       if (dbTransaction.status === 'pending' && finalStatus === 'success') {

@@ -44,4 +44,12 @@ export class PurchaseElectricityDto {
   @IsOptional()
   @IsBoolean()
   use_cashback?: boolean;
+
+  @IsOptional()
+  @IsString()
+  customer_name?: string;
+
+  @IsOptional()
+  @IsString()
+  customer_address?: string;
 }

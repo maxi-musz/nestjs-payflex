@@ -8,6 +8,7 @@ import { VerifySmartcardDto } from './dto/verify-smartcard.dto';
 import { VtpassCredentialsHelper } from '../vtpass-credentials.helper';
 import { EmailService } from 'src/common/mailer/email.service';
 import { VtpassTransactionOrchestrator, generateVtpassRequestId } from '../vtpass-transaction.orchestrator';
+import { normalizeVtpassResponseCode, determineTransactionStatus } from '../airtime/airtime.validators';
 
 @Injectable()
 export class CableService {
@@ -181,21 +182,19 @@ export class CableService {
       const response = await axios.post(url, payload, { headers: this.getPostHeaders() });
 
       const txContent = response.data?.content?.transactions || {};
-      const responseCode = response.data?.code || '';
+      const responseCodeStr = normalizeVtpassResponseCode(response.data?.code);
       const txStatus = txContent.status?.toLowerCase() || '';
+      const responseDescription = response.data?.response_description || '';
+
+      this.logger.log(
+        `[Cable Query] VTpass raw: code=${JSON.stringify(response.data?.code)}, ` +
+        `normalized=${responseCodeStr}, txStatus=${txStatus}, desc="${responseDescription}"`,
+      );
 
       if (existingTx && existingTx.status === 'pending') {
-        let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
-        if (responseCode === '000' && txStatus === 'delivered') {
-          finalStatus = 'success';
-        } else if (
-          responseCode === '016' ||
-          responseCode === '040' ||
-          txStatus === 'failed' ||
-          txStatus === 'reversed'
-        ) {
-          finalStatus = 'failed';
-        }
+        const { finalStatus, shouldRefund } = determineTransactionStatus(
+          responseCodeStr, txStatus, responseDescription, this.logger,
+        );
 
         if (finalStatus !== 'pending') {
           await this.prisma.transactionHistory.update({
@@ -207,17 +206,18 @@ export class CableService {
                 ...(existingTx.meta_data as any),
                 vtpass_requery: response.data,
                 vtpass_status: txStatus,
-                vtpass_code: responseCode,
+                vtpass_code: responseCodeStr,
               },
             },
           });
 
-          if (finalStatus === 'failed') {
-            await this.prisma.wallet.update({
-              where: { user_id: userPayload.sub },
-              data: { current_balance: { increment: Number(existingTx.amount) } },
-            });
-            this.logger.log(`Refunded ${existingTx.amount} for failed cable tx ${request_id}`);
+          if (shouldRefund && finalStatus === 'failed') {
+            const meta = (existingTx.meta_data as any) || {};
+            const walletRefund = typeof meta.wallet_charged === 'number' ? meta.wallet_charged : Number(existingTx.amount || 0);
+            const cashbackRefund = typeof meta.cashback_used === 'number' ? meta.cashback_used : 0;
+            await this.orchestrator.applyVtpassFailureRefundOnce(
+              request_id, existingTx.user_id, walletRefund, cashbackRefund, 'Cable Query',
+            );
           }
         }
       }

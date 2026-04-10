@@ -10,6 +10,7 @@ import { EmailService } from 'src/common/mailer/email.service';
 import { CashbackService } from 'src/common/cashback/cashback.service';
 import { VtpassTransactionOrchestrator, generateVtpassRequestId } from '../vtpass-transaction.orchestrator';
 import { toUserFriendlyVtpassPurchaseError } from '../vtpass-user-facing-messages';
+import { normalizeVtpassResponseCode, determineTransactionStatus } from '../airtime/airtime.validators';
 import * as colors from 'colors';
 
 @Injectable()
@@ -352,21 +353,19 @@ export class EducationService {
       const response = await axios.post(url, payload, { headers: this.getPostHeaders() });
 
       const txContent = response.data?.content?.transactions || {};
-      const responseCode = response.data?.code || '';
+      const responseCodeStr = normalizeVtpassResponseCode(response.data?.code);
       const txStatus = txContent.status?.toLowerCase() || '';
+      const responseDescription = response.data?.response_description || '';
+
+      this.logger.log(
+        `[Education Query] VTpass raw: code=${JSON.stringify(response.data?.code)}, ` +
+        `normalized=${responseCodeStr}, txStatus=${txStatus}, desc="${responseDescription}"`,
+      );
 
       if (existingTx && existingTx.status === 'pending') {
-        let finalStatus: 'pending' | 'success' | 'failed' = 'pending';
-        if (responseCode === '000' && txStatus === 'delivered') {
-          finalStatus = 'success';
-        } else if (
-          responseCode === '016' ||
-          responseCode === '040' ||
-          txStatus === 'failed' ||
-          txStatus === 'reversed'
-        ) {
-          finalStatus = 'failed';
-        }
+        const { finalStatus, shouldRefund } = determineTransactionStatus(
+          responseCodeStr, txStatus, responseDescription, this.logger,
+        );
 
         const metaData = (existingTx.meta_data as any) || {};
         const serviceID = metaData?.serviceID || existingTx.provider || '';
@@ -384,26 +383,19 @@ export class EducationService {
               ...metaData,
               vtpass_response: response.data,
               vtpass_status: txStatus,
-              vtpass_code: responseCode,
+              vtpass_code: responseCodeStr,
               ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
             },
           },
         });
 
-        if (finalStatus === 'failed') {
-          const meta = (existingTx.meta_data as any) || {};
-          const walletRefund = typeof meta.wallet_charged === 'number' ? meta.wallet_charged : Number(existingTx.amount || 0);
-          const cashbackRefund = typeof meta.cashback_used === 'number' ? meta.cashback_used : 0;
-          if (walletRefund > 0) {
-            await this.prisma.wallet.update({
-              where: { user_id: existingTx.user_id },
-              data: { current_balance: { increment: walletRefund } },
-            });
-            this.logger.log(`Refunded ₦${walletRefund} to wallet for user ${existingTx.user_id}`);
-          }
-          if (cashbackRefund > 0) {
-            this.cashbackService.refundCashback(existingTx.user_id, cashbackRefund).catch((e) => this.logger.warn(`Cashback refund failed: ${e.message}`));
-          }
+        if (shouldRefund && finalStatus === 'failed') {
+          await this.orchestrator.applyVtpassFailureRefundOnce(
+            request_id, existingTx.user_id,
+            typeof metaData.wallet_charged === 'number' ? metaData.wallet_charged : Number(existingTx.amount || 0),
+            typeof metaData.cashback_used === 'number' ? metaData.cashback_used : 0,
+            'Education Query',
+          );
         }
 
         this.logger.log(`Transaction ${request_id} updated to: ${finalStatus}`);

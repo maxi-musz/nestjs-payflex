@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsString, Length } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, Matches } from 'class-validator';
 import { IsSixDigitPassword } from '../../common/validation/six-digit-password.decorator';
 
 export class ResetPasswordDto {
@@ -8,7 +8,7 @@ export class ResetPasswordDto {
 
   @IsString()
   @IsNotEmpty()
-  @Length(4, 4)
+  @Matches(/^\d{6}$/, { message: 'OTP must be exactly 6 digits' })
   otp: string;
 
   @IsSixDigitPassword()
