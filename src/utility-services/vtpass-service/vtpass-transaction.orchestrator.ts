@@ -103,11 +103,9 @@ export class VtpassTransactionOrchestrator {
     return { 'api-key': apiKey, 'secret-key': secretKey, 'Content-Type': 'application/json' };
   }
 
-  /**
-   * Idempotent failure refund: cron requery and the purchase handler can both run close together.
-   * Without a single flag + merge of meta_data, step 8 could wipe vtpass_failure_refund_applied and
-   * the purchase path would credit the wallet a second time.
-   */
+  // Refunds wallet + cashback for a failed tx. Uses Serializable isolation + a meta_data flag
+  // (vtpass_failure_refund_applied) to guarantee the refund only happens once, even if both
+  // executePurchase and the cron requery try to refund the same tx at the same time.
   private async applyVtpassFailureRefundOnce(
     requestId: string,
     userId: string,
@@ -126,14 +124,16 @@ export class VtpassTransactionOrchestrator {
             return { appliedThisRun: false, wasAlreadyComplete: false };
           }
           const meta = (row.meta_data as Record<string, unknown>) || {};
+
+          // If another path already refunded this tx, just fix the balance snapshots on the row
           if (meta['vtpass_failure_refund_applied'] === true) {
             this.logger.warn(
               `[${serviceLabel}] Failure refund already applied for ${requestId}; skipping duplicate credit`,
             );
-            // Wallet was restored earlier, but the row may still show post-debit snapshots; align for admin / APIs.
             const wRef = Number(meta['vtpass_failure_wallet_refund_amount']) || 0;
             const cRef = Number(meta['vtpass_failure_cashback_refund_amount']) || 0;
             const patch: { balance_after?: number; cashback_balance_after?: number } = {};
+            // Reset balance_after to balance_before since the net wallet change after refund is zero
             if (wRef > 0 && row.balance_before != null) {
               patch.balance_after = Number(row.balance_before);
             }
@@ -148,16 +148,19 @@ export class VtpassTransactionOrchestrator {
             }
             return { appliedThisRun: false, wasAlreadyComplete: true };
           }
+
+          // Credit the main wallet back (reverses the debit from step 4)
           if (walletRefund > 0) {
             await tx.wallet.update({
               where: { user_id: userId },
               data: {
                 current_balance: { increment: walletRefund },
-                // Debit path incremented all_time_withdrawn; reverse it when refunding a failed attempt.
                 all_time_withdrawn: { decrement: walletRefund },
               },
             });
           }
+
+          // Credit the cashback wallet back (P2025 = wallet row doesn't exist, non-fatal)
           if (cashbackRefund > 0) {
             try {
               await tx.cashbackWallet.update({
@@ -175,6 +178,9 @@ export class VtpassTransactionOrchestrator {
               }
             }
           }
+
+          // Set the refund flag + amounts in meta_data, and fix balance snapshots on the tx row.
+          // Spreads ...meta so we don't clobber vtpass_response or requery_count written elsewhere.
           await tx.transactionHistory.update({
             where: { transaction_reference: requestId },
             data: {
@@ -185,7 +191,7 @@ export class VtpassTransactionOrchestrator {
                 vtpass_failure_cashback_refund_amount: cashbackRefund,
                 vtpass_failure_refund_at: new Date().toISOString(),
               } as any,
-              // Pending row stored post-debit snapshots; after refund the net effect on wallet is zero — match pre-debit.
+              // After refund, net wallet effect is zero — so balance_after should match balance_before
               ...(walletRefund > 0 && row.balance_before != null
                 ? { balance_after: Number(row.balance_before) }
                 : {}),
@@ -197,6 +203,7 @@ export class VtpassTransactionOrchestrator {
           return { appliedThisRun: true, wasAlreadyComplete: false };
         },
         {
+          // Serializable prevents two concurrent callers from both seeing flag=false and both crediting
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
           maxWait: 5000,
           timeout: 15000,
@@ -207,6 +214,7 @@ export class VtpassTransactionOrchestrator {
     try {
       return await run();
     } catch (e: any) {
+      // P2034 = Serializable conflict — another tx touched the same row. Retry once.
       if (e?.code === 'P2034') {
         this.logger.warn(`[${serviceLabel}] Serializable retry for refund ${requestId}`);
         return run();
@@ -227,7 +235,7 @@ export class VtpassTransactionOrchestrator {
 
     this.logger.log(`[${serviceLabel}] Purchase: requestId=${requestId}, charge=${chargeAmount}, userId=${userId}`);
 
-    // ── 1. Idempotency ──────────────────────────────────────────────────
+    // ── 1. Idempotency — if this requestId already exists, return the cached result instead of re-processing
     const existingTx = await this.prisma.transactionHistory.findUnique({
       where: { transaction_reference: requestId },
     });
@@ -237,25 +245,29 @@ export class VtpassTransactionOrchestrator {
         const cached = (existingTx.meta_data as any)?.vtpass_response;
         return new ApiResponseDto(true, `${serviceLabel} purchase already completed`, cached || { requestId, code: '000' });
       }
+      // Pending or failed — tell the client without re-charging
       const msg = existingTx.status === 'pending' ? 'Transaction is still processing' : 'Previous transaction attempt failed';
       const cached = (existingTx.meta_data as any)?.vtpass_response;
       return new ApiResponseDto(false, msg, cached || { requestId, status: existingTx.status });
     }
 
+    // Block users with too many recent failures (prevents rapid retry abuse)
     await this.vtpassFailureCooldown.assertNotInFailureCooldown(userId);
+    // Verify wallet balance is consistent with tx history (anti-fraud sanity check)
     await this.walletIntegrity.assertWalletIntegrityForPurchase(userId);
 
-    // ── 2. State trackers ───────────────────────────────────────────────
+    // ── 2. State trackers — these flags tell the catch block whether a refund already happened
     let split: PaymentSplit = { walletCharge: chargeAmount, cashbackCharge: 0, cashbackBefore: 0, cashbackAfter: 0 };
     let walletRefundedInTryBlock = false;
     let cashbackRefundedInTryBlock = false;
 
     try {
-      // ── 3. Cashback resolution ──────────────────────────────────────
+      // ── 3. Cashback resolution — splits chargeAmount into walletCharge + cashbackCharge
       split = await this.cashbackService.resolvePayment(userId, chargeAmount, useCashback);
 
-      // ── 4. Atomic wallet debit + pending tx ─────────────────────────
+      // ── 4. Atomic wallet debit + create PENDING tx row (all-or-nothing inside a Prisma transaction)
       const createdTx = await this.prisma.$transaction(async (tx) => {
+        // Second idempotency check inside the transaction to catch race conditions
         const dup = await tx.transactionHistory.findUnique({ where: { transaction_reference: requestId } });
         if (dup) return dup;
 
@@ -270,6 +282,7 @@ export class VtpassTransactionOrchestrator {
         }
         const balance_after = balance_before - split.walletCharge;
 
+        // Debit the user's wallet
         if (split.walletCharge > 0) {
           await tx.wallet.update({
             where: { user_id: userId },
@@ -279,6 +292,7 @@ export class VtpassTransactionOrchestrator {
 
         this.logger.log(`[${serviceLabel}] Wallet: before=${balance_before}, after=${balance_after}${split.cashbackCharge > 0 ? ` (₦${split.cashbackCharge} cashback)` : ''}`);
 
+        // Create the tx row as 'pending' — it stays pending until VTpass responds
         return await tx.transactionHistory.create({
           data: {
             user_id: userId,
@@ -303,15 +317,17 @@ export class VtpassTransactionOrchestrator {
         });
       });
 
-      // ── 5. POST to VTpass ───────────────────────────────────────────
+      // ── 5. POST to VTpass /pay — this is where the actual purchase happens on VTpass's side
       const response = await axios.post(url, vtpassPayload, { headers: this.getPostHeaders() });
 
+      // Extract VTpass response fields we need for status determination
       const txContent = response.data?.content?.transactions || {};
       const responseCodeStr = normalizeVtpassResponseCode(response.data?.code);
       const txStatus = txContent.status?.toLowerCase() || '';
       const responseDescription = response.data?.response_description || '';
 
-      // ── 6. Determine status ─────────────────────────────────────────
+      // ── 6. Determine if tx succeeded, failed, or is still pending based on VTpass response codes
+      // code=000 + status=delivered → success | code=016 → failed | code=099 → still processing
       const { finalStatus, shouldRefund, shouldThrow, errorMessage } = determineTransactionStatus(
         responseCodeStr,
         txStatus,
@@ -319,14 +335,16 @@ export class VtpassTransactionOrchestrator {
         this.logger,
       );
 
-      // ── 7. Service-specific response processing ─────────────────────
+      // ── 7. Let the vertical service extract service-specific fields (e.g. electricity token, units)
       const extraMeta: Record<string, any> = config.onProcessResponse?.(response.data) || {};
 
+      // Only persist commission if the tx actually succeeded
       const commissionFromVtpass =
         typeof txContent.commission === 'number' ? txContent.commission : Number(txContent.commission) || 0;
       const commissionPersist = finalStatus === 'success' ? commissionFromVtpass : 0;
 
-      // ── 8. Update tx record (merge DB meta — never clobber cron/refund flags) ──
+      // ── 8. Update tx row with VTpass result. Re-reads meta_data first so we MERGE (not overwrite)
+      //    — this prevents clobbering refund flags if the cron requery wrote them between step 4 and now
       const latestRow = await this.prisma.transactionHistory.findUnique({
         where: { transaction_reference: requestId },
         select: { meta_data: true },
@@ -339,7 +357,7 @@ export class VtpassTransactionOrchestrator {
           status: finalStatus,
           transaction_number: txContent.transactionId?.toString() || null,
           commission: commissionPersist,
-          // Persist selected critical fields into dedicated columns when present in extraMeta
+          // If electricity service returned a token, persist it to its own column for easy querying
           ...(typeof (extraMeta as any).electricity_token === 'string' && (extraMeta as any).electricity_token
             ? { electricity_token: (extraMeta as any).electricity_token }
             : {}),
@@ -353,7 +371,7 @@ export class VtpassTransactionOrchestrator {
         },
       });
 
-      // ── 9. Refund on definitive failure (idempotent) ───────────────
+      // ── 9. If VTpass definitively failed/reversed, refund the wallet (idempotent — safe to call twice)
       if (shouldRefund) {
         this.logger.warn(`[${serviceLabel}] Refund required: wallet=${split.walletCharge}, cashback=${split.cashbackCharge}, status=${finalStatus}`);
         const refundResult = await this.applyVtpassFailureRefundOnce(
@@ -363,10 +381,12 @@ export class VtpassTransactionOrchestrator {
           split.cashbackCharge,
           serviceLabel,
         );
+        // Track whether refund happened so the catch block doesn't try again
         walletRefundedInTryBlock =
           split.walletCharge > 0 && (refundResult.appliedThisRun || refundResult.wasAlreadyComplete);
         cashbackRefundedInTryBlock =
           split.cashbackCharge > 0 && (refundResult.appliedThisRun || refundResult.wasAlreadyComplete);
+        // Throw after refunding so the user sees a clean error (catch block will record it)
         if (shouldThrow) {
           const msg = config.humanizeError
             ? config.humanizeError(errorMessage)
@@ -375,8 +395,9 @@ export class VtpassTransactionOrchestrator {
         }
       }
 
-      // ── 10. Audit + Stats ───────────────────────────────────────────
+      // ── 10. Audit log + stats (fire-and-forget — failures here don't affect the user)
       const auditStatusEnum = finalStatus === 'success' ? AuditStatus.SUCCESS : finalStatus === 'failed' ? AuditStatus.FAILURE : AuditStatus.PENDING;
+      // If we refunded, the actual balance_after = balance_before (net zero), not the post-debit value
       const mainWalletRestoredAfterFailure =
         finalStatus === 'failed' && shouldRefund && split.walletCharge > 0;
       const auditBalanceAfter = mainWalletRestoredAfterFailure
@@ -402,27 +423,30 @@ export class VtpassTransactionOrchestrator {
       this.statsService
         .onTransactionCreated(chargeAmount, finalStatus, markupValue || 0, vtpassCommission)
         .catch((e) => this.logger.warn(`[${serviceLabel}] Stats failed: ${e.message}`));
-      // Match actual wallet movement: debit was split.walletCharge; refunds restore wallet so net debit is zero.
+      // Only count as a real debit in stats if the money actually left the wallet (not refunded)
       if (split.walletCharge > 0 && !shouldRefund) {
         this.statsService
           .onWalletDebited(split.walletCharge)
           .catch((e) => this.logger.warn(`[${serviceLabel}] Stats wallet debit failed: ${e.message}`));
       }
 
-      // ── 11. Success rewards + callback ──────────────────────────────
+      // ── 11. On success: award cashback, check referral bonus, first-tx bonus, push notification
       if (finalStatus === 'success') {
+        // Calculate and credit cashback reward for this purchase
         const cashbackResult = await this.cashbackService
           .processCashback({ userId, amount: chargeAmount, serviceType: cashbackServiceType as any, transactionRef: requestId })
           .catch((e) => {
             this.logger.warn(`[${serviceLabel}] Cashback reward failed: ${e.message}`);
             return { credited: false, cashbackAmount: 0 };
           });
+        // Record the earned cashback on the tx row so it shows in the user's transaction history
         if (cashbackResult.credited && cashbackResult.cashbackAmount > 0) {
           await this.prisma.transactionHistory.update({
             where: { transaction_reference: requestId },
             data: { cashback_earned: cashbackResult.cashbackAmount },
           });
         }
+        // All of these are fire-and-forget — none should block or fail the purchase response
         this.referralService
           .checkAndTriggerReward(userId, chargeAmount)
           .catch((e) => this.logger.warn(`[${serviceLabel}] Referral reward failed: ${e.message}`));
@@ -433,20 +457,24 @@ export class VtpassTransactionOrchestrator {
           .sendTransactionNotification(userId, transactionType, chargeAmount, 'success', createdTx.id)
           .catch((e) => this.logger.warn(`[${serviceLabel}] Push notification failed: ${e.message}`));
 
+        // Vertical-specific callback (e.g. electricity service might save token details here)
         if (config.onSuccess) {
           config.onSuccess(response.data, createdTx).catch((e: any) => this.logger.warn(`[${serviceLabel}] onSuccess callback failed: ${e.message}`));
         }
       }
 
-      // ── 12. Format response ─────────────────────────────────────────
+      // ── 12. Build and return the API response to the client
+      // Show the pre-debit balance if wallet was refunded, otherwise show post-debit balance
       const walletBalanceForResponse = mainWalletRestoredAfterFailure
         ? Number(createdTx.balance_before)
         : Number(createdTx.balance_after);
       const formattedResponse: any = { id: createdTx.id, ...response.data, wallet_balance: walletBalanceForResponse };
+      // Let the vertical service add extra fields to the response (e.g. electricity token)
       if (config.onEnrichResponse) {
         Object.assign(formattedResponse, config.onEnrichResponse(response.data, extraMeta));
       }
 
+      // If VTpass is still processing, tell the client to wait — cron requery will resolve it later
       if (finalStatus === 'pending') {
         return new ApiResponseDto(true, 'Transaction is being processed', {
           ...formattedResponse,
@@ -458,10 +486,11 @@ export class VtpassTransactionOrchestrator {
       this.logger.log(`[${serviceLabel}] Purchase completed successfully`);
       return new ApiResponseDto(true, `${serviceLabel} purchase successful`, formattedResponse);
     } catch (error: any) {
-      // ── Catch block ─────────────────────────────────────────────────
+      // ── CATCH BLOCK — handles errors from any step above (network timeout, VTpass 5xx, HttpException from step 9, etc.)
       this.logger.error(`[${serviceLabel}] Error: ${error.message}`);
 
       try {
+        // Check if the tx row was created in step 4 before the error happened
         const existingForUpdate = await this.prisma.transactionHistory.findUnique({ where: { transaction_reference: requestId } });
         const errorMeta = {
           request_id: requestId,
@@ -472,6 +501,9 @@ export class VtpassTransactionOrchestrator {
         if (existingForUpdate) {
           const curMeta = (existingForUpdate.meta_data as Record<string, unknown>) || {};
           const failureRefundDone = curMeta['vtpass_failure_refund_applied'] === true;
+
+          // BRANCH 1: Tx exists AND wallet was already refunded (in step 9, or by cron requery)
+          // → Safe to mark as 'failed' because the user's money is back
           if (walletRefundedInTryBlock || failureRefundDone) {
             await this.prisma.transactionHistory.update({
               where: { transaction_reference: requestId },
@@ -481,6 +513,9 @@ export class VtpassTransactionOrchestrator {
               `[${serviceLabel}] catch: Tx marked failed (refund already applied in try, requery, or parallel path).`,
             );
           } else {
+            // BRANCH 2: Tx exists but NO refund happened — we don't know if VTpass processed it or not.
+            // CRITICAL: Keep as 'pending' so the cron requery can poll VTpass and resolve it later.
+            // DO NOT refund here — the money may have reached the provider (e.g. network timeout after VTpass processed).
             await this.prisma.transactionHistory.update({
               where: { transaction_reference: requestId },
               data: {
@@ -495,11 +530,13 @@ export class VtpassTransactionOrchestrator {
             this.logger.warn(`[${serviceLabel}] catch: No definitive VTpass response. Keeping tx PENDING for requery. NO REFUND.`);
           }
         } else {
-          // Tx was never created — wallet was never debited. Refund cashback if it was deducted.
+          // BRANCH 3: Tx row was never created — error happened before or during step 4's Prisma tx.
+          // Wallet was never debited (atomic tx rolled back), so just refund cashback if it was deducted.
           if (split.cashbackCharge > 0 && !cashbackRefundedInTryBlock) {
             await this.cashbackService.refundCashback(userId, split.cashbackCharge);
             this.logger.warn(`[${serviceLabel}] catch: Refunded ₦${split.cashbackCharge} cashback (tx never created, wallet never debited).`);
           }
+          // Record a failed tx row for audit trail even though no wallet debit happened
           await this.prisma.transactionHistory.create({
             data: {
               user_id: userId,
@@ -527,6 +564,7 @@ export class VtpassTransactionOrchestrator {
         this.logger.error(`[${serviceLabel}] Failed to record tx failure: ${updateError.message}`);
       }
 
+      // Log the failure in audit + stats regardless of which branch above ran
       this.auditLogService
         .logTransaction(auditFailAction as AuditAction, AuditStatus.FAILURE, null,
           { amount: chargeAmount, currency: 'NGN', transaction_ref: requestId },
@@ -535,6 +573,7 @@ export class VtpassTransactionOrchestrator {
         .catch((e) => this.logger.warn(`[${serviceLabel}] Audit log failed: ${e.message}`));
       this.statsService.onTransactionCreated(chargeAmount, 'failed', 0).catch((e) => this.logger.warn(`[${serviceLabel}] Stats failed: ${e.message}`));
 
+      // Re-throw HttpExceptions as-is (e.g. from step 9 after refund); convert axios errors to user-friendly messages
       if (error instanceof HttpException) throw error;
       if (error.response) {
         const rawMsg =
@@ -550,19 +589,22 @@ export class VtpassTransactionOrchestrator {
     }
   }
 
-  // ─── Requery flow (used by cron) ──────────────────────────────────────
-
+  // ─── Requery flow — called by cron to resolve pending VTpass transactions ────
+  // Polls VTpass /requery endpoint to check if a pending tx has been delivered or failed.
+  // If resolved: updates the tx row, refunds on failure, awards rewards on success.
   async requeryTransaction(requestId: string, config: VtpassRequeryConfig): Promise<{ updated: boolean; status?: string }> {
     const { serviceLabel, auditAction, auditFailAction, cashbackServiceType, maxRequeryAttempts, maxAgeMinutes } = config;
     const url = `${this.getBaseUrl()}/requery`;
     this.logger.log(`[Cron][${serviceLabel}] Requerying: requestId=${requestId}`);
 
     try {
+      // Only requery pending transactions — skip if already resolved
       const transaction = await this.prisma.transactionHistory.findUnique({ where: { transaction_reference: requestId } });
       if (!transaction) { this.logger.warn(`[Cron][${serviceLabel}] Tx not found: ${requestId}`); return { updated: false }; }
       if (transaction.status === 'success') return { updated: false, status: 'success' };
       if (transaction.status === 'failed') return { updated: false, status: 'failed' };
 
+      // Guard: don't requery too many times or if the tx is too old
       const metaData = (transaction.meta_data as any) || {};
       const requeryCount = metaData.requery_count || 0;
       const age = Date.now() - transaction.createdAt.getTime();
@@ -572,6 +614,7 @@ export class VtpassTransactionOrchestrator {
         return { updated: false };
       }
 
+      // Ask VTpass what happened with this transaction
       const response = await axios.post(url, { request_id: requestId }, { headers: this.getPostHeaders() });
       const txContent = response.data?.content?.transactions || {};
       const responseCodeStr = normalizeVtpassResponseCode(response.data?.code);
@@ -585,6 +628,7 @@ export class VtpassTransactionOrchestrator {
         this.logger,
       );
 
+      // Commission logic: use VTpass value on success, zero on failure, keep existing if still pending
       const newCommission =
         finalStatus === 'success'
           ? typeof txContent.commission === 'number'
@@ -596,6 +640,7 @@ export class VtpassTransactionOrchestrator {
               ? transaction.commission
               : Number(transaction.commission) || 0;
 
+      // Update the tx row with the requery result and bump the requery_count
       await this.prisma.$transaction(async (tx) => {
         await tx.transactionHistory.update({
           where: { transaction_reference: requestId },
@@ -615,7 +660,9 @@ export class VtpassTransactionOrchestrator {
         });
       });
 
+      // If VTpass confirmed failure, refund the wallet (idempotent — safe if executePurchase already refunded)
       if (shouldRefund && finalStatus === 'failed') {
+        // Prefer the exact wallet_charged/cashback_used from meta_data; fall back to tx amount
         const walletRefund =
           typeof metaData.wallet_charged === 'number' ? metaData.wallet_charged : Number(transaction.amount || 0);
         const cashbackRefund = typeof metaData.cashback_used === 'number' ? metaData.cashback_used : 0;
@@ -633,6 +680,7 @@ export class VtpassTransactionOrchestrator {
         }
       }
 
+      // If the tx is no longer pending, fire audit/stats and (on success) rewards + notifications
       if (finalStatus !== 'pending') {
         const auditStatusEnum = finalStatus === 'success' ? AuditStatus.SUCCESS : AuditStatus.FAILURE;
         this.auditLogService
@@ -642,6 +690,7 @@ export class VtpassTransactionOrchestrator {
           )
           .catch((e) => this.logger.warn(`[Cron][${serviceLabel}] Audit failed: ${e.message}`));
 
+        // Update stats to transition this tx from pending → final status
         const markupVal = typeof transaction.markup_value === 'number' ? transaction.markup_value : 0;
         const commissionVal =
           finalStatus === 'success'
@@ -652,6 +701,7 @@ export class VtpassTransactionOrchestrator {
         this.statsService.onTransactionStatusChanged('pending', finalStatus, transaction.amount || 0, markupVal, commissionVal)
           .catch((e) => this.logger.warn(`[Cron][${serviceLabel}] Stats failed: ${e.message}`));
 
+        // Same success rewards as executePurchase step 11 — for transactions that resolved late via cron
         if (finalStatus === 'success') {
           const amount = Number(transaction.amount || 0);
           this.pushNotificationService
@@ -675,6 +725,7 @@ export class VtpassTransactionOrchestrator {
 
       return { updated: true, status: finalStatus };
     } catch (error: any) {
+      // Cron errors are swallowed — the job will retry on the next cron tick
       this.logger.error(`[Cron][${serviceLabel}] Error requerying ${requestId}: ${error.message}`);
       return { updated: false };
     }
