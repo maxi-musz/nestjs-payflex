@@ -700,6 +700,11 @@ export class VtpassTransactionOrchestrator {
           this.logger.log(
             `[Cron][${serviceLabel}] Refunded wallet=${walletRefund} cashback=${cashbackRefund} for ${transaction.user_id}`,
           );
+          if (walletRefund > 0) {
+            this.statsService
+              .onWalletFunded(walletRefund)
+              .catch((e) => this.logger.warn(`[Cron][${serviceLabel}] Stats wallet refund-increment failed: ${e.message}`));
+          }
         }
       }
 
