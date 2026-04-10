@@ -44,4 +44,10 @@ export class QueryUsersDto {
 
   @IsOptional() @IsString() sort_by?: string;
   @IsOptional() @IsString() sort_order?: string;
+
+  /** Filter list to users whose main + cashback rollups match stored invariants (`ok`) or not (`fail`). Max 20k users per request. */
+  @IsOptional()
+  @IsString()
+  @IsIn(['ok', 'fail'])
+  wallet_integrity?: string;
 }

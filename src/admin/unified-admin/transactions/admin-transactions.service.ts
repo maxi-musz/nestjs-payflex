@@ -1,4 +1,10 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { isDevAdminEmail } from '../../../common/dev-admin-email.util';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditLogService } from '../../../common/audit-log/audit-log.service';
 import {
@@ -50,6 +56,50 @@ const TX_LIST_SELECT = {
   icon: { select: { secure_url: true } },
 } satisfies Prisma.TransactionHistorySelect;
 
+/** Light rows for per-tx main-wallet delta vs amount (same rules as admin Transactions table). */
+const TX_INTEGRITY_SCAN_SELECT = {
+  id: true,
+  createdAt: true,
+  amount: true,
+  credit_debit: true,
+  balance_before: true,
+  balance_after: true,
+  cashback_used: true,
+} satisfies Prisma.TransactionHistorySelect;
+
+type TxIntegrityScanRow = Prisma.TransactionHistoryGetPayload<{
+  select: typeof TX_INTEGRITY_SCAN_SELECT;
+}>;
+
+type TxListRow = Prisma.TransactionHistoryGetPayload<{ select: typeof TX_LIST_SELECT }>;
+
+const TX_ROW_WALLET_EPS = 0.05;
+
+/** Matches web `txnBalanceIntegrity`: credits/debits vs balance_after − balance_before. */
+function txnRowWalletIntegrity(
+  tx: Pick<
+    TxIntegrityScanRow,
+    'amount' | 'credit_debit' | 'balance_before' | 'balance_after' | 'cashback_used'
+  >,
+): 'ok' | 'warn' | 'na' {
+  if (tx.amount == null || tx.credit_debit == null) return 'na';
+  const amt = Number(tx.amount);
+  const bb = Number(tx.balance_before);
+  const ba = Number(tx.balance_after);
+  const d = ba - bb;
+  const cbUsed = Number(tx.cashback_used ?? 0);
+
+  if (tx.credit_debit === 'credit') {
+    if (Math.abs(amt) < TX_ROW_WALLET_EPS && Math.abs(d) < TX_ROW_WALLET_EPS) return 'ok';
+    return Math.abs(d - amt) < TX_ROW_WALLET_EPS ? 'ok' : 'warn';
+  }
+  if (tx.credit_debit === 'debit') {
+    const expected = -(amt - cbUsed);
+    return Math.abs(d - expected) < TX_ROW_WALLET_EPS ? 'ok' : 'warn';
+  }
+  return 'na';
+}
+
 const TX_DETAIL_SELECT = {
   ...TX_LIST_SELECT,
   account_id: true,
@@ -71,13 +121,26 @@ const USER_BRIEF_SELECT = {
   role: true,
   account_status: true,
   profile_image: { select: { secure_url: true } },
-  wallet: { select: { current_balance: true } },
-  cashbackWallet: { select: { current_balance: true } },
+  wallet: {
+    select: {
+      current_balance: true,
+      all_time_fuunding: true,
+      all_time_withdrawn: true,
+    },
+  },
+  cashbackWallet: {
+    select: {
+      current_balance: true,
+      all_time_earned: true,
+      all_time_withdrawn: true,
+    },
+  },
 } satisfies Prisma.UserSelect;
 
 @Injectable()
 export class AdminTransactionsService {
   private readonly logger = new Logger(AdminTransactionsService.name);
+  private readonly MAX_TX_ROW_WALLET_SCAN = 20_000;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -89,12 +152,38 @@ export class AdminTransactionsService {
   // LIST — Paginated, filterable, searchable
   // ──────────────────────────────────────────────────────────
 
-  async listTransactions(query: QueryTransactionsDto) {
+  async listTransactions(
+    query: QueryTransactionsDto,
+    requester?: { email?: string | null } | null,
+  ) {
+    const allowWalletDevTools = isDevAdminEmail(requester?.email ?? undefined);
     const page = Math.max(1, parseInt(query.page || '1', 10));
     const limit = Math.min(100, Math.max(1, parseInt(query.limit || '20', 10)));
     const skip = (page - 1) * limit;
 
     const where = this.buildWhereClause(query);
+
+    const integrityFilter =
+      allowWalletDevTools &&
+      (query.wallet_integrity === 'ok' || query.wallet_integrity === 'fail')
+        ? (query.wallet_integrity as 'ok' | 'fail')
+        : null;
+
+    const total = await this.prisma.transactionHistory.count({ where });
+    if (integrityFilter && total > this.MAX_TX_ROW_WALLET_SCAN) {
+      throw new BadRequestException(
+        `Wallet row integrity filter supports at most ${this.MAX_TX_ROW_WALLET_SCAN} transactions with the current filters. Narrow search or filters and try again.`,
+      );
+    }
+
+    const lightScanPromise =
+      allowWalletDevTools && total <= this.MAX_TX_ROW_WALLET_SCAN
+        ? this.prisma.transactionHistory.findMany({
+            where,
+            select: TX_INTEGRITY_SCAN_SELECT,
+            orderBy: { id: 'asc' },
+          })
+        : Promise.resolve([] as TxIntegrityScanRow[]);
 
     /** Merge list filters (search, user_id, status, dates, etc.) into every analytics query. */
     const scoped = (extra: Prisma.TransactionHistoryWhereInput): Prisma.TransactionHistoryWhereInput => {
@@ -117,8 +206,7 @@ export class AdminTransactionsService {
     prevMonthStart.setDate(prevMonthStart.getDate() - 30);
 
     const [
-      transactions,
-      total,
+      lightScan,
       successVolume,
       byStatus,
       byType,
@@ -134,14 +222,7 @@ export class AdminTransactionsService {
       totalRevenue,
       totalCommission,
     ] = await Promise.all([
-      this.prisma.transactionHistory.findMany({
-        where,
-        select: TX_LIST_SELECT,
-        skip,
-        take: limit,
-        orderBy: { [sortBy]: sortOrder },
-      }),
-      this.prisma.transactionHistory.count({ where }),
+      lightScanPromise,
       this.prisma.transactionHistory.aggregate({
         _sum: { amount: true },
         where: scoped({ status: 'success' }),
@@ -208,6 +289,55 @@ export class AdminTransactionsService {
       }),
     ]);
 
+    let row_wallet_rollups: { checks_out: number; doesnt_check: number } | undefined;
+    const row_wallet_rollups_capped =
+      allowWalletDevTools && total > this.MAX_TX_ROW_WALLET_SCAN;
+
+    if (allowWalletDevTools) {
+      if (lightScan.length > 0) {
+        let ok = 0;
+        let bad = 0;
+        for (const row of lightScan) {
+          const s = txnRowWalletIntegrity(row);
+          if (s === 'ok') ok++;
+          else bad++;
+        }
+        row_wallet_rollups = { checks_out: ok, doesnt_check: bad };
+      } else if (total === 0) {
+        row_wallet_rollups = { checks_out: 0, doesnt_check: 0 };
+      }
+    }
+
+    let listTotal = total;
+    let transactions: TxListRow[];
+
+    if (integrityFilter) {
+      const filtered = lightScan.filter((row) => {
+        const s = txnRowWalletIntegrity(row);
+        return integrityFilter === 'ok' ? s === 'ok' : s !== 'ok';
+      });
+      filtered.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      listTotal = filtered.length;
+      const pageIds = filtered.slice(skip, skip + limit).map((r) => r.id);
+      transactions =
+        pageIds.length === 0
+          ? []
+          : await this.prisma.transactionHistory.findMany({
+              where: { id: { in: pageIds } },
+              select: TX_LIST_SELECT,
+            });
+      const orderIndex = new Map(pageIds.map((id, i) => [id, i]));
+      transactions.sort((a, b) => (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0));
+    } else {
+      transactions = await this.prisma.transactionHistory.findMany({
+        where,
+        select: TX_LIST_SELECT,
+        skip,
+        take: limit,
+        orderBy: { [sortBy]: sortOrder },
+      });
+    }
+
     // Batch-fetch related users
     const userIds = [...new Set(transactions.map((t) => t.user_id))];
     const users = await this.prisma.user.findMany({
@@ -268,13 +398,15 @@ export class AdminTransactionsService {
         by_status: formatGroup(byStatus),
         by_type: formatGroup(byType),
         by_channel: formatGroup(byChannel),
+        ...(allowWalletDevTools && row_wallet_rollups ? { row_wallet_rollups } : {}),
+        ...(allowWalletDevTools && row_wallet_rollups_capped ? { row_wallet_rollups_capped: true } : {}),
       },
       transactions: enriched,
       meta: {
-        total,
+        total: listTotal,
         page,
         limit,
-        total_pages: Math.ceil(total / limit),
+        total_pages: Math.ceil(listTotal / limit),
       },
     });
   }
@@ -295,7 +427,6 @@ export class AdminTransactionsService {
       where: { id: transaction.user_id },
       select: {
         ...USER_BRIEF_SELECT,
-        wallet: { select: { current_balance: true } },
         tier: { select: { tier: true, name: true } },
       },
     });
@@ -352,7 +483,11 @@ export class AdminTransactionsService {
   // USER TRANSACTIONS — All transactions for a specific user
   // ──────────────────────────────────────────────────────────
 
-  async getUserTransactions(userId: string, query: QueryTransactionsDto) {
+  async getUserTransactions(
+    userId: string,
+    query: QueryTransactionsDto,
+    requester?: { email?: string | null } | null,
+  ) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, first_name: true, last_name: true, email: true },
@@ -360,7 +495,7 @@ export class AdminTransactionsService {
     if (!user) throw new NotFoundException('User not found');
 
     const overrideQuery = { ...query, user_id: userId };
-    return this.listTransactions(overrideQuery);
+    return this.listTransactions(overrideQuery, requester);
   }
 
   // ──────────────────────────────────────────────────────────

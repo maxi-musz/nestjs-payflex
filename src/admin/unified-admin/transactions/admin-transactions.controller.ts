@@ -43,14 +43,14 @@ export class AdminTransactionsController {
     @Req() req: any,
   ) {
     this.assertAdmin(req.user);
-    return this.txService.getUserTransactions(userId, query);
+    return this.txService.getUserTransactions(userId, query, req.user);
   }
 
   /** GET /unified-admin/transactions — List all transactions (paginated + filtered) */
   @Get()
   listTransactions(@Query() query: QueryTransactionsDto, @Req() req: any) {
     this.assertAdmin(req.user);
-    return this.txService.listTransactions(query);
+    return this.txService.listTransactions(query, req.user);
   }
 
   /** GET /unified-admin/transactions/:id — Single transaction detail */

@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsEnum, IsNumberString } from 'class-validator';
+import { IsOptional, IsString, IsEnum, IsNumberString, IsIn } from 'class-validator';
 import {
   TransactionStatus,
   TransactionType,
@@ -26,6 +26,10 @@ export class QueryTransactionsDto {
 
   @IsOptional() @IsString() sort_by?: string;
   @IsOptional() @IsString() sort_order?: string;
+
+  /** Dev-only: filter by row main-wallet delta vs amount (`ok` / `fail`). Max 20k rows per request. */
+  @IsOptional() @IsString() @IsIn(['ok', 'fail'])
+  wallet_integrity?: string;
 }
 
 export class TransactionStatsQueryDto {

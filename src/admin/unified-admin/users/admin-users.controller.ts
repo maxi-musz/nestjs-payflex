@@ -35,7 +35,7 @@ export class AdminUsersController {
   @Get()
   listUsers(@Query() query: QueryUsersDto, @Req() req: any) {
     this.assertAdmin(req.user);
-    return this.usersService.listUsers(query);
+    return this.usersService.listUsers(query, req.user);
   }
 
   @Get(':id')

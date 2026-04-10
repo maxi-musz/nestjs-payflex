@@ -4,6 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { isDevAdminEmail } from '../../../common/dev-admin-email.util';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditLogService } from '../../../common/audit-log/audit-log.service';
 import { StatsService } from '../../../common/stats/stats.service';
@@ -56,6 +57,24 @@ const USER_LIST_SELECT = {
   },
 } satisfies Prisma.UserSelect;
 
+/** Light rows for wallet rollup invariant scan (same rules as admin UI). */
+const USER_WALLET_ROLLUP_SCAN_SELECT = {
+  id: true,
+  createdAt: true,
+  wallet: {
+    select: { current_balance: true, all_time_fuunding: true, all_time_withdrawn: true },
+  },
+  cashbackWallet: {
+    select: { current_balance: true, all_time_earned: true, all_time_withdrawn: true },
+  },
+} satisfies Prisma.UserSelect;
+
+type UserWalletRollupScanRow = Prisma.UserGetPayload<{
+  select: typeof USER_WALLET_ROLLUP_SCAN_SELECT;
+}>;
+
+type AdminUserListRow = Prisma.UserGetPayload<{ select: typeof USER_LIST_SELECT }>;
+
 const USER_DETAIL_SELECT = {
   ...USER_LIST_SELECT,
   address: true,
@@ -91,6 +110,8 @@ const ADMIN_USER_IN_MEMORY_SORT_MAX_TOTAL = 20_000;
 @Injectable()
 export class AdminUsersService {
   private readonly logger = new Logger(AdminUsersService.name);
+  private readonly WALLET_ROLLUP_EPS = 0.05;
+  private readonly MAX_USERS_WALLET_ROLLUP_SCAN = 20_000;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -144,6 +165,37 @@ export class AdminUsersService {
     const sortBy = sortableFields.includes(query.sort_by || '') ? query.sort_by! : 'createdAt';
     const sortOrder = query.sort_order === 'asc' ? 'asc' : 'desc';
     return { [sortBy]: sortOrder };
+  }
+
+  /** Same invariants as unified-admin user balance column (main + optional cashback wallet). */
+  private userWalletRollupsIntegrityOk(user: {
+    wallet: {
+      current_balance: number;
+      all_time_fuunding: number;
+      all_time_withdrawn: number;
+    } | null;
+    cashbackWallet: {
+      current_balance: number;
+      all_time_earned: number;
+      all_time_withdrawn: number;
+    } | null;
+  }): boolean {
+    const eps = this.WALLET_ROLLUP_EPS;
+    if (user.wallet != null) {
+      const inv =
+        user.wallet.current_balance +
+        user.wallet.all_time_withdrawn -
+        user.wallet.all_time_fuunding;
+      if (Math.abs(inv) >= eps) return false;
+    }
+    if (user.cashbackWallet != null) {
+      const inv =
+        user.cashbackWallet.current_balance +
+        user.cashbackWallet.all_time_withdrawn -
+        user.cashbackWallet.all_time_earned;
+      if (Math.abs(inv) >= eps) return false;
+    }
+    return true;
   }
 
   /** Missing optional relation ranks after all numeric values (for both asc and desc). */
@@ -268,7 +320,11 @@ export class AdminUsersService {
   // LIST — Paginated, filterable, searchable
   // ──────────────────────────────────────────────────────────
 
-  async listUsers(query: QueryUsersDto) {
+  async listUsers(
+    query: QueryUsersDto,
+    requester?: { email?: string | null } | null,
+  ) {
+    const allowWalletDevTools = isDevAdminEmail(requester?.email ?? undefined);
     const page = Math.max(1, parseInt(query.page || '1', 10));
     const limit = Math.min(100, Math.max(1, parseInt(query.limit || '20', 10)));
     const skip = (page - 1) * limit;
@@ -329,11 +385,33 @@ export class AdminUsersService {
       where.cashbackWallet = { is: { current_balance: cashbackBalFilter } };
     }
 
+    const integrityFilter =
+      allowWalletDevTools &&
+      (query.wallet_integrity === 'ok' || query.wallet_integrity === 'fail')
+        ? (query.wallet_integrity as 'ok' | 'fail')
+        : null;
+
+    const total = await this.prisma.user.count({ where });
+    if (integrityFilter && total > this.MAX_USERS_WALLET_ROLLUP_SCAN) {
+      throw new BadRequestException(
+        `Wallet integrity filter supports at most ${this.MAX_USERS_WALLET_ROLLUP_SCAN} users with the current filters. Narrow search or filters and try again.`,
+      );
+    }
+
     const orderBy = this.buildUserListOrderBy(query);
     const listPreset = query.list_sort?.trim() ?? '';
     const useStableRelationSort = ADMIN_USER_RELATION_SORT_PRESETS.has(listPreset);
 
-    // Count + analytics in parallel (user rows fetched after — relation sorts need stable null handling)
+    const lightScanPromise =
+      allowWalletDevTools && total <= this.MAX_USERS_WALLET_ROLLUP_SCAN
+        ? this.prisma.user.findMany({
+            where,
+            select: USER_WALLET_ROLLUP_SCAN_SELECT,
+            orderBy: { id: 'asc' },
+          })
+        : Promise.resolve([] as UserWalletRollupScanRow[]);
+
+    // Analytics in parallel (user rows fetched after — relation sorts need stable null handling)
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const weekAgo = new Date(todayStart);
@@ -344,7 +422,7 @@ export class AdminUsersService {
     prevMonthStart.setDate(prevMonthStart.getDate() - 30);
 
     const [
-      total,
+      lightScan,
       activeUsers,
       suspendedUsers,
       byRole,
@@ -361,7 +439,7 @@ export class AdminUsersService {
       mainWalletSum,
       cashbackWalletSum,
     ] = await Promise.all([
-      this.prisma.user.count({ where }),
+      lightScanPromise,
       this.prisma.user.count({
         where: this.scopedUserWhere(where, { account_status: 'active' }),
       }),
@@ -416,16 +494,53 @@ export class AdminUsersService {
       }),
     ]);
 
-    const rawUsers =
-      useStableRelationSort && total <= ADMIN_USER_IN_MEMORY_SORT_MAX_TOTAL
-        ? await this.fetchUserListPageWithStableRelationSort(where, listPreset, skip, limit)
-        : await this.prisma.user.findMany({
-            where,
-            select: USER_LIST_SELECT,
-            skip,
-            take: limit,
-            orderBy,
-          });
+    let wallet_rollups: { checks_out: number; doesnt_check: number } | undefined;
+    const wallet_rollups_capped =
+      allowWalletDevTools && total > this.MAX_USERS_WALLET_ROLLUP_SCAN;
+
+    if (allowWalletDevTools && lightScan.length > 0) {
+      let checksOut = 0;
+      let doesntCheck = 0;
+      for (const row of lightScan) {
+        if (this.userWalletRollupsIntegrityOk(row)) checksOut++;
+        else doesntCheck++;
+      }
+      wallet_rollups = { checks_out: checksOut, doesnt_check: doesntCheck };
+    }
+
+    let listTotal = total;
+    let rawUsers: AdminUserListRow[];
+
+    if (integrityFilter) {
+      const filtered = lightScan.filter((row) =>
+        integrityFilter === 'ok'
+          ? this.userWalletRollupsIntegrityOk(row)
+          : !this.userWalletRollupsIntegrityOk(row),
+      );
+      filtered.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      listTotal = filtered.length;
+      const pageIds = filtered.slice(skip, skip + limit).map((r) => r.id);
+      rawUsers =
+        pageIds.length === 0
+          ? []
+          : await this.prisma.user.findMany({
+              where: { id: { in: pageIds } },
+              select: USER_LIST_SELECT,
+            });
+      const orderIndex = new Map(pageIds.map((id, i) => [id, i]));
+      rawUsers.sort((a, b) => (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0));
+    } else {
+      rawUsers =
+        useStableRelationSort && total <= ADMIN_USER_IN_MEMORY_SORT_MAX_TOTAL
+          ? await this.fetchUserListPageWithStableRelationSort(where, listPreset, skip, limit)
+          : await this.prisma.user.findMany({
+              where,
+              select: USER_LIST_SELECT,
+              skip,
+              take: limit,
+              orderBy,
+            });
+    }
 
     // Resolve tier names
     const tierIds = byTier.map((t) => t.tier_id!).filter(Boolean);
@@ -497,13 +612,15 @@ export class AdminUsersService {
         by_role: roleBreakdown,
         by_tier: tierBreakdown,
         recent_signups: recentSignups,
+        ...(allowWalletDevTools && wallet_rollups ? { wallet_rollups } : {}),
+        ...(allowWalletDevTools && wallet_rollups_capped ? { wallet_rollups_capped: true } : {}),
       },
       users,
       meta: {
-        total,
+        total: listTotal,
         page,
         limit,
-        total_pages: Math.ceil(total / limit),
+        total_pages: Math.ceil(listTotal / limit),
       },
     });
   }
