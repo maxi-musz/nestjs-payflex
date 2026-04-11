@@ -1,51 +1,59 @@
 import { marked } from 'marked';
+import type { RendererThis, Tokens } from 'marked';
 import { wrapInLayout } from 'src/common/mailer/email-layout';
 import { BRAND } from 'src/common/mailer/email-brand';
 
 /**
- * Converts markdown to email-safe HTML and wraps it in the
- * standard SmiPay branded layout (logo, footer, social links).
- *
- * Supports variable interpolation:
- *   {{first_name}}, {{last_name}}, {{email}}
+ * Marked v5+ / v17 uses token trees: block renderers must use `this.parser.parse(tokens)`
+ * or `this.parser.parseInline(tokens)`, not a flat `text` field. The old `{ text }` handlers
+ * left `**bold**` unparsed so emails showed literal asterisks.
  */
+marked.use({
+  gfm: true,
+  breaks: true,
+  renderer: {
+    paragraph(this: RendererThis, { tokens }: Tokens.Paragraph) {
+      const body = this.parser.parseInline(tokens);
+      return `<p style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;font-size:15px;line-height:24px;color:${BRAND.text};margin:0 0 16px 0">${body}</p>`;
+    },
 
-const renderer = new marked.Renderer();
+    heading(this: RendererThis, { tokens, depth }: Tokens.Heading) {
+      const sizes: Record<number, string> = { 1: '24px', 2: '20px', 3: '17px' };
+      const size = sizes[depth] || '15px';
+      const body = this.parser.parseInline(tokens);
+      return `<h${depth} style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;font-size:${size};font-weight:700;color:${BRAND.heading};margin:0 0 12px 0">${body}</h${depth}>`;
+    },
 
-renderer.paragraph = ({ text }) =>
-  `<p style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;font-size:15px;line-height:24px;color:${BRAND.text};margin:0 0 16px 0">${text}</p>`;
+    strong(this: RendererThis, { tokens }: Tokens.Strong) {
+      const body = this.parser.parseInline(tokens);
+      return `<strong style="font-weight:700;color:${BRAND.heading}">${body}</strong>`;
+    },
 
-renderer.heading = ({ text, depth }) => {
-  const sizes: Record<number, string> = { 1: '24px', 2: '20px', 3: '17px' };
-  const size = sizes[depth] || '15px';
-  return `<h${depth} style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;font-size:${size};font-weight:700;color:${BRAND.heading};margin:0 0 12px 0">${text}</h${depth}>`;
-};
+    em(this: RendererThis, { tokens }: Tokens.Em) {
+      const body = this.parser.parseInline(tokens);
+      return `<em style="font-style:italic;color:${BRAND.text}">${body}</em>`;
+    },
 
-renderer.link = ({ href, text }) =>
-  `<a href="${href}" target="_blank" style="color:${BRAND.primary};text-decoration:underline">${text}</a>`;
+    link(this: RendererThis, { href, title, tokens }: Tokens.Link) {
+      const body = this.parser.parseInline(tokens);
+      const safeHref = href.replace(/"/g, '&quot;');
+      const titleAttr =
+        title != null && title !== ''
+          ? ` title="${String(title).replace(/"/g, '&quot;')}"`
+          : '';
+      return `<a href="${safeHref}" target="_blank"${titleAttr} style="color:${BRAND.primary};text-decoration:underline">${body}</a>`;
+    },
 
-renderer.list = (token: any) => {
-  const tag = token.ordered ? 'ol' : 'ul';
-  let body = '';
-  for (const item of token.items) {
-    body += renderer.listitem(item);
-  }
-  return `<${tag} style="font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;font-size:15px;line-height:24px;color:${BRAND.text};margin:0 0 16px 0;padding-left:24px">${body}</${tag}>`;
-};
+    blockquote(this: RendererThis, { tokens }: Tokens.Blockquote) {
+      const body = this.parser.parse(tokens);
+      return `<blockquote style="margin:0 0 16px 0;padding:12px 16px;border-left:4px solid ${BRAND.primary};background:${BRAND.bgMuted};border-radius:4px;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;font-size:15px;color:${BRAND.text}">${body}</blockquote>`;
+    },
 
-renderer.listitem = (item: any) =>
-  `<li style="margin-bottom:6px">${(renderer as any).parser.parse(item.tokens)}</li>`;
-
-renderer.strong = ({ text }) =>
-  `<strong style="font-weight:700;color:${BRAND.heading}">${text}</strong>`;
-
-renderer.hr = () =>
-  `<hr style="border:none;border-top:1px solid ${BRAND.border};margin:24px 0">`;
-
-renderer.blockquote = ({ text }) =>
-  `<blockquote style="margin:0 0 16px 0;padding:12px 16px;border-left:4px solid ${BRAND.primary};background:${BRAND.bgMuted};border-radius:4px;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;font-size:15px;color:${BRAND.text}">${text}</blockquote>`;
-
-marked.setOptions({ renderer, breaks: true, gfm: true });
+    hr(this: RendererThis) {
+      return `<hr style="border:none;border-top:1px solid ${BRAND.border};margin:24px 0">`;
+    },
+  },
+});
 
 export interface RecipientVars {
   first_name?: string;
@@ -54,11 +62,11 @@ export interface RecipientVars {
 }
 
 /**
- * Render markdown into branded HTML. Shared content is parsed once,
- * per-recipient variables are interpolated at send time.
+ * Render markdown into branded HTML. Shared content is parsed once;
+ * per-recipient variables are interpolated at send time (on the HTML).
  */
 export function renderMarkdownToHtml(markdown: string): string {
-  const rawHtml = marked.parse(markdown) as string;
+  const rawHtml = marked.parse(markdown, { async: false }) as string;
 
   const innerHtml = `
     <td class="content-cell" style="padding:32px 40px">

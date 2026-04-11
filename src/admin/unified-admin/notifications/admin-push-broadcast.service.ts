@@ -132,6 +132,36 @@ export class AdminPushBroadcastService implements OnModuleInit {
     return updated;
   }
 
+  async deleteBroadcast(id: string, adminUser: any) {
+    const broadcast = await this.prisma.pushBroadcast.findUnique({ where: { id } });
+    if (!broadcast) return null;
+    if (broadcast.status === 'sending') {
+      return { error: 'Cannot delete while the broadcast is sending. Wait until it finishes.' };
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.pushBroadcastInbox.updateMany({
+        where: { broadcast_id: id },
+        data: { broadcast_id: null },
+      });
+      await tx.pushBroadcastLog.deleteMany({ where: { broadcast_id: id } });
+      await tx.pushBroadcast.delete({ where: { id } });
+    });
+
+    this.auditLogService
+      .log({
+        action: 'PUSH_BROADCAST_DELETE',
+        status: AuditStatus.SUCCESS,
+        user_id: adminUser.sub,
+        resource_type: 'PushBroadcast',
+        resource_id: id,
+        description: `Push broadcast "${broadcast.title}" deleted (logs cleared; inbox kept without link)`,
+      })
+      .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
+
+    return { deleted: true as const, id };
+  }
+
   async resendFailed(id: string) {
     const broadcast = await this.prisma.pushBroadcast.findUnique({ where: { id } });
     if (!broadcast) return null;

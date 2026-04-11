@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Query,
   Param,
   Body,
@@ -96,6 +97,16 @@ export class AdminPushBroadcastController {
     if (!result) throw new NotFoundException('Push broadcast not found');
     if ('error' in result) throw new BadRequestException(result.error);
     return new ApiResponseDto(true, 'Resending to failed recipients', result);
+  }
+
+  @Delete('broadcasts/:id')
+  @HttpCode(HttpStatus.OK)
+  async deleteBroadcast(@Param('id') id: string, @Req() req: any) {
+    this.assertAdmin(req.user);
+    const result = await this.pushBroadcastService.deleteBroadcast(id, req.user);
+    if (!result) throw new NotFoundException('Push broadcast not found');
+    if ('error' in result) throw new BadRequestException(result.error);
+    return new ApiResponseDto(true, 'Push broadcast deleted', result);
   }
 
   // ─── Device Tokens Analytics ─────────────────────────────────

@@ -31,7 +31,7 @@ The system uses a **factory pattern** similar to the SMS provider system:
   EMAIL_PROVIDER=sendgrid
   SENDGRID_API_KEY=your-sendgrid-api-key
   SENDGRID_FROM_EMAIL=your-verified-email@domain.com
-  SENDGRID_FROM_NAME=SmiPay MFB
+  SENDGRID_FROM_NAME=SmiPay
   ```
 - **To Implement**: Install `@sendgrid/mail` and uncomment the implementation in `sendgrid.provider.ts`
 
@@ -43,7 +43,7 @@ The system uses a **factory pattern** similar to the SMS provider system:
   EMAIL_PROVIDER=resend
   RESEND_API_KEY=re_your_api_key
   RESEND_FROM_EMAIL=onboarding@resend.dev
-  RESEND_FROM_NAME=SmiPay MFB
+  RESEND_FROM_NAME=SmiPay
   ```
 - **Note**: Get your API key from [Resend Dashboard](https://resend.com/api-keys). For production, verify your domain and use an email from that domain (e.g. `noreply@yourdomain.com`). For testing you can use `onboarding@resend.dev`.
 
@@ -200,7 +200,7 @@ GOOGLE_SMTP_PORT=587
 EMAIL_PROVIDER=sendgrid
 SENDGRID_API_KEY=your-api-key
 SENDGRID_FROM_EMAIL=your-verified-email@domain.com
-SENDGRID_FROM_NAME=SmiPay MFB
+SENDGRID_FROM_NAME=SmiPay
 ```
 
 ### Resend
@@ -208,7 +208,7 @@ SENDGRID_FROM_NAME=SmiPay MFB
 EMAIL_PROVIDER=resend
 RESEND_API_KEY=re_your_api_key
 RESEND_FROM_EMAIL=onboarding@resend.dev
-RESEND_FROM_NAME=SmiPay MFB
+RESEND_FROM_NAME=SmiPay
 ```
 
 ## 🔍 Current Provider

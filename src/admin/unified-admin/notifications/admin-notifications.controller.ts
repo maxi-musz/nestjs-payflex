@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Query,
   Param,
   Body,
@@ -18,6 +19,7 @@ import { Role } from '@prisma/client';
 import { AdminNotificationsService } from './admin-notifications.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { QueryCampaignsDto } from './dto/query-campaigns.dto';
+import { ResendLogsDto } from './dto/resend-logs.dto';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 
 @UseGuards(AuthGuard('jwt'))
@@ -113,5 +115,26 @@ export class AdminNotificationsController {
     if (!result) throw new NotFoundException('Campaign not found');
     if ('error' in result) throw new BadRequestException(result.error);
     return new ApiResponseDto(true, 'Resending to failed recipients', result);
+  }
+
+  /** Resend to a subset of failed recipients (by notification log IDs). */
+  @Post('campaigns/:id/resend-logs')
+  @HttpCode(HttpStatus.OK)
+  async resendLogs(@Param('id') id: string, @Body() dto: ResendLogsDto, @Req() req: any) {
+    this.assertAdmin(req.user);
+    const result = await this.notificationsService.resendSelectedLogs(id, dto.log_ids);
+    if (!result) throw new NotFoundException('Campaign not found');
+    if ('error' in result) throw new BadRequestException(result.error);
+    return new ApiResponseDto(true, 'Resending to selected recipients', result);
+  }
+
+  @Delete('campaigns/:id')
+  @HttpCode(HttpStatus.OK)
+  async deleteCampaign(@Param('id') id: string, @Req() req: any) {
+    this.assertAdmin(req.user);
+    const result = await this.notificationsService.deleteCampaign(id, req.user);
+    if (!result) throw new NotFoundException('Campaign not found');
+    if ('error' in result) throw new BadRequestException(result.error);
+    return new ApiResponseDto(true, 'Campaign deleted', result);
   }
 }

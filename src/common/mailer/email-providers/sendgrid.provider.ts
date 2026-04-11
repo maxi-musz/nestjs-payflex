@@ -9,7 +9,7 @@ import { IEmailProvider } from './email-provider.interface';
  * Setup:
  * - SENDGRID_API_KEY: Your SendGrid API key
  * - SENDGRID_FROM_EMAIL: Default sender email
- * - SENDGRID_FROM_NAME: Default sender name (optional, defaults to "SmiPay MFB")
+ * - SENDGRID_FROM_NAME: Default sender name (optional, defaults to "SmiPay")
  * 
  * To use SendGrid:
  * 1. Sign up at https://sendgrid.com
@@ -34,7 +34,7 @@ export class SendGridProvider implements IEmailProvider {
     to: string,
     subject: string,
     htmlContent: string,
-    fromName: string = 'SmiPay MFB',
+    fromName: string = 'SmiPay',
     fromEmail?: string,
   ): Promise<void> {
     try {

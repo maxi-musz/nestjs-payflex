@@ -1248,11 +1248,13 @@ enum AuditAction {
   NOTIFICATION_CAMPAIGN_CREATE
   NOTIFICATION_CAMPAIGN_SEND
   NOTIFICATION_CAMPAIGN_CANCEL
+  NOTIFICATION_CAMPAIGN_DELETE
 
   // ── Push Broadcast ────────────────────────────────────────
   PUSH_BROADCAST_CREATE
   PUSH_BROADCAST_SEND
   PUSH_BROADCAST_CANCEL
+  PUSH_BROADCAST_DELETE
 
   // ── Device Management ────────────────────────────────────────
   DEVICE_SUSPEND

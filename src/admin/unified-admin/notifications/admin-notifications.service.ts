@@ -11,9 +11,8 @@ import {
   interpolateVariables,
 } from './notification-email.template';
 
-const BATCH_SIZE = 50;
-const BATCH_DELAY_MS = 2000;
-const PER_EMAIL_DELAY_MS = 600;
+/** Wait between each send so large campaigns stay within provider limits (~1 email/sec). */
+const PER_EMAIL_DELAY_MS = 1000;
 
 @Injectable()
 export class AdminNotificationsService implements OnModuleInit {
@@ -102,17 +101,27 @@ export class AdminNotificationsService implements OnModuleInit {
     return this.prisma.notificationCampaign.findUnique({ where: { id } });
   }
 
-  async getCampaignLogs(id: string, page = 1, limit = 50) {
+  async getCampaignLogs(
+    id: string,
+    page = 1,
+    limit = 50,
+    status?: 'sent' | 'failed',
+  ) {
     const skip = (Math.max(1, page) - 1) * limit;
+
+    const where: { campaign_id: string; status?: string } = { campaign_id: id };
+    if (status === 'sent' || status === 'failed') {
+      where.status = status;
+    }
 
     const [logs, total] = await Promise.all([
       this.prisma.notificationLog.findMany({
-        where: { campaign_id: id },
+        where,
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
       }),
-      this.prisma.notificationLog.count({ where: { campaign_id: id } }),
+      this.prisma.notificationLog.count({ where }),
     ]);
 
     return { logs, total, page, limit, pages: Math.ceil(total / limit) };
@@ -142,6 +151,32 @@ export class AdminNotificationsService implements OnModuleInit {
     return updated;
   }
 
+  async deleteCampaign(id: string, adminUser: any) {
+    const campaign = await this.prisma.notificationCampaign.findUnique({ where: { id } });
+    if (!campaign) return null;
+    if (campaign.status === 'sending') {
+      return { error: 'Cannot delete while the campaign is sending. Wait until it finishes.' };
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.notificationLog.deleteMany({ where: { campaign_id: id } });
+      await tx.notificationCampaign.delete({ where: { id } });
+    });
+
+    this.auditLogService
+      .log({
+        action: 'NOTIFICATION_CAMPAIGN_DELETE',
+        status: AuditStatus.SUCCESS,
+        user_id: adminUser.sub,
+        resource_type: 'NotificationCampaign',
+        resource_id: id,
+        description: `Campaign "${campaign.title}" deleted (logs removed)`,
+      })
+      .catch((e) => this.logger.warn(`Audit log failed: ${e.message}`));
+
+    return { deleted: true as const, id };
+  }
+
   async resendFailed(id: string, adminUser: any) {
     const campaign = await this.prisma.notificationCampaign.findUnique({ where: { id } });
     if (!campaign) return null;
@@ -162,6 +197,39 @@ export class AdminNotificationsService implements OnModuleInit {
     );
 
     return { message: `Resending to ${failedLogs.length} failed recipients`, count: failedLogs.length };
+  }
+
+  /**
+   * Resend only specific failed log rows (subset or single). Ignores IDs that are not failed or not in this campaign.
+   */
+  async resendSelectedLogs(campaignId: string, logIds: string[]) {
+    if (!logIds?.length) {
+      return { error: 'No log IDs provided' };
+    }
+
+    const campaign = await this.prisma.notificationCampaign.findUnique({ where: { id: campaignId } });
+    if (!campaign) return null;
+    if (campaign.status !== 'sent' && campaign.status !== 'failed') {
+      return { error: 'Can only resend for sent or failed campaigns' };
+    }
+
+    const logs = await this.prisma.notificationLog.findMany({
+      where: {
+        id: { in: logIds },
+        campaign_id: campaignId,
+        status: 'failed',
+      },
+    });
+
+    if (logs.length === 0) {
+      return { error: 'No matching failed recipients for the selected log IDs' };
+    }
+
+    this.resendToFailedRecipients(campaign, logs).catch((e) =>
+      this.logger.error(`Resend selected for campaign ${campaignId} failed: ${e.message}`),
+    );
+
+    return { message: `Resending to ${logs.length} selected recipient(s)`, count: logs.length };
   }
 
   // ─── Preview (audience count without sending) ──────────────
@@ -282,13 +350,16 @@ export class AdminNotificationsService implements OnModuleInit {
         return;
       }
 
+      // Always render from markdown so fixes to marked/HTML apply to all sends (stored content_html may be stale).
+      const baseEmailHtml = renderMarkdownToHtml(campaign.content_markdown);
+
       let sentCount = 0;
       let failedCount = 0;
 
       // send one at a time with delay to respect provider rate limits (Resend: 2 req/s)
       for (let i = 0; i < recipients.length; i++) {
         const recipient = recipients[i];
-        const personalizedHtml = interpolateVariables(campaign.content_html, {
+        const personalizedHtml = interpolateVariables(baseEmailHtml, {
           first_name: recipient.first_name,
           last_name: recipient.last_name,
           email: recipient.email,
@@ -372,9 +443,24 @@ export class AdminNotificationsService implements OnModuleInit {
     let sentCount = 0;
     let failedCount = 0;
 
+    const baseEmailHtml = renderMarkdownToHtml(campaign.content_markdown);
+
+    const userIds = [...new Set(failedLogs.map((l) => l.user_id).filter(Boolean))] as string[];
+    const users =
+      userIds.length > 0
+        ? await this.prisma.user.findMany({
+            where: { id: { in: userIds } },
+            select: { id: true, first_name: true, last_name: true },
+          })
+        : [];
+    const userById = new Map(users.map((u) => [u.id, u]));
+
     for (let i = 0; i < failedLogs.length; i++) {
       const log = failedLogs[i];
-      const personalizedHtml = interpolateVariables(campaign.content_html, {
+      const u = log.user_id ? userById.get(log.user_id) : undefined;
+      const personalizedHtml = interpolateVariables(baseEmailHtml, {
+        first_name: u?.first_name ?? undefined,
+        last_name: u?.last_name ?? undefined,
         email: log.email,
       });
 

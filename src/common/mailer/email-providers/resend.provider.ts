@@ -10,7 +10,7 @@ import { IEmailProvider } from './email-provider.interface';
  * Setup:
  * - RESEND_API_KEY: Your Resend API key (from https://resend.com/api-keys)
  * - RESEND_FROM_EMAIL: Sender email (must be from a verified domain, or use onboarding@resend.dev for testing)
- * - RESEND_FROM_NAME: Sender name (optional, defaults to "SmiPay MFB")
+ * - RESEND_FROM_NAME: Sender name (optional, defaults to "SmiPay")
  *
  * To use Resend:
  * 1. Sign up at https://resend.com
@@ -41,7 +41,7 @@ export class ResendProvider implements IEmailProvider {
     to: string,
     subject: string,
     htmlContent: string,
-    fromName: string = 'SmiPay MFB',
+    fromName: string = 'SmiPay',
     fromEmail?: string,
   ): Promise<void> {
     const defaultFromEmail = this.configService.get<string>('RESEND_FROM_EMAIL');
