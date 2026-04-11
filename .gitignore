@@ -1,3 +1,6 @@
+# Prisma 7 generated client (created by `prisma generate` / postinstall)
+/src/generated/prisma
+
 # compiled output
 /dist
 /node_modules

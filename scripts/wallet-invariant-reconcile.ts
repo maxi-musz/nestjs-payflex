@@ -29,7 +29,8 @@
 import { execSync } from 'child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { createPrismaClient } from '../src/prisma/create-prisma-client';
 
 function loadEnvFile() {
   const envPath = join(__dirname, '..', '.env');
@@ -53,7 +54,7 @@ function loadEnvFile() {
 
 loadEnvFile();
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;

@@ -8,7 +8,7 @@
   "scripts": {
     "db:dev:restart": "",
     "postinstall": "prisma generate",
-    "build": "prisma generate && nest build",
+    "build": "prisma generate && nest build && tsc-alias -p tsconfig.json",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "node dist/src/main.js",
     "start:dev": "nest start --watch",
@@ -22,9 +22,9 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "db:backup": "bash scripts/backup-database.sh",
     "db:backup:latest": "bash scripts/backup-database.sh --latest",
-    "script:vtpass-audit": "ts-node --transpile-only scripts/vtpass-refund-anomaly.ts audit",
-    "script:vtpass-recover": "ts-node --transpile-only scripts/vtpass-refund-anomaly.ts recover",
-    "script:wallet-reconcile": "ts-node --transpile-only scripts/wallet-ledger-reconcile.ts"
+    "script:vtpass-audit": "ts-node -r tsconfig-paths/register --transpile-only scripts/vtpass-refund-anomaly.ts audit",
+    "script:vtpass-recover": "ts-node -r tsconfig-paths/register --transpile-only scripts/vtpass-refund-anomaly.ts recover",
+    "script:wallet-reconcile": "ts-node -r tsconfig-paths/register --transpile-only scripts/wallet-ledger-reconcile.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.996.0",
@@ -41,7 +41,8 @@
     "@nestjs/serve-static": "^5.0.3",
     "@nestjs/throttler": "^6.5.0",
     "@nestjs/websockets": "^11.1.14",
-    "@prisma/client": "^6.5.0",
+    "@prisma/adapter-pg": "^7.7.0",
+    "@prisma/client": "^7.7.0",
     "@types/bcrypt": "^6.0.0",
     "@types/multer": "^1.4.12",
     "aes-everywhere": "^1.0.0",
@@ -62,15 +63,18 @@
     "multer": "^1.4.5-lts.2",
     "multer-storage-cloudinary": "^4.0.0",
     "nestjs-form-data": "^1.9.93",
+    "dotenv": "^16.5.0",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.10.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
+    "pg": "^8.14.1",
     "react-icons": "^5.5.0",
     "reflect-metadata": "^0.2.2",
     "resend": "^6.9.2",
     "rxjs": "^7.8.1",
     "socket.io": "^4.8.3",
+    "tsconfig-paths": "^4.2.0",
     "uuid": "^11.1.0"
   },
   "devDependencies": {
@@ -93,17 +97,21 @@
     "globals": "^15.14.0",
     "jest": "^29.7.0",
     "prettier": "^3.4.2",
-    "prisma": "^6.7.0",
+    "@types/pg": "^8.11.11",
+    "prisma": "^7.7.0",
+    "tsc-alias": "^1.8.16",
     "source-map-support": "^0.5.21",
     "supertest": "^7.0.0",
     "ts-jest": "^29.2.5",
     "ts-loader": "^9.5.2",
     "ts-node": "^10.9.2",
-    "tsconfig-paths": "^4.2.0",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.20.0"
   },
   "jest": {
+    "moduleNameMapper": {
+      "^@prisma/client$": "<rootDir>/generated/prisma/client"
+    },
     "moduleFileExtensions": [
       "js",
       "json",
@@ -119,8 +127,5 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
-  },
-  "prisma": {
-    "schema": "./prisma/schema.prisma"
   }
 }

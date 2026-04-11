@@ -8,7 +8,7 @@
  */
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { PrismaClient } from '@prisma/client';
+import { createPrismaClient } from '../src/prisma/create-prisma-client';
 
 function loadEnvFile() {
   const envPath = join(__dirname, '..', '.env');
@@ -32,7 +32,7 @@ function loadEnvFile() {
 
 loadEnvFile();
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 async function main() {
   const apply = process.argv.includes('--apply');

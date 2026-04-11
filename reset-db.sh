@@ -12,7 +12,7 @@ echo "Press Ctrl+C to cancel, or Enter to continue..."
 read
 
 echo "📦 Resetting Prisma migrations..."
-npx prisma migrate reset --force --skip-seed
+npx prisma migrate reset --force
 
 echo "🗑️  Deleting all migration files..."
 rm -rf prisma/migrations/*

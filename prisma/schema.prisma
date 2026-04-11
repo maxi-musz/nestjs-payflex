@@ -1,13 +1,11 @@
 generator client {
-  provider      = "prisma-client-js"
-  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
 }
 
-// Valid for Prisma 6.x — migrate url to prisma.config.ts when upgrading to Prisma 7+.
-// VS Code warning is suppressed via .vscode/settings.json → prisma.pinToPrisma6: true
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model Bookmark {

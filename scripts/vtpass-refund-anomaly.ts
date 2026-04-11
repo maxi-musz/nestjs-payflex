@@ -18,7 +18,7 @@
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { PrismaClient } from '@prisma/client';
+import { createPrismaClient } from '../src/prisma/create-prisma-client';
 
 function loadEnvFile() {
   const envPath = join(__dirname, '..', '.env');
@@ -42,7 +42,7 @@ function loadEnvFile() {
 
 loadEnvFile();
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 const VT_TYPES = ['airtime', 'data', 'cable', 'electricity', 'education'] as const;
 
