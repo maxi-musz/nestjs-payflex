@@ -97,4 +97,33 @@ export class AdminPushBroadcastController {
     if ('error' in result) throw new BadRequestException(result.error);
     return new ApiResponseDto(true, 'Resending to failed recipients', result);
   }
+
+  // ─── Device Tokens Analytics ─────────────────────────────────
+
+  @Get('device-tokens')
+  async listDeviceTokens(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('platform') platform?: string,
+    @Query('is_active') isActive?: string,
+    @Query('search') search?: string,
+    @Req() req?: any,
+  ) {
+    this.assertAdmin(req.user);
+    const result = await this.pushBroadcastService.listDeviceTokens({
+      page: Number(page) || 1,
+      limit: Math.min(100, Number(limit) || 20),
+      platform: platform === 'ios' || platform === 'android' ? platform : undefined,
+      is_active: isActive === 'true' ? true : isActive === 'false' ? false : undefined,
+      search: search?.trim() || undefined,
+    });
+    return new ApiResponseDto(true, 'Device tokens fetched', result);
+  }
+
+  @Get('device-tokens/stats')
+  async deviceTokenStats(@Req() req: any) {
+    this.assertAdmin(req.user);
+    const stats = await this.pushBroadcastService.getDeviceTokenStats();
+    return new ApiResponseDto(true, 'Device token stats fetched', stats);
+  }
 }

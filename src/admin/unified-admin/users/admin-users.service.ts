@@ -55,6 +55,25 @@ const USER_LIST_SELECT = {
     orderBy: { created_at: 'desc' as const },
     take: 1,
   },
+  userDevices: {
+    select: {
+      id: true,
+      device_model: true,
+      device_name: true,
+      platform: true,
+      os_name: true,
+      os_version: true,
+      app_version: true,
+      is_active: true,
+      is_restricted: true,
+      last_ip_address: true,
+      last_location: true,
+      last_seen_at: true,
+    },
+    where: { is_active: true },
+    orderBy: { last_seen_at: 'desc' as const },
+    take: 1,
+  },
 } satisfies Prisma.UserSelect;
 
 /** Light rows for wallet rollup invariant scan (same rules as admin UI). */
@@ -623,6 +642,41 @@ export class AdminUsersService {
         total_pages: Math.ceil(listTotal / limit),
       },
     });
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // LIGHTWEIGHT SEARCH — for autocomplete / user pickers
+  // ──────────────────────────────────────────────────────────
+
+  async searchUsersLightweight(query: string, limit: number) {
+    if (!query || query.length < 2) {
+      return new ApiResponseDto(true, 'Search results', { users: [] });
+    }
+
+    const users = await this.prisma.user.findMany({
+      where: {
+        OR: [
+          { first_name: { contains: query, mode: 'insensitive' } },
+          { last_name: { contains: query, mode: 'insensitive' } },
+          { email: { contains: query, mode: 'insensitive' } },
+          { phone_number: { contains: query } },
+          { smipay_tag: { contains: query, mode: 'insensitive' } },
+        ],
+      },
+      select: {
+        id: true,
+        first_name: true,
+        last_name: true,
+        email: true,
+        phone_number: true,
+        role: true,
+        profile_image: { select: { secure_url: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+
+    return new ApiResponseDto(true, 'Search results', { users });
   }
 
   // ──────────────────────────────────────────────────────────

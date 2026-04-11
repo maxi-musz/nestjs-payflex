@@ -35,6 +35,7 @@ import { AdminCashbackModule } from './admin/unified-admin/cashback/admin-cashba
 import { AdminMarkupModule } from './admin/unified-admin/markup/admin-markup.module';
 import { AdminFirstTxRewardModule } from './admin/unified-admin/first-tx-reward/admin-first-tx-reward.module';
 import { AdminNotificationsModule } from './admin/unified-admin/notifications/admin-notifications.module';
+import { AdminDevicesModule } from './admin/unified-admin/devices/admin-devices.module';
 import { FirstTxRewardModule } from './common/first-tx-reward/first-tx-reward.module';
 import { StorageModule } from './storage/storage.module';
 
@@ -62,6 +63,7 @@ import { StorageModule } from './storage/storage.module';
     AdminMarkupModule,
     AdminFirstTxRewardModule,
     AdminNotificationsModule,
+    AdminDevicesModule,
     ReferralModule,
     UserModule, 
     BookmarkModule, 

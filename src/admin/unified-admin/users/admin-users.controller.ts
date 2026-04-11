@@ -38,6 +38,12 @@ export class AdminUsersController {
     return this.usersService.listUsers(query, req.user);
   }
 
+  @Get('search')
+  searchUsers(@Query('q') q: string, @Query('limit') limit: string, @Req() req: any) {
+    this.assertAdmin(req.user);
+    return this.usersService.searchUsersLightweight(q?.trim() || '', Math.min(20, Number(limit) || 10));
+  }
+
   @Get(':id')
   getUserById(@Param('id') id: string, @Req() req: any) {
     this.assertAdmin(req.user);

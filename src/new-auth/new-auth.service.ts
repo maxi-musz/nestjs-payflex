@@ -37,6 +37,7 @@ import {
   PROFILE_IMAGE_UPLOAD_OPTIONS,
   validateProfileImageFile,
 } from '../common/upload/display-picture';
+import { DeviceTrackerService } from '../common/helpers/device-tracker.service';
 
 @Injectable()
 export class NewAuthService {
@@ -51,6 +52,7 @@ export class NewAuthService {
     private readonly stats: StatsService,
     private readonly referralService: ReferralService,
     private readonly storageService: StorageService,
+    private readonly deviceTracker: DeviceTrackerService,
   ) {}
 
   // ──────────────────────────────────────────────────────────
@@ -181,6 +183,9 @@ export class NewAuthService {
       },
       ...this.deviceFields(req),
     });
+
+    this.deviceTracker.trackDevice(user.id, req.deviceMetadata, req.ip)
+      .catch((e) => this.logger.warn(`Device tracking on signin: ${e.message}`));
 
     const formattedUser = {
       id: user.id,
@@ -524,6 +529,9 @@ export class NewAuthService {
       },
       ...this.deviceFields(req),
     });
+
+    this.deviceTracker.trackDevice(newUser.id, req.deviceMetadata, req.ip)
+      .catch((e) => this.logger.warn(`Device tracking on register: ${e.message}`));
 
     const formattedUser = {
       id: newUser.id,

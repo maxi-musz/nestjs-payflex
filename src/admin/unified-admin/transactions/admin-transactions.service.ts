@@ -135,6 +135,25 @@ const USER_BRIEF_SELECT = {
       all_time_withdrawn: true,
     },
   },
+  userDevices: {
+    select: {
+      id: true,
+      device_model: true,
+      device_name: true,
+      platform: true,
+      os_name: true,
+      os_version: true,
+      app_version: true,
+      is_active: true,
+      is_restricted: true,
+      last_ip_address: true,
+      last_location: true,
+      last_seen_at: true,
+    },
+    where: { is_active: true },
+    orderBy: { last_seen_at: 'desc' as const },
+    take: 1,
+  },
 } satisfies Prisma.UserSelect;
 
 @Injectable()

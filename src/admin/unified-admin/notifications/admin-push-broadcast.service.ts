@@ -480,4 +480,74 @@ export class AdminPushBroadcastService implements OnModuleInit {
     });
     return { success: true };
   }
+
+  // ─── Device Tokens Analytics ─────────────────────────────────
+
+  async listDeviceTokens(opts: {
+    page: number;
+    limit: number;
+    platform?: 'ios' | 'android';
+    is_active?: boolean;
+    search?: string;
+  }) {
+    const { page, limit, platform, is_active, search } = opts;
+    const where: any = {};
+    if (platform) where.platform = platform;
+    if (is_active !== undefined) where.is_active = is_active;
+    if (search) {
+      where.OR = [
+        { user: { email: { contains: search, mode: 'insensitive' } } },
+        { user: { first_name: { contains: search, mode: 'insensitive' } } },
+        { user: { last_name: { contains: search, mode: 'insensitive' } } },
+        { device_id: { contains: search, mode: 'insensitive' } },
+        { token: { startsWith: search } },
+      ];
+    }
+
+    const [tokens, total] = await this.prisma.$transaction([
+      this.prisma.deviceToken.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              email: true,
+              first_name: true,
+              last_name: true,
+              role: true,
+              account_status: true,
+              createdAt: true,
+            },
+          },
+        },
+        orderBy: { updatedAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.deviceToken.count({ where }),
+    ]);
+
+    return {
+      tokens,
+      total,
+      page,
+      limit,
+      pages: Math.ceil(total / limit),
+    };
+  }
+
+  async getDeviceTokenStats() {
+    const [total, active, inactive, ios, android] = await this.prisma.$transaction([
+      this.prisma.deviceToken.count(),
+      this.prisma.deviceToken.count({ where: { is_active: true } }),
+      this.prisma.deviceToken.count({ where: { is_active: false } }),
+      this.prisma.deviceToken.count({ where: { platform: 'ios' } }),
+      this.prisma.deviceToken.count({ where: { platform: 'android' } }),
+    ]);
+
+    const uniqueGroups = await this.prisma.deviceToken.groupBy({ by: ['user_id'] });
+    const unique_users = uniqueGroups.length;
+
+    return { total, active, inactive, ios, android, unique_users };
+  }
 }

@@ -8,6 +8,7 @@ import { JwtStrategy } from './jwt.strategy';
 import { PrismaModule } from '../prisma/prisma.module';
 import { EmailModule } from '../common/mailer/email.module';
 import { ReferralModule } from '../referral/referral.module';
+import { DeviceTrackerService } from '../common/helpers/device-tracker.service';
 
 @Module({
   imports: [
@@ -27,7 +28,7 @@ import { ReferralModule } from '../referral/referral.module';
     }),
   ],
   controllers: [NewAuthController],
-  providers: [NewAuthService, JwtStrategy],
+  providers: [NewAuthService, JwtStrategy, DeviceTrackerService],
   exports: [NewAuthService, JwtModule],
 })
 export class NewAuthModule {}

@@ -180,6 +180,11 @@ export const ACTION_CATEGORY_MAP: Record<AuditAction, AuditCategory> = {
   PUSH_BROADCAST_SEND: AuditCategory.ADMIN,
   PUSH_BROADCAST_CANCEL: AuditCategory.ADMIN,
 
+  // Device Management
+  DEVICE_SUSPEND: AuditCategory.ADMIN,
+  DEVICE_REACTIVATE: AuditCategory.ADMIN,
+  DEVICE_REMOVE: AuditCategory.ADMIN,
+
   // Webhooks
   WEBHOOK_PAYSTACK: AuditCategory.WEBHOOK,
   WEBHOOK_FLUTTERWAVE: AuditCategory.WEBHOOK,
@@ -279,6 +284,11 @@ export const ACTION_SEVERITY_MAP: Partial<Record<AuditAction, AuditSeverity>> = 
   PUSH_BROADCAST_CREATE: AuditSeverity.MEDIUM,
   PUSH_BROADCAST_SEND: AuditSeverity.MEDIUM,
   PUSH_BROADCAST_CANCEL: AuditSeverity.MEDIUM,
+
+  // Device Management
+  DEVICE_SUSPEND: AuditSeverity.HIGH,
+  DEVICE_REACTIVATE: AuditSeverity.MEDIUM,
+  DEVICE_REMOVE: AuditSeverity.HIGH,
 };
 
 /**
@@ -460,6 +470,11 @@ export const ACTION_DESCRIPTION_MAP: Record<AuditAction, string> = {
   PUSH_BROADCAST_CREATE: 'Push broadcast created',
   PUSH_BROADCAST_SEND: 'Push broadcast sent',
   PUSH_BROADCAST_CANCEL: 'Push broadcast cancelled',
+
+  // Device Management
+  DEVICE_SUSPEND: 'Device suspended',
+  DEVICE_REACTIVATE: 'Device reactivated',
+  DEVICE_REMOVE: 'Device removed',
 
   // Webhooks
   WEBHOOK_PAYSTACK: 'Paystack webhook received',
