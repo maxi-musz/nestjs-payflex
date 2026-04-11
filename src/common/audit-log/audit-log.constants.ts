@@ -175,6 +175,11 @@ export const ACTION_CATEGORY_MAP: Record<AuditAction, AuditCategory> = {
   NOTIFICATION_CAMPAIGN_SEND: AuditCategory.ADMIN,
   NOTIFICATION_CAMPAIGN_CANCEL: AuditCategory.ADMIN,
 
+  // Push Broadcasts
+  PUSH_BROADCAST_CREATE: AuditCategory.ADMIN,
+  PUSH_BROADCAST_SEND: AuditCategory.ADMIN,
+  PUSH_BROADCAST_CANCEL: AuditCategory.ADMIN,
+
   // Webhooks
   WEBHOOK_PAYSTACK: AuditCategory.WEBHOOK,
   WEBHOOK_FLUTTERWAVE: AuditCategory.WEBHOOK,
@@ -269,6 +274,11 @@ export const ACTION_SEVERITY_MAP: Partial<Record<AuditAction, AuditSeverity>> = 
   NOTIFICATION_CAMPAIGN_CREATE: AuditSeverity.MEDIUM,
   NOTIFICATION_CAMPAIGN_SEND: AuditSeverity.MEDIUM,
   NOTIFICATION_CAMPAIGN_CANCEL: AuditSeverity.MEDIUM,
+
+  // Push Broadcasts
+  PUSH_BROADCAST_CREATE: AuditSeverity.MEDIUM,
+  PUSH_BROADCAST_SEND: AuditSeverity.MEDIUM,
+  PUSH_BROADCAST_CANCEL: AuditSeverity.MEDIUM,
 };
 
 /**
@@ -445,6 +455,11 @@ export const ACTION_DESCRIPTION_MAP: Record<AuditAction, string> = {
   NOTIFICATION_CAMPAIGN_CREATE: 'Notification campaign created',
   NOTIFICATION_CAMPAIGN_SEND: 'Notification campaign sent',
   NOTIFICATION_CAMPAIGN_CANCEL: 'Notification campaign cancelled',
+
+  // Push Broadcasts
+  PUSH_BROADCAST_CREATE: 'Push broadcast created',
+  PUSH_BROADCAST_SEND: 'Push broadcast sent',
+  PUSH_BROADCAST_CANCEL: 'Push broadcast cancelled',
 
   // Webhooks
   WEBHOOK_PAYSTACK: 'Paystack webhook received',

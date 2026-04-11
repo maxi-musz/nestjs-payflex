@@ -1252,6 +1252,11 @@ enum AuditAction {
   NOTIFICATION_CAMPAIGN_SEND
   NOTIFICATION_CAMPAIGN_CANCEL
 
+  // ── Push Broadcast ────────────────────────────────────────
+  PUSH_BROADCAST_CREATE
+  PUSH_BROADCAST_SEND
+  PUSH_BROADCAST_CANCEL
+
   // ── Webhooks ───────────────────────────────────────────────
   WEBHOOK_PAYSTACK
   WEBHOOK_FLUTTERWAVE
@@ -1706,4 +1711,83 @@ model NotificationLog {
   @@index([campaign_id])
   @@index([email])
   @@map("notification_logs")
+}
+
+// ─── Push Broadcast (admin → mobile app push notifications) ──
+
+enum PushBroadcastStatus {
+  draft
+  scheduled
+  sending
+  sent
+  failed
+  cancelled
+}
+
+model PushBroadcast {
+  id String @id @default(uuid())
+
+  title   String
+  body    String  @db.Text
+  message String? @db.Text
+
+  target_type     NotificationTargetType
+  target_filters  Json?
+  target_user_ids Json?
+
+  data Json?
+
+  status        PushBroadcastStatus @default(draft)
+  scheduled_for DateTime?
+  sent_at       DateTime?
+
+  total_recipients Int @default(0)
+  sent_count       Int @default(0)
+  failed_count     Int @default(0)
+
+  created_by String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  logs PushBroadcastLog[]
+
+  @@index([status])
+  @@index([scheduled_for])
+  @@map("push_broadcasts")
+}
+
+model PushBroadcastLog {
+  id            String  @id @default(uuid())
+  broadcast_id  String
+  user_id       String
+  status        String  @default("pending")
+  error_message String?
+
+  createdAt DateTime @default(now())
+
+  broadcast PushBroadcast @relation(fields: [broadcast_id], references: [id])
+
+  @@index([broadcast_id])
+  @@index([user_id])
+  @@map("push_broadcast_logs")
+}
+
+model PushBroadcastInbox {
+  id           String  @id @default(uuid())
+  user_id      String
+  broadcast_id String?
+
+  title   String
+  body    String  @db.Text
+  message String? @db.Text
+  data    Json?
+
+  is_read Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([user_id, createdAt])
+  @@index([user_id, is_read])
+  @@map("push_broadcast_inbox")
 }
