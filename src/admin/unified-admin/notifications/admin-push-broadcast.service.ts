@@ -267,16 +267,29 @@ export class AdminPushBroadcastService implements OnModuleInit {
       let sentCount = 0;
       let failedCount = 0;
 
-      const pushData = JSON.stringify({
-        screen: 'notification',
-        broadcast_id: broadcastId,
-        type: 'broadcast',
-      });
-
       for (let i = 0; i < recipients.length; i++) {
         const recipient = recipients[i];
 
         try {
+          // Inbox row first so the push payload can include its id for deep links (mobile expects data.id).
+          const inboxRow = await this.prisma.pushBroadcastInbox.create({
+            data: {
+              user_id: recipient.id,
+              broadcast_id: broadcastId,
+              title: broadcast.title,
+              body: broadcast.body,
+              message: broadcast.message,
+              data: { broadcast_id: broadcastId },
+            },
+          });
+
+          const pushData = JSON.stringify({
+            screen: 'notification',
+            id: inboxRow.id,
+            broadcast_id: broadcastId,
+            type: 'broadcast',
+          });
+
           const result = await this.pushService.sendNotificationToUser(recipient.id, {
             title: broadcast.title,
             body: broadcast.body,
@@ -293,18 +306,6 @@ export class AdminPushBroadcastService implements OnModuleInit {
               user_id: recipient.id,
               status: logStatus,
               error_message: sent === 0 ? 'No active device tokens delivered' : null,
-            },
-          });
-
-          // Create inbox entry so user can view full message in-app
-          await this.prisma.pushBroadcastInbox.create({
-            data: {
-              user_id: recipient.id,
-              broadcast_id: broadcastId,
-              title: broadcast.title,
-              body: broadcast.body,
-              message: broadcast.message,
-              data: { broadcast_id: broadcastId },
             },
           });
 
@@ -372,16 +373,22 @@ export class AdminPushBroadcastService implements OnModuleInit {
     let sentCount = 0;
     let failedCount = 0;
 
-    const pushData = JSON.stringify({
-      screen: 'notification',
-      broadcast_id: broadcast.id,
-      type: 'broadcast',
-    });
-
     for (let i = 0; i < failedLogs.length; i++) {
       const log = failedLogs[i];
 
       try {
+        const inboxRow = await this.prisma.pushBroadcastInbox.findFirst({
+          where: { user_id: log.user_id, broadcast_id: broadcast.id },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        const pushData = JSON.stringify({
+          screen: 'notification',
+          ...(inboxRow?.id ? { id: inboxRow.id } : {}),
+          broadcast_id: broadcast.id,
+          type: 'broadcast',
+        });
+
         const result = await this.pushService.sendNotificationToUser(log.user_id, {
           title: broadcast.title,
           body: broadcast.body,
