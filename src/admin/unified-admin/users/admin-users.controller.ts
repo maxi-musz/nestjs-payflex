@@ -44,6 +44,12 @@ export class AdminUsersController {
     return this.usersService.searchUsersLightweight(q?.trim() || '', Math.min(20, Number(limit) || 10));
   }
 
+  @Post('lookup-by-ids')
+  lookupUsersByIds(@Body() body: { ids?: string[] }, @Req() req: any) {
+    this.assertAdmin(req.user);
+    return this.usersService.lookupUsersByIds(body?.ids ?? []);
+  }
+
   @Get(':id')
   getUserById(@Param('id') id: string, @Req() req: any) {
     this.assertAdmin(req.user);

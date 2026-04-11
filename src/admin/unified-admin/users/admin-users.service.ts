@@ -679,6 +679,36 @@ export class AdminUsersService {
     return new ApiResponseDto(true, 'Search results', { users });
   }
 
+  /**
+   * Resolve user ids to the same lightweight shape as search (e.g. cloning push broadcast audience).
+   */
+  async lookupUsersByIds(rawIds: string[]) {
+    const ids = [
+      ...new Set(
+        (rawIds ?? []).filter((id) => typeof id === 'string' && id.trim().length > 0),
+      ),
+    ].slice(0, 100);
+
+    if (ids.length === 0) {
+      return new ApiResponseDto(true, 'Users', { users: [] });
+    }
+
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        first_name: true,
+        last_name: true,
+        email: true,
+        phone_number: true,
+        role: true,
+        profile_image: { select: { secure_url: true } },
+      },
+    });
+
+    return new ApiResponseDto(true, 'Users', { users });
+  }
+
   // ──────────────────────────────────────────────────────────
   // DETAIL — Full user profile
   // ──────────────────────────────────────────────────────────
